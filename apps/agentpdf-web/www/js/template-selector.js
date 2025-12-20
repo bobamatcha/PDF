@@ -372,33 +372,73 @@ const TemplateSelector = {
 /**
  * State Selector for Compliance Checking
  * Allows users to select which state's laws to use for compliance checking
+ *
+ * State data is loaded from WASM (compliance-engine) to avoid duplication.
+ * Falls back to cached data if WASM is unavailable.
  */
 const StateSelector = {
-    // Supported states with implementation status (Tier 0 + Tier 1 + Tier 2 = 16 states)
-    states: [
-        // Tier 0: Florida
-        { code: 'FL', name: 'Florida', implemented: true, statutes: 'F.S. Chapter 83' },
-        // Tier 1: Big Five
-        { code: 'TX', name: 'Texas', implemented: true, statutes: 'Tex. Prop. Code Ch. 92' },
-        { code: 'CA', name: 'California', implemented: true, statutes: 'CA Civil Code 1940-1954' },
-        { code: 'NY', name: 'New York', implemented: true, statutes: 'NY RPL Article 7' },
-        { code: 'GA', name: 'Georgia', implemented: true, statutes: 'GA Code Title 44 Ch. 7' },
-        { code: 'IL', name: 'Illinois', implemented: true, statutes: '765 ILCS + Chicago RLTO' },
-        // Tier 2: Growth Hubs
-        { code: 'PA', name: 'Pennsylvania', implemented: true, statutes: '68 P.S. § 250.501 et seq.' },
-        { code: 'NJ', name: 'New Jersey', implemented: true, statutes: 'N.J.S.A. 46:8 et seq.' },
-        { code: 'VA', name: 'Virginia', implemented: true, statutes: 'VA Code § 55.1-1200 et seq.' },
-        { code: 'MA', name: 'Massachusetts', implemented: true, statutes: 'M.G.L. c. 186' },
-        { code: 'OH', name: 'Ohio', implemented: true, statutes: 'O.R.C. Chapter 5321' },
-        { code: 'MI', name: 'Michigan', implemented: true, statutes: 'M.C.L. 554.601 et seq.' },
-        { code: 'WA', name: 'Washington', implemented: true, statutes: 'RCW 59.18' },
-        { code: 'AZ', name: 'Arizona', implemented: true, statutes: 'A.R.S. Title 33 Ch. 10' },
-        { code: 'NC', name: 'North Carolina', implemented: true, statutes: 'N.C.G.S. Chapter 42' },
-        { code: 'TN', name: 'Tennessee', implemented: true, statutes: 'T.C.A. Title 66 Ch. 28' }
-    ],
+    // States loaded from WASM - no more hardcoded duplication!
+    states: [],
+
+    // Whether states have been loaded from WASM
+    _loaded: false,
 
     // Currently selected state
     currentState: 'FL',
+
+    /**
+     * Load states from WASM module
+     * @returns {Promise<Array>} List of states from compliance engine
+     */
+    async loadStates() {
+        if (this._loaded && this.states.length > 0) {
+            return this.states;
+        }
+
+        try {
+            // Try to get states from WASM
+            if (window.wasm && typeof window.wasm.get_supported_states === 'function') {
+                const statesJson = window.wasm.get_supported_states();
+                this.states = JSON.parse(statesJson);
+                this._loaded = true;
+                console.log('StateSelector: Loaded', this.states.length, 'states from WASM');
+                return this.states;
+            }
+        } catch (err) {
+            console.warn('StateSelector: Failed to load states from WASM:', err);
+        }
+
+        // Fallback: use cached/default states if WASM unavailable
+        if (this.states.length === 0) {
+            this.states = this._getFallbackStates();
+        }
+        return this.states;
+    },
+
+    /**
+     * Fallback states when WASM is unavailable (e.g., during initial load)
+     * This should match the Rust State::implemented_states() + statute_citation()
+     */
+    _getFallbackStates() {
+        return [
+            { code: 'FL', name: 'Florida', implemented: true, statutes: 'F.S. Chapter 83' },
+            { code: 'TX', name: 'Texas', implemented: true, statutes: 'Tex. Prop. Code Ch. 92' },
+            { code: 'CA', name: 'California', implemented: true, statutes: 'CA Civil Code 1940-1954' },
+            { code: 'NY', name: 'New York', implemented: true, statutes: 'NY RPL Article 7' },
+            { code: 'GA', name: 'Georgia', implemented: true, statutes: 'GA Code Title 44 Ch. 7' },
+            { code: 'IL', name: 'Illinois', implemented: true, statutes: '765 ILCS + Chicago RLTO' },
+            { code: 'PA', name: 'Pennsylvania', implemented: true, statutes: '68 P.S. § 250.501 et seq.' },
+            { code: 'NJ', name: 'New Jersey', implemented: true, statutes: 'N.J.S.A. 46:8 et seq.' },
+            { code: 'VA', name: 'Virginia', implemented: true, statutes: 'VA Code § 55.1-1200 et seq.' },
+            { code: 'MA', name: 'Massachusetts', implemented: true, statutes: 'M.G.L. c. 186' },
+            { code: 'OH', name: 'Ohio', implemented: true, statutes: 'O.R.C. Chapter 5321' },
+            { code: 'MI', name: 'Michigan', implemented: true, statutes: 'M.C.L. 554.601 et seq.' },
+            { code: 'WA', name: 'Washington', implemented: true, statutes: 'RCW 59.18' },
+            { code: 'AZ', name: 'Arizona', implemented: true, statutes: 'A.R.S. Title 33 Ch. 10' },
+            { code: 'NC', name: 'North Carolina', implemented: true, statutes: 'N.C.G.S. Chapter 42' },
+            { code: 'TN', name: 'Tennessee', implemented: true, statutes: 'T.C.A. Title 66 Ch. 28' }
+        ];
+    },
 
     /**
      * Get the currently selected state
@@ -425,12 +465,15 @@ const StateSelector = {
      * Create and inject the state selector UI
      * @param {string} containerId - ID of the container element
      */
-    init(containerId) {
+    async init(containerId) {
         const container = document.getElementById(containerId);
         if (!container) {
             console.warn('StateSelector: Container not found:', containerId);
             return;
         }
+
+        // Load states from WASM before creating UI
+        await this.loadStates();
 
         container.innerHTML = this._createSelectorHTML();
         this._attachEventListeners(container);

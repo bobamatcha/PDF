@@ -127,6 +127,33 @@ impl State {
         }
     }
 
+    /// Get the primary statute citation for landlord-tenant law
+    /// Returns the main statutory reference for implemented states
+    pub fn statute_citation(&self) -> Option<&'static str> {
+        match self {
+            // Tier 0 + Tier 1: Big Five
+            State::FL => Some("F.S. Chapter 83"),
+            State::TX => Some("Tex. Prop. Code Ch. 92"),
+            State::CA => Some("CA Civil Code 1940-1954"),
+            State::NY => Some("NY RPL Article 7"),
+            State::GA => Some("GA Code Title 44 Ch. 7"),
+            State::IL => Some("765 ILCS + Chicago RLTO"),
+            // Tier 2: Growth Hubs
+            State::PA => Some("68 P.S. § 250.501 et seq."),
+            State::NJ => Some("N.J.S.A. 46:8 et seq."),
+            State::VA => Some("VA Code § 55.1-1200 et seq."),
+            State::MA => Some("M.G.L. c. 186"),
+            State::OH => Some("O.R.C. Chapter 5321"),
+            State::MI => Some("M.C.L. 554.601 et seq."),
+            State::WA => Some("RCW 59.18"),
+            State::AZ => Some("A.R.S. Title 33 Ch. 10"),
+            State::NC => Some("N.C.G.S. Chapter 42"),
+            State::TN => Some("T.C.A. Title 66 Ch. 28"),
+            // Not yet implemented
+            _ => None,
+        }
+    }
+
     /// Check if state follows URLTA (Uniform Residential Landlord and Tenant Act)
     pub fn is_urlta_state(&self) -> bool {
         matches!(

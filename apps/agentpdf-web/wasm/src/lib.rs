@@ -79,7 +79,7 @@ pub fn check_compliance_with_zip_wasm(
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize report: {}", e)))
 }
 
-/// Get list of supported states
+/// Get list of supported states with statute citations
 #[wasm_bindgen]
 pub fn get_supported_states() -> Result<String, JsValue> {
     let engine = ComplianceEngine::new();
@@ -90,7 +90,8 @@ pub fn get_supported_states() -> Result<String, JsValue> {
             serde_json::json!({
                 "code": format!("{:?}", s),
                 "name": s.name(),
-                "implemented": s.is_implemented()
+                "implemented": s.is_implemented(),
+                "statutes": s.statute_citation()
             })
         })
         .collect();
