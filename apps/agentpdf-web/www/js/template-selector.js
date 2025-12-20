@@ -398,9 +398,9 @@ const TemplateSelector = {
                 name: 'Florida Lease',
                 id: 'florida_lease',
                 state: 'FL',
-                description: 'Florida residential lease agreement (F.S. Chapter 83 compliant)',
+                description: 'Florida residential lease with HB 615 Email Consent & SB 948 Flood Disclosure',
                 required_fields: ['landlord_name', 'tenant_name', 'property_address', 'monthly_rent', 'lease_start', 'lease_end'],
-                optional_fields: ['landlord_phone', 'landlord_email', 'security_deposit', 'pet_deposit', 'late_fee', 'grace_period_days', 'year_built']
+                optional_fields: ['landlord_phone', 'landlord_email', 'tenant_email', 'security_deposit', 'pet_deposit', 'late_fee', 'grace_period_days', 'year_built', 'email_consent', 'has_prior_flooding', 'has_flood_claims', 'has_fema_assistance', 'flooding_description']
             },
             {
                 name: 'Texas Lease',

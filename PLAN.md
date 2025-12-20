@@ -17,9 +17,53 @@
 
 ---
 
-## 🚀 PRIORITY: Local-First Template Generation
+## 🚀 PRIORITY: Florida Compliance Features
 
-> **Status: ✅ IMPLEMENTED** - Template rendering now runs entirely in browser via WASM. Zero server cost per document.
+> **Local-First Template Generation: ✅ COMPLETE** - Template rendering runs entirely in browser via WASM. Zero server cost per document.
+>
+> **Next Priority: Florida Regulatory Compliance** - The local-first architecture enables $0 marginal cost, which unlocks the "Free Local, Paid Cloud" business model. Now we need the Florida-specific features that create market urgency.
+
+### Florida Regulatory Deadlines
+
+| Feature | Statute | Priority | Status |
+|---------|---------|----------|--------|
+| **Email Consent Addendum** | HB 615 | SHORT-TERM | ✅ COMPLETE |
+| **Flood Disclosure Wizard** | SB 948 / § 83.512 | MEDIUM-TERM | ✅ COMPLETE |
+| **Tampa Landing Page** | Marketing | SHORT-TERM | ✅ COMPLETE |
+| **Tampa Demo Script** | Marketing | SHORT-TERM | ✅ COMPLETE |
+| **30-Day Termination Notice** | § 83.57 | SHORT-TERM | ⚠️ Template needs update |
+
+### § 83.512 Flood Disclosure (MEDIUM-TERM PRIORITY)
+
+**Risk**: Landlords who fail to provide this disclosure can face:
+- Tenant can terminate lease immediately
+- Tenant can demand full rent refund
+- Creates "voidability risk" for every lease that lacks this addendum
+
+**Implementation**: Interview-based wizard that generates compliant form:
+
+```
+Step 1: "Has this property experienced flooding during your ownership?"
+Step 2: "Have you filed any flood-related insurance claims?"
+Step 3: "Has this property received FEMA or federal flood assistance?"
+         ↓
+[Generate § 83.512 Compliant Disclosure Form]
+```
+
+### HB 615 Email Consent (SHORT-TERM PRIORITY)
+
+**Value Prop**: "Stop paying for Certified Mail. Get the free form to make Email Legal in Florida."
+
+**Implementation**: Checkbox during signature ceremony + addendum attachment:
+
+```
+☑ I agree to receive all legally required notices via email at: [tenant@email.com]
+  This consent is provided pursuant to Florida Statute § 83.56 as amended by HB 615.
+```
+
+---
+
+## ✅ COMPLETE: Local-First Template Generation
 
 ### Architecture Change
 
@@ -224,12 +268,71 @@ Migrated from Python `http.server` to **Trunk** for local development:
 - Options: (1) Wait for candle 0.9 stable release, (2) Rewrite with fastembed, (3) Use remote embedding API
 - Not critical for MVP - semantic search is an advanced feature
 
-### 📋 Next Steps (Post Phase 3)
+### 📋 Next Steps (Post Phase 3) - UPDATED FOR LOCAL-FIRST PIVOT
 
-1. ✅ **Build WASM packages** - Both built with wasm-opt disabled
-2. **Deploy to production** - Push to agentpdf.org and getsignatures.org (see [DEPLOY.md](./DEPLOY.md))
-3. **Fix corpus-core** - Add candle-core, candle-nn, tokenizers, hf-hub dependencies
-4. **Template Expansion** - See Phase 4 below
+#### ✅ COMPLETED (December 2025)
+
+| Priority | Task | Status |
+|----------|------|--------|
+| P0 | **HB 615 Email Consent Addendum** - Added to florida_lease.typ (Addendum G) | ✅ Done |
+| P0 | **§ 83.512 Flood Disclosure** - Added to florida_lease.typ (Addendum H) + compliance check | ✅ Done |
+| P0 | **agentPDF.org/tampa landing page** - Tampa Bay landlord-focused landing page | ✅ Done |
+| P0 | **Template metadata update** - 11 optional fields including HB 615 & flood disclosure | ✅ Done |
+
+#### SHORT-TERM (Next)
+
+| Priority | Task | Owner |
+|----------|------|-------|
+| P0 | **Deploy to production** - Push to agentpdf.org and getsignatures.org | Engineering |
+| P1 | **30-day termination update** - Update template language | Engineering |
+| P1 | **Tampa REIA outreach** - Demo at January 2026 meetings | Human/Marketing |
+| P1 | **Texas Lease Template** - Create texas_lease.typ with Ch. 92 compliance | Engineering |
+
+#### MEDIUM-TERM
+
+| Priority | Task | Owner |
+|----------|------|-------|
+| P1 | **NARPM Florida Chapter sponsorship** - $200-500 lunch sponsor | Human/Marketing |
+| P2 | **Florida Landlord Network webinar** - "Is Your Lease Compliant?" pitch | Human/Marketing |
+| P2 | **Standalone Flood Disclosure form** - Quick-generate just the SB 948 form | Engineering |
+
+#### Deferred (Not Needed for MVP)
+
+| Feature | Reason |
+|---------|--------|
+| OAuth between sites | Not needed for free tier |
+| Cloud Sync | Paid feature - defer until paying users |
+| Medical Mode | Phase 2 after FL RE validation |
+| corpus-core semantic search | Advanced feature, not critical for launch |
+
+### 📍 Human Action Items (Marketing Ground Game)
+
+> These tasks require physical presence in Tampa and cannot be automated.
+
+#### January 2026 Target Events
+
+| Event | Date | Location | Action | Expected Outcome |
+|-------|------|----------|--------|------------------|
+| **Tampa REIA Main Meeting** | Thu Jan 9, 2026 | Tampa (check venue) | Demo app in "Kiosk Mode", hand out cards | 5 beta testers |
+| **Beach REIA (Pinellas)** | Thu Jan 16, 2026 | Clearwater area | QR code → agentpdf.org/tampa | Email list growth |
+| **NARPM Tampa Chapter** | Check calendar | TBD | Sponsor lunch ($200-500), pitch "Offline Reliability" | Property manager trials |
+
+#### Recurring Monthly Events
+
+| Event | When | Action |
+|-------|------|--------|
+| **Tampa REIA** | 2nd Thursday monthly | Demo flood disclosure wizard |
+| **Beach REIA** | 3rd Thursday monthly | QR code → landing page |
+| **Florida Landlord Network** | Newsletter sponsorship | "Compliance" educational content |
+
+**The Script (for REIA meetings):**
+> "I'm a local developer here in Tampa. I was reviewing the new statutes on flood disclosures and noticed most free forms online are outdated. I built a free tool to generate the new mandatory SB 948 form so we don't get sued. I'm not selling anything; I just want to make sure the local community has the right docs."
+
+**Demo Checklist:**
+1. Open agentpdf.org/tampa on phone/tablet
+2. Show "Flood Disclosure" card → "Generate Form"
+3. Fill quick form → Download PDF in seconds
+4. "Works offline - perfect for showings"
 
 ---
 
@@ -322,7 +425,7 @@ pub struct JurisdictionRules {
 - [x] Add Pennsylvania (Plain Language Act, 2-month deposit cap)
 - [x] Add New Jersey (Truth in Renting, Anti-Eviction Act)
 - [x] Add Virginia (HB 2430 Fee Transparency, mold disclosure)
-- [x] Add Massachusetts (2025 Broker Fee Reform, 1-month deposit cap)
+- [x] Add Massachusetts (Broker Fee Reform, 1-month deposit cap)
 - [x] Add Ohio (30-day deposit return, itemized deductions)
 - [x] Add Michigan (Source of Income Protection, inventory checklist)
 - [x] Add Washington (90-day rent increase notice, Just Cause cities)

@@ -8,6 +8,7 @@ You need:
 - A Cloudflare account (free tier works)
 - Node.js installed (for wrangler CLI)
 - Rust installed (for building)
+- Trunk installed: `cargo install trunk`
 
 ## Step 1: Install Wrangler CLI
 
@@ -85,19 +86,50 @@ wrangler secret put DOCSIGN_API_KEY
 
 ## Step 8: Deploy agentPDF.org
 
+### Using Trunk (Recommended)
+
+Trunk handles WASM compilation, bundling, and copies static files via `Trunk.toml` hooks.
+
 ```bash
-# From project root
+cd apps/agentpdf-web
+
+# Build for production (output: www/dist/)
+trunk build --release
+
+# Deploy to Cloudflare Pages
+npx wrangler pages deploy www/dist --project-name agentpdf-org
+```
+
+**Note**: The Tampa landing page (`tampa.html`) is automatically copied to `www/dist/` via a post-build hook in `Trunk.toml`.
+
+### Alternative: Manual wasm-pack Build
+
+```bash
 cd apps/agentpdf-web/wasm
 wasm-pack build --target web --release --out-dir ../www/pkg
 
 cd ../www
+cp tampa.html dist/ 2>/dev/null || true  # Copy landing pages manually
 npx wrangler pages deploy . --project-name agentpdf-org
 ```
 
 ## Step 9: Deploy getsignatures.org (Static Site)
 
+### Using Trunk (Recommended)
+
 ```bash
-# From project root
+cd apps/docsign-web
+
+# Build for production (output: www/dist/)
+trunk build --release
+
+# Deploy to Cloudflare Pages
+npx wrangler pages deploy www/dist --project-name getsignatures-org
+```
+
+### Alternative: Manual wasm-pack Build
+
+```bash
 cd apps/docsign-web/wasm
 wasm-pack build --target web --release --out-dir ../www/pkg
 
@@ -168,10 +200,49 @@ Already fixed - wasm-opt is disabled in Cargo.toml
 ### Emails not sending
 Check that RESEND_API_KEY is set: `wrangler secret list`
 
+### Trunk "Is a directory" error
+
+**Cause**: `target` in `Trunk.toml` was pointing to the output directory instead of the input HTML file.
+
+**Fix**: Ensure `Trunk.toml` has:
+```toml
+[build]
+target = "www/index.html"   # Input HTML file (NOT "www/dist")
+dist = "www/dist"           # Output directory
+```
+
+### Tampa landing page 404 after deploy
+
+**Cause**: Static HTML files not copied to `www/dist/` during build.
+
+**Fix**: Add a post-build hook in `Trunk.toml`:
+```toml
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "cp www/tampa.html www/dist/ 2>/dev/null || true"]
+```
+
+### WASM not loading / stale build
+
+**Fix**: Clean and rebuild:
+```bash
+rm -rf www/dist www/pkg
+trunk build --release
+```
+
 ## Verify Deployment
 
 After deploying:
 
-1. Visit https://agentpdf-org.pages.dev (or your custom domain)
-2. Visit https://getsignatures-org.pages.dev
-3. Test the signing flow end-to-end
+| URL | What to Check |
+|-----|---------------|
+| `agentpdf.org` | PDF upload, compliance check, template generation |
+| `agentpdf.org/tampa.html` | Tampa landing page loads, 4 compliance tools visible |
+| `getsignatures.org` | 4-step signing wizard works |
+
+### Quick Verification Steps
+
+1. **agentPDF.org**: Click "Use a Template" → Select "florida_lease" → Verify 11 optional fields including HB 615 and flood disclosure
+2. **agentPDF.org/tampa.html**: Verify landing page loads with Flood Disclosure, Email Consent, and other cards
+3. **getsignatures.org**: Upload PDF → Add recipient → Place signature → Complete signing flow
