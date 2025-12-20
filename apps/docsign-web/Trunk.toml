@@ -1,0 +1,25 @@
+# Trunk configuration for docsign-web
+# Run: trunk serve (dev) or trunk build --release (prod)
+
+[build]
+# Target directory for build output
+target = "www/dist"
+# Path to the WASM crate
+dist = "www/dist"
+
+[watch]
+# Watch the wasm source and www directory
+watch = ["wasm/src", "www"]
+ignore = ["www/dist", "www/pkg"]
+
+[serve]
+# Development server port
+port = 8081
+# Open browser on start
+open = false
+
+[[hooks]]
+# Copy static JS files to dist
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "cp -r www/*.js www/dist/ 2>/dev/null || true"]

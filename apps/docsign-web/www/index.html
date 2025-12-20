@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="DocSigner - Local-first, zero-knowledge digital signature platform">
     <title>DocSigner - Document Signing</title>
+    <!-- Trunk: Build WASM from Rust crate -->
+    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" />
+    <!-- Trunk: Copy static JS files -->
+    <link data-trunk rel="copy-file" href="ltv-timestamp.js" />
+    <link data-trunk rel="copy-file" href="sign.js" />
+    <link data-trunk rel="copy-file" href="signature-pad.js" />
+    <link data-trunk rel="copy-file" href="guided-flow.js" />
+    <link data-trunk rel="copy-file" href="sw.js" />
+    <!-- PDF.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="ltv-timestamp.js" defer></script>
     <style>
@@ -1861,7 +1870,17 @@
     </div>
 
     <script type="module">
-        import init, { DocSign, init_storage } from './pkg/docsign_wasm.js';
+        // Wait for trunk's WASM module to complete initialization
+        // Trunk exposes bindings on window.wasmBindings after init
+        async function waitForWasm() {
+            while (!window.wasmBindings) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            return window.wasmBindings;
+        }
+
+        const wasm = await waitForWasm();
+        const { DocSign, init_storage } = wasm;
 
         // Configure PDF.js
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';

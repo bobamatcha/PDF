@@ -6,7 +6,10 @@ pub mod render;
 
 pub use errors::{CompileError, RenderStatus, ServerError};
 pub use output::OutputFormat;
-pub use render::{compile_document, validate_syntax};
+pub use render::{compile_document_sync, validate_syntax};
+
+#[cfg(feature = "server")]
+pub use render::compile_document;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="agentPDF - Multi-State Lease Compliance Platform">
     <title>agentPDF.org - Lease Compliance</title>
+    <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
+    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" />
+    <!-- Trunk: Copy static JS files -->
+    <link data-trunk rel="copy-dir" href="js" />
+    <!-- Trunk: Copy styles -->
+    <link data-trunk rel="copy-dir" href="styles" />
+    <!-- PDF.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -1005,14 +1012,24 @@
     <script src="js/docsign-handoff.js"></script>
     <script src="js/template-selector.js"></script>
     <script type="module">
-        import init, {
+        // Wait for trunk's WASM module to complete initialization
+        // Trunk exposes bindings on window.wasmBindings after init
+        async function waitForWasm() {
+            while (!window.wasmBindings) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            return window.wasmBindings;
+        }
+
+        const wasm = await waitForWasm();
+        const {
             check_compliance_wasm,
             check_compliance_for_state_wasm,
             check_compliance_with_zip_wasm,
             get_supported_states,
             extract_pdf_text,
             get_pdf_page_count
-        } from '/pkg/agentpdf_wasm.js';
+        } = wasm;
 
         // State
         let state = {
@@ -1144,11 +1161,11 @@
             updateLocalityDisplay();
         }
 
-        // Initialize WASM
+        // Initialize app (WASM already initialized by trunk)
         async function initApp() {
             try {
-                await init();
-                console.log('WASM initialized');
+                // Trunk with no-modules target already initialized WASM
+                console.log('WASM initialized by trunk');
 
                 // Initialize State Selector on upload screen
                 StateSelector.init('upload-state-selector');
@@ -1622,7 +1639,7 @@
                     const file = new File([blob], `${templateName}.pdf`, { type: 'application/pdf' });
 
                     // Load the generated PDF
-                    await loadPDF(file);
+                    await handleFile(file);
                 } catch (err) {
                     console.error('Failed to load generated template:', err);
                     alert('Failed to load generated template: ' + err.message);

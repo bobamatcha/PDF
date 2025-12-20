@@ -13,6 +13,7 @@ benchmark = []
 [dependencies]
 shared-types = { workspace = true }
 compliance-engine = { workspace = true }
+typst-engine = { path = "../../../crates/typst-engine", default-features = false, features = ["wasm"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 web-sys = { workspace = true }
@@ -33,6 +34,7 @@ console_error_panic_hook = "0.1"
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 proptest = "1.4"
+base64 = "0.21"
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

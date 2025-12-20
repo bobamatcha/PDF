@@ -494,4 +494,33 @@ mod tests {
         let chicago = Jurisdiction::with_locality(State::IL, Locality::Chicago);
         assert_eq!(chicago.id(), "US-IL-CHICAGO");
     }
+
+    #[test]
+    fn test_statute_citation() {
+        // Implemented states should have citations
+        assert_eq!(State::FL.statute_citation(), Some("F.S. Chapter 83"));
+        assert_eq!(State::TX.statute_citation(), Some("Tex. Prop. Code Ch. 92"));
+        assert_eq!(
+            State::CA.statute_citation(),
+            Some("CA Civil Code 1940-1954")
+        );
+        assert_eq!(State::NY.statute_citation(), Some("NY RPL Article 7"));
+        assert_eq!(
+            State::IL.statute_citation(),
+            Some("765 ILCS + Chicago RLTO")
+        );
+
+        // All implemented states should have Some citation
+        for state in State::implemented_states() {
+            assert!(
+                state.statute_citation().is_some(),
+                "Implemented state {:?} should have statute citation",
+                state
+            );
+        }
+
+        // Unimplemented states should have None
+        assert_eq!(State::AL.statute_citation(), None);
+        assert_eq!(State::WY.statute_citation(), None);
+    }
 }
