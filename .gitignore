@@ -1,0 +1,55 @@
+# Build targets
+/target/
+**/target/
+
+# Cargo lock for libraries (keep for binaries)
+# Cargo.lock
+
+# WASM build outputs
+**/pkg/
+**/wasm-pack.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.local
+*.pem
+*.key
+credentials.json
+
+# Test artifacts
+*.profraw
+coverage/
+lcov.info
+
+# Node (for frontend tooling)
+node_modules/
+dist/
+.parcel-cache/
+
+# Typst cache
+.typst-cache/
+
+# Database files
+*.db
+*.db-journal
+*.lance/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

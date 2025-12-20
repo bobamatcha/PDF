@@ -1,0 +1,37 @@
+[package]
+name = "docsign-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shared-types = { workspace = true }
+shared-pdf = { workspace = true }
+shared-crypto = { workspace = true }
+docsign-core = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true }
+js-sys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# PDF and crypto
+lopdf = { workspace = true }
+p256 = { workspace = true }
+sha2 = { workspace = true }
+uuid = { version = "1", features = ["v4", "js"] }
+base64 = "0.21"
+hex = "0.4"
+rand_core = { version = "0.6", features = ["getrandom"] }
+getrandom = { version = "0.2", features = ["js"] }
+
+# WASM utilities
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+proptest = "1.4"

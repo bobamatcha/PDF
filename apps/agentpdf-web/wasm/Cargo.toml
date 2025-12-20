@@ -1,0 +1,35 @@
+[package]
+name = "agentpdf-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+benchmark = []
+
+[dependencies]
+shared-types = { workspace = true }
+compliance-engine = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true }
+js-sys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = "0.6"
+uuid = { version = "1.0", features = ["v4"] }
+
+# PDF text extraction and parsing
+pdf-extract = "0.7"
+lopdf = { workspace = true }
+pdf_oxide = "0.2"
+
+# WASM utilities
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+proptest = "1.4"

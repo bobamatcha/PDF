@@ -1,0 +1,220 @@
+:root {
+    --gulf-stream-blue: #005163;
+    --sunset-gold: #AB946C;
+    --document-grey: #F5F5F7;
+    --paper-white: #FFFFFF;
+    --critical-red: #DC2626;
+    --warning-orange: #F59E0B;
+    --success-green: #10B981;
+    --text-primary: #1F2937;
+    --text-secondary: #6B7280;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background-color: var(--document-grey);
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+/* Loading screen */
+.loading-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    gap: 1rem;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--document-grey);
+    border-top-color: var(--gulf-stream-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Layout */
+.app-container {
+    display: grid;
+    grid-template-columns: 200px 1fr 300px;
+    grid-template-rows: 60px 1fr;
+    height: 100vh;
+}
+
+.top-bar {
+    grid-column: 1 / -1;
+    background: var(--paper-white);
+    border-bottom: 1px solid #E5E7EB;
+    display: flex;
+    align-items: center;
+    padding: 0 1.5rem;
+    gap: 1rem;
+}
+
+.left-sidebar {
+    background: var(--paper-white);
+    border-right: 1px solid #E5E7EB;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+.center-stage {
+    background: var(--document-grey);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: auto;
+    padding: 2rem;
+}
+
+.right-sidebar {
+    background: var(--paper-white);
+    border-left: 1px solid #E5E7EB;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Buttons */
+.btn {
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.btn-primary {
+    background: var(--gulf-stream-blue);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #004152;
+}
+
+.btn-secondary {
+    background: var(--paper-white);
+    color: var(--text-primary);
+    border: 1px solid #E5E7EB;
+}
+
+/* Cards */
+.card {
+    background: var(--paper-white);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    padding: 1.5rem;
+}
+
+/* Compliance badges */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.badge-critical {
+    background: #FEE2E2;
+    color: var(--critical-red);
+}
+
+.badge-warning {
+    background: #FEF3C7;
+    color: var(--warning-orange);
+}
+
+.badge-success {
+    background: #D1FAE5;
+    color: var(--success-green);
+}
+
+/* PDF Viewer */
+.pdf-container {
+    position: relative;
+    background: var(--paper-white);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.pdf-canvas {
+    display: block;
+}
+
+.pdf-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.pdf-overlay > * {
+    pointer-events: auto;
+}
+
+/* Violation list */
+.violation-item {
+    padding: 0.75rem;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.violation-item:hover {
+    background: var(--document-grey);
+}
+
+.violation-item.critical {
+    border-left-color: var(--critical-red);
+}
+
+.violation-item.warning {
+    border-left-color: var(--warning-orange);
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    border-bottom: 1px solid #E5E7EB;
+}
+
+.tab {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+}
+
+.tab.active {
+    border-bottom-color: var(--gulf-stream-blue);
+    color: var(--gulf-stream-blue);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .app-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: 60px 1fr auto;
+    }
+
+    .left-sidebar, .right-sidebar {
+        display: none;
+    }
+}

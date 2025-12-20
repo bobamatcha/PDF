@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="agentPDF - Florida Lease Compliance Platform">
+    <title>agentPDF.org - Florida Lease Compliance</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <style>
+        :root {
+            /* Florida Trust Palette */
+            --gulf-stream-blue: #005163;
+            --gulf-stream-dark: #003d4a;
+            --sunset-gold: #AB946C;
+            --document-grey: #F5F5F7;
+            --paper-white: #FFFFFF;
+            --critical-red: #DC2626;
+            --warning-orange: #F59E0B;
+            --success-green: #10B981;
+            --text-primary: #1F2937;
+            --text-secondary: #6B7280;
+            --text-tertiary: #9CA3AF;
+            --border-primary: #E5E7EB;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--document-grey);
+            color: var(--text-primary);
+            line-height: 1.5;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--gulf-stream-blue);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: var(--shadow-md);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .header-brand h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .header-brand .badge {
+            background: var(--sunset-gold);
+            color: white;
+            font-size: 0.625rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .header-doc-name {
+            color: rgba(255,255,255,0.8);
+            font-size: 0.875rem;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--gulf-stream-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--gulf-stream-dark);
+        }
+
+        .btn-secondary {
+            background: var(--paper-white);
+            color: var(--text-primary);
+            border: 1px solid var(--border-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--document-grey);
+        }
+
+        .btn-success {
+            background: var(--success-green);
+            color: white;
+        }
+
+        .btn-icon {
+            padding: 0.5rem;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+        }
+
+        .btn-icon:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Main Layout */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 52px);
+        }
+
+        /* Upload Screen */
+        .upload-screen {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .upload-screen.hidden {
+            display: none;
+        }
+
+        .upload-area {
+            background: var(--paper-white);
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            box-shadow: var(--shadow-md);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--border-primary);
+            border-radius: 8px;
+            padding: 4rem 2rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.dragover {
+            border-color: var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.05);
+        }
+
+        .drop-zone-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        .drop-zone-text {
+            font-size: 1.125rem;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+
+        .drop-zone-subtext {
+            color: var(--text-tertiary);
+            font-size: 0.875rem;
+        }
+
+        /* Editor Screen */
+        .editor-screen {
+            flex: 1;
+            display: none;
+            height: 100%;
+        }
+
+        .editor-screen.active {
+            display: flex;
+        }
+
+        /* PDF Viewer */
+        .pdf-viewer-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .pdf-toolbar {
+            background: var(--paper-white);
+            border-bottom: 1px solid var(--border-primary);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .page-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .page-nav button {
+            padding: 0.375rem 0.75rem;
+            background: var(--document-grey);
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .page-nav button:hover:not(:disabled) {
+            background: var(--border-primary);
+        }
+
+        .page-nav button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .page-nav span {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .zoom-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .zoom-controls button {
+            padding: 0.375rem 0.5rem;
+            background: var(--document-grey);
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+        }
+
+        .zoom-controls span {
+            font-size: 0.875rem;
+            min-width: 50px;
+            text-align: center;
+        }
+
+        .pdf-canvas-wrapper {
+            flex: 1;
+            overflow: auto;
+            background: #E5E7EB;
+            padding: 1.5rem;
+        }
+
+        .pdf-pages-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .pdf-page-wrapper {
+            position: relative;
+            background: var(--paper-white);
+            box-shadow: var(--shadow-md);
+        }
+
+        .pdf-page-wrapper canvas {
+            display: block;
+        }
+
+        .pdf-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        .pdf-overlay > * {
+            pointer-events: auto;
+        }
+
+        /* Right Sidebar */
+        .right-sidebar {
+            width: 320px;
+            background: var(--paper-white);
+            border-left: 1px solid var(--border-primary);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-tabs {
+            display: flex;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .sidebar-tab {
+            flex: 1;
+            padding: 0.75rem;
+            text-align: center;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .sidebar-tab:hover {
+            color: var(--text-primary);
+            background: var(--document-grey);
+        }
+
+        .sidebar-tab.active {
+            color: var(--gulf-stream-blue);
+            border-bottom-color: var(--gulf-stream-blue);
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .sidebar-panel {
+            display: none;
+            padding: 1rem;
+        }
+
+        .sidebar-panel.active {
+            display: block;
+        }
+
+        /* Compliance Panel */
+        .compliance-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .compliance-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .compliance-status.checking {
+            background: #FEF3C7;
+            color: #92400E;
+        }
+
+        .compliance-status.compliant {
+            background: #D1FAE5;
+            color: #065F46;
+        }
+
+        .compliance-status.non-compliant {
+            background: #FEE2E2;
+            color: #991B1B;
+        }
+
+        .violation-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .violation-item {
+            padding: 0.75rem;
+            border-radius: 6px;
+            border-left: 3px solid;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .violation-item:hover {
+            background: var(--document-grey);
+        }
+
+        .violation-item.critical {
+            border-left-color: var(--critical-red);
+            background: #FEF2F2;
+        }
+
+        .violation-item.warning {
+            border-left-color: var(--warning-orange);
+            background: #FFFBEB;
+        }
+
+        .violation-statute {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .violation-message {
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+
+        .violation-page {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            margin-top: 0.25rem;
+        }
+
+        /* Fields Panel */
+        .field-types {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .field-type {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .field-type:hover {
+            border-color: var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.05);
+        }
+
+        .field-type.selected {
+            border-color: var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.1);
+        }
+
+        .field-type-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--document-grey);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.75rem;
+            font-size: 1.25rem;
+        }
+
+        .field-type-label {
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        /* Placed Fields */
+        .placed-field {
+            position: absolute;
+            border: 2px solid var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.1);
+            border-radius: 4px;
+            cursor: move;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--gulf-stream-blue);
+            min-width: 80px;
+            min-height: 24px;
+        }
+
+        .placed-field .delete-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 20px;
+            height: 20px;
+            background: var(--critical-red);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 0.75rem;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .placed-field:hover .delete-btn {
+            display: flex;
+        }
+
+        /* Ghost field */
+        .ghost-field {
+            position: fixed;
+            pointer-events: none;
+            opacity: 0.7;
+            z-index: 1000;
+            border: 2px dashed var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.1);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            color: var(--gulf-stream-blue);
+        }
+
+        .ghost-field.hidden {
+            display: none;
+        }
+
+        /* DocsSign Integration */
+        .docsign-section {
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-primary);
+        }
+
+        .docsign-section h4 {
+            font-size: 0.875rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--document-grey);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border-primary);
+            border-top-color: var(--gulf-stream-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            margin-top: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Empty States */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-tertiary);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .right-sidebar {
+                position: fixed;
+                right: -320px;
+                top: 52px;
+                bottom: 0;
+                transition: right 0.3s;
+                z-index: 50;
+            }
+
+            .right-sidebar.open {
+                right: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="spinner"></div>
+        <p class="loading-text">Loading agentPDF...</p>
+    </div>
+
+    <!-- Ghost field for placement -->
+    <div id="ghost-field" class="ghost-field hidden"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-brand">
+            <h1>agentPDF</h1>
+            <span class="badge">Florida</span>
+        </div>
+        <span id="doc-name" class="header-doc-name"></span>
+        <div class="header-actions">
+            <button id="btn-new" class="btn-icon" title="New Document" style="display: none;">
+                <span>📄</span>
+            </button>
+            <button id="btn-download" class="btn btn-secondary" style="display: none;">
+                <span>⬇️</span> Download
+            </button>
+            <button id="btn-send-sign" class="btn btn-success" style="display: none;">
+                <span>✍️</span> Send to DocSign
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Upload Screen -->
+        <div id="upload-screen" class="upload-screen">
+            <div class="upload-area">
+                <div id="drop-zone" class="drop-zone">
+                    <div class="drop-zone-icon">📄</div>
+                    <div class="drop-zone-text">Drag and drop your Florida lease PDF here</div>
+                    <div class="drop-zone-subtext">or click to browse files</div>
+                    <input type="file" id="file-input" accept=".pdf" style="display: none;">
+                </div>
+                <p style="margin-top: 1.5rem; color: var(--text-tertiary); font-size: 0.875rem;">
+                    Your document stays on your device. We check compliance with Florida Statute Chapter 83.
+                </p>
+            </div>
+        </div>
+
+        <!-- Editor Screen -->
+        <div id="editor-screen" class="editor-screen">
+            <!-- PDF Viewer -->
+            <div class="pdf-viewer-container">
+                <div class="pdf-toolbar">
+                    <div class="page-nav">
+                        <button id="prev-page" disabled>← Prev</button>
+                        <span>Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
+                        <button id="next-page" disabled>Next →</button>
+                    </div>
+                    <div class="zoom-controls">
+                        <button id="zoom-out">−</button>
+                        <span id="zoom-level">100%</span>
+                        <button id="zoom-in">+</button>
+                        <button id="zoom-fit">Fit</button>
+                    </div>
+                </div>
+                <div id="pdf-canvas-wrapper" class="pdf-canvas-wrapper">
+                    <div id="pdf-pages-container" class="pdf-pages-container">
+                        <!-- PDF pages rendered here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Sidebar -->
+            <aside class="right-sidebar">
+                <div class="sidebar-tabs">
+                    <div class="sidebar-tab active" data-tab="compliance">Compliance</div>
+                    <div class="sidebar-tab" data-tab="fields">Fields</div>
+                </div>
+                <div class="sidebar-content">
+                    <!-- Compliance Panel -->
+                    <div id="panel-compliance" class="sidebar-panel active">
+                        <div class="compliance-header">
+                            <h3 style="font-size: 0.875rem; font-weight: 600;">Chapter 83 Check</h3>
+                            <div id="compliance-status" class="compliance-status checking">
+                                <span>⏳</span> Analyzing...
+                            </div>
+                        </div>
+                        <div id="violation-list" class="violation-list">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">📋</div>
+                                <p>Upload a lease to check compliance</p>
+                            </div>
+                        </div>
+
+                        <!-- DocSign Integration -->
+                        <div class="docsign-section">
+                            <h4>Ready to collect signatures?</h4>
+                            <button id="btn-open-docsign" class="btn btn-primary" style="width: 100%;">
+                                <span>✍️</span> Open in DocSign
+                            </button>
+                            <p style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-tertiary);">
+                                Send this document for digital signatures
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Fields Panel -->
+                    <div id="panel-fields" class="sidebar-panel">
+                        <h3 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 1rem;">Place Fields</h3>
+                        <div class="field-types">
+                            <div class="field-type" data-type="signature">
+                                <div class="field-type-icon">✍️</div>
+                                <div class="field-type-label">Signature</div>
+                            </div>
+                            <div class="field-type" data-type="initials">
+                                <div class="field-type-icon">🔤</div>
+                                <div class="field-type-label">Initials</div>
+                            </div>
+                            <div class="field-type" data-type="date">
+                                <div class="field-type-icon">📅</div>
+                                <div class="field-type-label">Date</div>
+                            </div>
+                            <div class="field-type" data-type="text">
+                                <div class="field-type-icon">📝</div>
+                                <div class="field-type-label">Text Field</div>
+                            </div>
+                        </div>
+                        <p style="margin-top: 1rem; font-size: 0.75rem; color: var(--text-tertiary);">
+                            Select a field type, then click on the PDF to place it.
+                        </p>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script type="module">
+        import init, {
+            check_compliance_wasm,
+            extract_pdf_text,
+            get_pdf_page_count
+        } from '/pkg/agentpdf_wasm.js';
+
+        // State
+        let state = {
+            pdfDoc: null,
+            pdfBytes: null,
+            currentPage: 1,
+            totalPages: 0,
+            scale: 1.0,
+            selectedFieldType: null,
+            placedFields: [],
+            violations: []
+        };
+
+        // DOM Elements
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const uploadScreen = document.getElementById('upload-screen');
+        const editorScreen = document.getElementById('editor-screen');
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const docName = document.getElementById('doc-name');
+        const pdfPagesContainer = document.getElementById('pdf-pages-container');
+        const currentPageSpan = document.getElementById('current-page');
+        const totalPagesSpan = document.getElementById('total-pages');
+        const prevPageBtn = document.getElementById('prev-page');
+        const nextPageBtn = document.getElementById('next-page');
+        const zoomLevelSpan = document.getElementById('zoom-level');
+        const violationList = document.getElementById('violation-list');
+        const complianceStatus = document.getElementById('compliance-status');
+        const ghostField = document.getElementById('ghost-field');
+        const btnDownload = document.getElementById('btn-download');
+        const btnSendSign = document.getElementById('btn-send-sign');
+        const btnNew = document.getElementById('btn-new');
+
+        // Initialize WASM
+        async function initApp() {
+            try {
+                await init();
+                console.log('WASM initialized');
+                loadingOverlay.classList.add('hidden');
+            } catch (err) {
+                console.error('Failed to initialize WASM:', err);
+                loadingOverlay.querySelector('.loading-text').textContent = 'Failed to load. Please refresh.';
+            }
+        }
+
+        // File Upload Handlers
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type === 'application/pdf') {
+                handleFile(file);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+
+        async function handleFile(file) {
+            try {
+                loadingOverlay.classList.remove('hidden');
+                loadingOverlay.querySelector('.loading-text').textContent = 'Loading PDF...';
+
+                const arrayBuffer = await file.arrayBuffer();
+                state.pdfBytes = new Uint8Array(arrayBuffer);
+
+                // Load with PDF.js
+                state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
+                state.totalPages = state.pdfDoc.numPages;
+                state.currentPage = 1;
+
+                // Update UI
+                docName.textContent = file.name;
+                totalPagesSpan.textContent = state.totalPages;
+                btnDownload.style.display = 'inline-flex';
+                btnSendSign.style.display = 'inline-flex';
+                btnNew.style.display = 'inline-flex';
+
+                // Show editor
+                uploadScreen.classList.add('hidden');
+                editorScreen.classList.add('active');
+
+                // Render all pages
+                await renderAllPages();
+
+                // Run compliance check
+                await runComplianceCheck();
+
+                loadingOverlay.classList.add('hidden');
+            } catch (err) {
+                console.error('Failed to load PDF:', err);
+                loadingOverlay.querySelector('.loading-text').textContent = 'Failed to load PDF.';
+                setTimeout(() => loadingOverlay.classList.add('hidden'), 2000);
+            }
+        }
+
+        async function renderAllPages() {
+            pdfPagesContainer.innerHTML = '';
+
+            for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+                const page = await state.pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: state.scale });
+
+                // Create wrapper
+                const wrapper = document.createElement('div');
+                wrapper.className = 'pdf-page-wrapper';
+                wrapper.dataset.page = pageNum;
+
+                // Create canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                wrapper.appendChild(canvas);
+
+                // Create overlay
+                const overlay = document.createElement('div');
+                overlay.className = 'pdf-overlay';
+                overlay.dataset.page = pageNum;
+                wrapper.appendChild(overlay);
+
+                pdfPagesContainer.appendChild(wrapper);
+
+                // Render page
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport }).promise;
+
+                // Add click handler for field placement
+                overlay.addEventListener('click', (e) => handleOverlayClick(e, pageNum));
+            }
+
+            updatePageNav();
+        }
+
+        async function runComplianceCheck() {
+            complianceStatus.className = 'compliance-status checking';
+            complianceStatus.innerHTML = '<span>⏳</span> Analyzing...';
+
+            try {
+                // Extract text from PDF using WASM
+                const text = await extract_pdf_text(state.pdfBytes);
+
+                // Create document object for compliance check
+                const document = {
+                    text: text,
+                    pages: state.totalPages
+                };
+
+                // Run compliance check
+                const resultJson = check_compliance_wasm(JSON.stringify(document));
+                const result = JSON.parse(resultJson);
+
+                state.violations = result.violations || [];
+                renderViolations();
+            } catch (err) {
+                console.error('Compliance check failed:', err);
+                complianceStatus.className = 'compliance-status';
+                complianceStatus.innerHTML = '<span>⚠️</span> Check failed';
+            }
+        }
+
+        function renderViolations() {
+            if (state.violations.length === 0) {
+                complianceStatus.className = 'compliance-status compliant';
+                complianceStatus.innerHTML = '<span>✅</span> Compliant';
+                violationList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">✅</div>
+                        <p>No compliance issues found!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const criticalCount = state.violations.filter(v => v.severity === 'Critical').length;
+            const warningCount = state.violations.filter(v => v.severity === 'Warning').length;
+
+            complianceStatus.className = 'compliance-status non-compliant';
+            complianceStatus.innerHTML = `<span>⚠️</span> ${criticalCount + warningCount} issues`;
+
+            violationList.innerHTML = state.violations.map((v, i) => `
+                <div class="violation-item ${v.severity === 'Critical' ? 'critical' : 'warning'}"
+                     data-index="${i}" data-page="${v.page || 1}">
+                    <div class="violation-statute">§ ${v.statute}</div>
+                    <div class="violation-message">${v.message}</div>
+                    ${v.page ? `<div class="violation-page">Page ${v.page}</div>` : ''}
+                </div>
+            `).join('');
+
+            // Add click handlers to violations
+            violationList.querySelectorAll('.violation-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const page = parseInt(item.dataset.page);
+                    scrollToPage(page);
+                });
+            });
+        }
+
+        function scrollToPage(pageNum) {
+            const wrapper = pdfPagesContainer.querySelector(`[data-page="${pageNum}"]`);
+            if (wrapper) {
+                wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        // Page Navigation
+        function updatePageNav() {
+            prevPageBtn.disabled = state.currentPage <= 1;
+            nextPageBtn.disabled = state.currentPage >= state.totalPages;
+            currentPageSpan.textContent = state.currentPage;
+        }
+
+        prevPageBtn.addEventListener('click', () => {
+            if (state.currentPage > 1) {
+                state.currentPage--;
+                scrollToPage(state.currentPage);
+                updatePageNav();
+            }
+        });
+
+        nextPageBtn.addEventListener('click', () => {
+            if (state.currentPage < state.totalPages) {
+                state.currentPage++;
+                scrollToPage(state.currentPage);
+                updatePageNav();
+            }
+        });
+
+        // Zoom Controls
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            state.scale = Math.min(state.scale + 0.25, 3);
+            zoomLevelSpan.textContent = Math.round(state.scale * 100) + '%';
+            renderAllPages();
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            state.scale = Math.max(state.scale - 0.25, 0.5);
+            zoomLevelSpan.textContent = Math.round(state.scale * 100) + '%';
+            renderAllPages();
+        });
+
+        document.getElementById('zoom-fit').addEventListener('click', () => {
+            state.scale = 1.0;
+            zoomLevelSpan.textContent = '100%';
+            renderAllPages();
+        });
+
+        // Tab Switching
+        document.querySelectorAll('.sidebar-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+            });
+        });
+
+        // Field Type Selection
+        document.querySelectorAll('.field-type').forEach(fieldType => {
+            fieldType.addEventListener('click', () => {
+                document.querySelectorAll('.field-type').forEach(f => f.classList.remove('selected'));
+                fieldType.classList.add('selected');
+                state.selectedFieldType = fieldType.dataset.type;
+                ghostField.textContent = getFieldLabel(state.selectedFieldType);
+                document.body.style.cursor = 'crosshair';
+            });
+        });
+
+        function getFieldLabel(type) {
+            const labels = {
+                signature: 'Signature',
+                initials: 'Initials',
+                date: 'Date',
+                text: 'Text'
+            };
+            return labels[type] || type;
+        }
+
+        // Ghost field follows cursor
+        document.addEventListener('mousemove', (e) => {
+            if (state.selectedFieldType) {
+                ghostField.classList.remove('hidden');
+                ghostField.style.left = e.clientX + 10 + 'px';
+                ghostField.style.top = e.clientY + 10 + 'px';
+            }
+        });
+
+        // Cancel field placement with Escape
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && state.selectedFieldType) {
+                cancelFieldPlacement();
+            }
+        });
+
+        function cancelFieldPlacement() {
+            state.selectedFieldType = null;
+            ghostField.classList.add('hidden');
+            document.querySelectorAll('.field-type').forEach(f => f.classList.remove('selected'));
+            document.body.style.cursor = '';
+        }
+
+        // Place field on overlay click
+        function handleOverlayClick(e, pageNum) {
+            if (!state.selectedFieldType) return;
+
+            const overlay = e.currentTarget;
+            const rect = overlay.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const field = document.createElement('div');
+            field.className = 'placed-field';
+            field.textContent = getFieldLabel(state.selectedFieldType);
+            field.style.left = x + 'px';
+            field.style.top = y + 'px';
+            field.dataset.type = state.selectedFieldType;
+            field.dataset.page = pageNum;
+
+            // Add delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = '×';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                field.remove();
+            });
+            field.appendChild(deleteBtn);
+
+            overlay.appendChild(field);
+
+            state.placedFields.push({
+                type: state.selectedFieldType,
+                page: pageNum,
+                x, y
+            });
+
+            cancelFieldPlacement();
+        }
+
+        // New Document
+        btnNew.addEventListener('click', () => {
+            if (confirm('Start with a new document? Current changes will be lost.')) {
+                location.reload();
+            }
+        });
+
+        // Download PDF
+        btnDownload.addEventListener('click', () => {
+            if (state.pdfBytes) {
+                const blob = new Blob([state.pdfBytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = docName.textContent || 'document.pdf';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        });
+
+        // Send to DocSign
+        btnSendSign.addEventListener('click', openInDocSign);
+        document.getElementById('btn-open-docsign').addEventListener('click', openInDocSign);
+
+        function openInDocSign() {
+            if (!state.pdfBytes) {
+                alert('Please upload a PDF first.');
+                return;
+            }
+
+            // Encode PDF as base64 and open DocSign
+            // For local development, we use a relative path
+            // In production, this would be the DocSign URL
+            const docsignPath = '../../docsign/www/index.html';
+
+            // Store in sessionStorage for cross-page transfer
+            try {
+                const base64 = btoa(String.fromCharCode.apply(null, state.pdfBytes));
+                sessionStorage.setItem('agentpdf_document', base64);
+                sessionStorage.setItem('agentpdf_filename', docName.textContent);
+                sessionStorage.setItem('agentpdf_fields', JSON.stringify(state.placedFields));
+
+                window.open(docsignPath, '_blank');
+            } catch (err) {
+                console.error('Failed to transfer document:', err);
+                alert('Document too large to transfer directly. Please download and upload to DocSign.');
+            }
+        }
+
+        // Initialize
+        initApp();
+    </script>
+</body>
+</html>

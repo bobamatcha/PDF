@@ -1,0 +1,40 @@
+[package]
+name = "mcp-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mcp-server"
+path = "src/main.rs"
+
+[features]
+default = []
+http = ["axum", "tower", "tower-http", "futures"]
+
+[dependencies]
+shared-types = { workspace = true }
+typst-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# MCP protocol
+rmcp = { workspace = true }
+
+# Optional HTTP transport
+axum = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+futures = { version = "0.3", optional = true }
+
+# Utilities
+base64 = "0.21"
+regex = { workspace = true }
+async-trait = "0.1"

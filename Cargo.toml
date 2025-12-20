@@ -1,0 +1,148 @@
+[workspace]
+resolver = "2"
+
+members = [
+    # Shared crates
+    "crates/shared-types",
+    "crates/shared-pdf",
+    "crates/shared-crypto",
+    "crates/compliance-engine",
+    # "crates/corpus-core",  # TODO: Fix fastembed/ort_sys size_t issue
+    "crates/docsign-core",
+    "crates/typst-engine",
+
+    # Apps
+    "apps/agentpdf-web/wasm",
+    "apps/docsign-web/wasm",
+    # "apps/docsign-web/worker", # TODO: Fix worker-sys
+    # "apps/corpus-api",         # TODO: Depends on corpus-core
+    "apps/mcp-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Boba Match Solutions"]
+license = "MIT"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async
+tokio = { version = "1.0", features = ["full"] }
+
+# Web framework
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+
+# PDF handling
+lopdf = "0.33"
+pdf-extract = "0.7"
+
+# Cryptography
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+sha2 = "0.10"
+cms = "0.2"
+x509-cert = "0.2"
+
+# WASM
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "console",
+    "Window",
+    "Navigator",
+    "Storage",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlInputElement",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "CssStyleDeclaration",
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
+    "File",
+    "FileReader",
+    "FileList",
+    "Performance",
+    "Event",
+    "EventTarget",
+    "MouseEvent",
+    "DragEvent",
+    "DataTransfer",
+    "DataTransferItemList",
+    "DataTransferItem",
+    "DomStringList",
+    "DomException",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbObjectStore",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbOpenDbRequest",
+    "IdbKeyRange",
+    "IdbCursorWithValue",
+    "IdbIndex",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+] }
+wasm-bindgen-futures = "0.4"
+
+# Search
+tantivy = "0.22"
+
+# Embeddings (for corpus)
+fastembed = "4"
+
+# MCP protocol
+rmcp = { version = "0.1", features = ["server"] }
+
+# Typst
+typst = "0.12"
+comemo = "0.4"
+
+# Error handling
+thiserror = "2"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Testing
+pretty_assertions = "1.4"
+proptest = "1.4"
+
+# Regex
+regex = "1.11"
+lazy_static = "1.5"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Internal crates
+shared-types = { path = "crates/shared-types" }
+shared-pdf = { path = "crates/shared-pdf" }
+shared-crypto = { path = "crates/shared-crypto" }
+compliance-engine = { path = "crates/compliance-engine" }
+corpus-core = { path = "crates/corpus-core" }
+docsign-core = { path = "crates/docsign-core" }
+typst-engine = { path = "crates/typst-engine" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.release.package."*"]
+opt-level = "s"

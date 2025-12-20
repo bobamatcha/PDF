@@ -1,0 +1,34 @@
+[package]
+name = "typst-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+once_cell = "1.21"
+
+# Typst
+typst = { workspace = true }
+comemo = { workspace = true }
+typst-pdf = "0.12"
+typst-svg = "0.12"
+typst-render = "0.12"
+typst-assets = { version = "0.12", features = ["fonts"] }
+
+# PDF verification
+pdf-extract = "0.7"
+regex = { workspace = true }
+lazy_static = { workspace = true }
+
+# Utilities
+base64 = "0.21"
+chrono = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

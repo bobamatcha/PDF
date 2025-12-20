@@ -1,0 +1,28 @@
+[package]
+name = "corpus-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+shared-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+# Search
+tantivy = { workspace = true }
+fastembed = { workspace = true }
+
+# Storage
+lancedb = "0.14"
+arrow = "53"
+
+# Utilities
+async-trait = "0.1"
+futures = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

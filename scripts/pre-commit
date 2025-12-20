@@ -1,0 +1,30 @@
+#!/bin/bash
+# Pre-commit hook aligned with CI workflow
+# Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+echo "🔍 Running pre-commit checks..."
+
+# Format check
+echo "  Checking formatting..."
+if ! cargo fmt --all -- --check; then
+    echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
+    exit 1
+fi
+
+# Clippy
+echo "  Running Clippy..."
+if ! cargo clippy --all-targets --all-features -- -D warnings; then
+    echo "❌ Clippy found issues. Fix the warnings above."
+    exit 1
+fi
+
+# Tests
+echo "  Running tests..."
+if ! cargo test --all-features --workspace; then
+    echo "❌ Tests failed."
+    exit 1
+fi
+
+echo "✅ All pre-commit checks passed!"

@@ -1,0 +1,4572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="DocSigner - Local-first, zero-knowledge digital signature platform">
+    <title>DocSigner - Document Signing</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="ltv-timestamp.js" defer></script>
+    <style>
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --bg-tertiary: #f9fafb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --text-tertiary: #9ca3af;
+            --border-primary: #e5e7eb;
+            --border-secondary: #d1d5db;
+            --header-bg: #1e40af;
+            --header-text: white;
+            --accent-primary: #1e40af;
+            --accent-hover: #1e3a8a;
+            --success: #10b981;
+            --shadow-sm: rgba(0,0,0,0.1);
+        }
+
+        body.dark-mode {
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --bg-tertiary: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #d1d5db;
+            --text-tertiary: #9ca3af;
+            --border-primary: #374151;
+            --border-secondary: #4b5563;
+            --header-bg: #1e3a8a;
+            --header-text: #f9fafb;
+            --accent-primary: #3b82f6;
+            --accent-hover: #2563eb;
+            --success: #10b981;
+            --shadow-sm: rgba(0,0,0,0.3);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .header {
+            background: var(--header-bg);
+            color: var(--header-text);
+            padding: 1rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px var(--shadow-sm);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Stepper */
+        .stepper {
+            background: var(--bg-secondary);
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: center;
+            gap: 0;
+            transition: background-color 0.3s ease;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            color: var(--text-tertiary);
+        }
+
+        .step-circle {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--border-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-right: 0.5rem;
+        }
+
+        .step-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .step.active .step-circle {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .step.active .step-label {
+            color: var(--accent-primary);
+        }
+
+        .step.completed .step-circle {
+            background: var(--success);
+            color: white;
+        }
+
+        .step.completed .step-label {
+            color: var(--success);
+        }
+
+        .step-connector {
+            width: 60px;
+            height: 2px;
+            background: var(--border-primary);
+            margin: 0 1rem;
+        }
+
+        .step.completed + .step-connector,
+        .step-connector.completed {
+            background: #10b981;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: #1e40af;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1e3a8a;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn:focus-visible {
+            outline: 2px solid #1e40af;
+            outline-offset: 2px;
+        }
+
+        /* Skip Link for Accessibility */
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background: #1e40af;
+            color: white;
+            padding: 8px 16px;
+            z-index: 2000;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .skip-link:focus {
+            top: 0;
+        }
+
+        /* Focus styles for interactive elements */
+        input:focus-visible, select:focus-visible, button:focus-visible {
+            outline: 2px solid #1e40af;
+            outline-offset: 2px;
+        }
+
+        .step:focus-visible {
+            outline: 2px solid #1e40af;
+            outline-offset: 4px;
+            border-radius: 4px;
+        }
+
+        .field-type:focus-visible {
+            outline: 2px solid #1e40af;
+            outline-offset: 2px;
+            border-radius: 8px;
+        }
+
+        .recipient-item:focus-visible {
+            outline: 2px solid #1e40af;
+            outline-offset: 2px;
+        }
+
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Full-width mode for step 3 (Fields) - use all available space */
+        .main-content.full-width {
+            max-width: none;
+            padding: 1rem 2rem;
+        }
+
+        .step-content {
+            display: none;
+        }
+
+        .step-content.active {
+            display: block;
+        }
+
+        /* Step 1: Upload */
+        .upload-area {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 3rem;
+            text-align: center;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .drop-zone {
+            border: 2px dashed var(--border-primary);
+            border-radius: 8px;
+            padding: 4rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--accent-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .drop-zone-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        .drop-zone-text {
+            font-size: 1.125rem;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .drop-zone-subtext {
+            color: var(--text-tertiary);
+        }
+
+        /* Step 2: Recipients */
+        .recipients-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .card-body {
+            padding: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 0.375rem;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.625rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+        }
+
+        .recipient-list {
+            list-style: none;
+            position: relative;
+            min-height: 50px;
+        }
+
+        .recipient-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            background: var(--bg-tertiary);
+            cursor: grab;
+            user-select: none;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+
+        .recipient-item:active {
+            cursor: grabbing;
+        }
+
+        .recipient-item.dragging {
+            position: relative;
+            z-index: 1000;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+            background: var(--bg-secondary);
+            transform: scale(1.02);
+            cursor: grabbing;
+        }
+
+        .recipient-item.drag-over-above {
+            transform: translateY(4px);
+        }
+
+        .recipient-item.drag-over-below {
+            transform: translateY(-4px);
+        }
+
+        .recipient-item.drag-ghost {
+            opacity: 0.4;
+        }
+
+        .drag-placeholder {
+            height: 56px;
+            border: 2px dashed #1e40af;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            background: rgba(30, 64, 175, 0.05);
+            transition: all 0.15s ease;
+        }
+
+        .recipient-drag-handle {
+            cursor: grab;
+            padding: 0.25rem;
+            margin-right: 0.5rem;
+            color: #9ca3af;
+            display: flex;
+            align-items: center;
+        }
+
+        .recipient-drag-handle:hover {
+            color: #6b7280;
+        }
+
+        .recipient-order {
+            width: 28px;
+            height: 28px;
+            background: #1e40af;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-right: 0.75rem;
+            flex-shrink: 0;
+        }
+
+        .recipient-info {
+            flex: 1;
+        }
+
+        .recipient-name {
+            font-weight: 500;
+            color: #374151;
+            font-size: 0.875rem;
+        }
+
+        .recipient-email {
+            color: #6b7280;
+            font-size: 0.75rem;
+        }
+
+        .recipient-actions {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .recipient-actions button {
+            padding: 0.25rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #6b7280;
+            border-radius: 4px;
+        }
+
+        .recipient-actions button:hover {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        /* PDF Preview in Recipients */
+        .pdf-preview-small {
+            max-height: 400px;
+            overflow: auto;
+            background: #e5e7eb;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .pdf-preview-small canvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* Step 3: Fields */
+        .fields-container {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 1.5rem;
+            min-height: 600px;
+        }
+
+        .field-toolbar {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            position: sticky;
+            top: 1rem;
+            max-height: calc(100vh - 200px);
+        }
+
+        .field-toolbar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .field-toolbar-header h3 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .recipient-selector {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .field-types {
+            padding: 1rem;
+            flex: 1;
+            overflow: auto;
+        }
+
+        .field-type {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--bg-secondary);
+        }
+
+        .field-type:hover {
+            border-color: var(--accent-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .field-type.selected {
+            border-color: var(--accent-primary);
+            background: var(--bg-tertiary);
+            box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.2);
+        }
+
+        .field-type-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.75rem;
+            font-size: 1.25rem;
+        }
+
+        .field-type-label {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+        }
+
+        .pdf-editor {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .pdf-editor-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-primary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .page-nav {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .page-nav button {
+            padding: 0.375rem 0.75rem;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .page-nav button:hover:not(:disabled) {
+            background: #e5e7eb;
+        }
+
+        .page-nav span {
+            font-size: 0.875rem;
+            color: #374151;
+        }
+
+        .placement-hint {
+            font-size: 0.75rem;
+            color: #6b7280;
+            padding: 0.375rem 0.75rem;
+            background: #fef3c7;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .placement-hint.active {
+            display: block;
+            color: #92400e;
+        }
+
+        .pdf-canvas-container {
+            flex: 1;
+            overflow: auto;
+            background: #e5e7eb;
+            padding: 1.5rem;
+            min-height: 500px;
+            max-height: calc(100vh - 280px);
+        }
+
+        .pdf-pages-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        /* On small screens, don't center - allows horizontal scroll without clipping left side */
+        @media (max-width: 768px) {
+            .pdf-pages-wrapper {
+                align-items: flex-start;
+            }
+        }
+
+        /* Mobile responsive styles */
+        @media (max-width: 480px) {
+            /* Ensure form inputs meet 44px minimum touch target (Apple HIG) */
+            .form-group input, .form-group select {
+                min-height: 44px;
+                padding: 0.75rem;
+                font-size: 1rem; /* Prevent iOS zoom on focus */
+            }
+
+            /* Stepper: make step labels smaller to fit */
+            .step-label {
+                font-size: 0.75rem;
+            }
+
+            .step-connector {
+                width: 30px;
+                margin: 0 0.5rem;
+            }
+
+            /* Recipients container: single column grid on mobile */
+            .recipients-container {
+                grid-template-columns: 1fr !important;
+            }
+
+            /* Smaller header padding */
+            .header {
+                padding: 0.75rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.25rem;
+            }
+
+            /* Button touch targets */
+            .btn {
+                min-height: 44px;
+                padding: 0.75rem 1rem;
+            }
+        }
+
+        .pdf-page-wrapper {
+            position: relative;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            background: var(--bg-secondary);
+        }
+
+        .pdf-page-wrapper canvas {
+            display: block;
+        }
+
+        .pdf-page-wrapper.placement-mode {
+            cursor: crosshair;
+        }
+
+        /* Placed Fields */
+        .placed-field {
+            position: absolute;
+            border: 2px solid;
+            border-radius: 4px;
+            cursor: move;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 500;
+            min-width: 80px;
+            min-height: 24px;
+            user-select: none;
+        }
+
+        .placed-field.selected {
+            box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.5);
+        }
+
+        .placed-field .delete-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            width: 20px;
+            height: 20px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 0.75rem;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .placed-field:hover .delete-btn,
+        .placed-field.selected .delete-btn {
+            display: flex;
+        }
+
+        .placed-field .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: currentColor;
+            border-radius: 2px;
+            right: -5px;
+            bottom: -5px;
+            cursor: se-resize;
+        }
+
+        .placed-field .required-indicator {
+            position: absolute;
+            top: -8px;
+            left: -8px;
+            color: #ef4444;
+            font-size: 16px;
+            font-weight: bold;
+            background: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+        }
+
+        .placed-field {
+            border-color: var(--recipient-color, #1e40af);
+            background: color-mix(in srgb, var(--recipient-color, #1e40af) 10%, transparent);
+            color: var(--recipient-color, #1e40af);
+        }
+
+        /* Ghost field that follows cursor */
+        .ghost-field {
+            position: fixed;
+            pointer-events: none;
+            opacity: 0.7;
+            z-index: 1000;
+            border: 2px dashed #1e40af;
+            background: rgba(30, 64, 175, 0.1);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #1e40af;
+            padding: 0.25rem 0.5rem;
+        }
+
+        /* Step 4: Review */
+        .review-container {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 2rem;
+        }
+
+        .review-pdf {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .review-pdf-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .review-pdf-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .review-pdf-body {
+            max-height: 500px;
+            overflow: auto;
+            padding: 1.5rem;
+            background: var(--bg-tertiary);
+        }
+
+        .review-pdf-body canvas {
+            max-width: 100%;
+            display: block;
+            margin: 0 auto 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .review-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .summary-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+            padding: 1.5rem;
+        }
+
+        .summary-card h4 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-primary);
+            font-size: 0.875rem;
+        }
+
+        .summary-item:last-child {
+            border-bottom: none;
+        }
+
+        .summary-label {
+            color: var(--text-secondary);
+        }
+
+        .summary-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Footer Actions */
+        .footer-actions {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            padding: 1rem 2rem;
+            border-top: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: space-between;
+            z-index: 100;
+        }
+
+        .footer-left, .footer-right {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        /* Audit Log Panel */
+        .audit-panel {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .audit-entry {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-primary);
+            font-size: 0.8125rem;
+        }
+
+        .audit-entry:last-child {
+            border-bottom: none;
+        }
+
+        .audit-event {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .audit-time {
+            color: var(--text-tertiary);
+            font-size: 0.75rem;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            z-index: 1001;
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+
+        /* Loading */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            opacity: 0.95;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .loading-overlay.hidden {
+            display: none;
+        }
+
+        .loading-overlay {
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .signing-progress {
+            text-align: center;
+            width: 300px;
+        }
+
+        .signing-progress .progress-text {
+            margin-bottom: 10px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .signing-progress .progress-bar {
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .signing-progress .progress-fill {
+            height: 100%;
+            background: #4f46e5;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e5e7eb;
+            border-top-color: #1e40af;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .hidden { display: none !important; }
+
+        /* Screen reader only - visually hidden but accessible */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1100;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            padding: 0.25rem;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        /* Template List Styles */
+        .template-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .template-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+
+        .template-item:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .template-info {
+            flex: 1;
+        }
+
+        .template-name {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .template-meta {
+            font-size: 0.75rem;
+            color: #9ca3af;
+            margin-top: 0.25rem;
+        }
+
+        .template-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .template-actions .btn-load {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+            background: #1e40af;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .template-actions .btn-load:hover {
+            background: #1e3a8a;
+        }
+
+        .template-actions .btn-delete {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+            background: white;
+            color: #ef4444;
+            border: 1px solid #ef4444;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .template-actions .btn-delete:hover {
+            background: #fef2f2;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #9ca3af;
+            padding: 2rem;
+        }
+
+        /* Template buttons in toolbar */
+        .template-buttons {
+            padding: 1rem;
+            border-top: 1px solid #e5e7eb;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .template-buttons .btn {
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* Signing Link Styles */
+        .signing-link-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            padding: 1rem;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #f9fafb;
+        }
+
+        .signing-link-item .recipient-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .signing-link-item .recipient-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .signing-link-item .recipient-name {
+            font-weight: 600;
+            color: #374151;
+        }
+
+        .signing-link-item .recipient-email {
+            font-size: 0.75rem;
+            color: #6b7280;
+        }
+
+        .signing-link-item .link-container {
+            display: flex;
+            gap: 0.5rem;
+            align-items: stretch;
+        }
+
+        .signing-link-item .link-input {
+            flex: 1;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: monospace;
+            background: white;
+            word-break: break-all;
+        }
+
+        .signing-link-item .btn-copy {
+            padding: 0.5rem 0.75rem;
+            background: #1e40af;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
+
+        .signing-link-item .btn-copy:hover {
+            background: #1e3a8a;
+        }
+
+        .signing-link-item .btn-copy.copied {
+            background: #10b981;
+        }
+
+        /* Certificate Indicator */
+        .cert-indicator {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 1rem;
+            padding: 0.25rem 0.5rem;
+            background: rgba(16, 185, 129, 0.2);
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: help;
+        }
+
+        .cert-indicator.hidden {
+            display: none;
+        }
+
+        /* Certificate Info Display */
+        .cert-info {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .cert-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .cert-info-row:last-child {
+            border-bottom: none;
+        }
+
+        .cert-info-label {
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.875rem;
+        }
+
+        .cert-info-value {
+            color: #6b7280;
+            font-size: 0.875rem;
+            text-align: right;
+            word-break: break-word;
+            max-width: 60%;
+        }
+
+        .cert-valid {
+            color: #10b981;
+            font-weight: 600;
+        }
+
+        .cert-invalid {
+            color: #ef4444;
+            font-weight: 600;
+        }
+
+        /* Settings Modal Sections */
+        .settings-section {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .settings-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .settings-section h4 {
+            margin: 0 0 0.75rem 0;
+            font-size: 1rem;
+            color: #374151;
+        }
+
+        .file-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .file-input-group label {
+            font-size: 0.875rem;
+            color: #4b5563;
+            font-weight: 500;
+        }
+
+        .file-input-group input[type="file"] {
+            font-size: 0.875rem;
+            padding: 0.5rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- Skip Link for keyboard users -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <div id="loading-overlay" class="loading-overlay" role="alert" aria-live="polite" aria-label="Loading application">
+        <div class="spinner" aria-hidden="true"></div>
+        <span class="sr-only">Loading DocSigner...</span>
+    </div>
+
+    <!-- Ghost field for placement -->
+    <div id="ghost-field" class="ghost-field hidden" aria-hidden="true"></div>
+
+    <header class="header" role="banner">
+        <h1>DocSigner</h1>
+        <div class="header-actions">
+            <span id="doc-name" style="color: rgba(255,255,255,0.8); font-size: 0.875rem;"></span>
+            <span id="cert-status-indicator" class="cert-indicator hidden" title="Certificate loaded" aria-label="Certificate is loaded">
+                <span aria-hidden="true">🔒</span>
+            </span>
+            <button id="btn-dark-mode" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; margin-left: 1rem;" title="Toggle dark mode" aria-label="Toggle dark mode">
+                <span id="dark-mode-icon" aria-hidden="true">🌙</span>
+                <span class="sr-only">Toggle Dark Mode</span>
+            </button>
+            <script>
+                // Initialize dark mode from localStorage on page load (before module loads)
+                (function() {
+                    const savedMode = localStorage.getItem('darkMode');
+                    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    if (savedMode === 'true' || (savedMode === null && prefersDark)) {
+                        document.body.classList.add('dark-mode');
+                        document.getElementById('dark-mode-icon').textContent = '☀️';
+                    }
+                })();
+                // Settings modal functions
+                function openSettingsModal() {
+                    document.getElementById('settings-modal').classList.remove('hidden');
+                }
+                function closeSettingsModal() {
+                    document.getElementById('settings-modal').classList.add('hidden');
+                }
+                window.openSettingsModal = openSettingsModal;
+                window.closeSettingsModal = closeSettingsModal;
+            </script>
+            <button id="btn-settings" class="btn btn-secondary" style="padding: 0.5rem 0.75rem;" title="Settings" aria-label="Open settings" onclick="openSettingsModal()">
+                <span aria-hidden="true">⚙️</span>
+                <span class="sr-only">Settings</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Stepper -->
+    <nav class="stepper" role="navigation" aria-label="Document signing progress">
+        <div class="step active" data-step="1" role="button" tabindex="0" aria-current="step" aria-label="Step 1: Upload, current step">
+            <div class="step-circle" aria-hidden="true">1</div>
+            <div class="step-label">Upload</div>
+        </div>
+        <div class="step-connector" aria-hidden="true"></div>
+        <div class="step" data-step="2" role="button" tabindex="0" aria-label="Step 2: Recipients">
+            <div class="step-circle" aria-hidden="true">2</div>
+            <div class="step-label">Recipients</div>
+        </div>
+        <div class="step-connector" aria-hidden="true"></div>
+        <div class="step" data-step="3" role="button" tabindex="0" aria-label="Step 3: Fields">
+            <div class="step-circle" aria-hidden="true">3</div>
+            <div class="step-label">Fields</div>
+        </div>
+        <div class="step-connector" aria-hidden="true"></div>
+        <div class="step" data-step="4" role="button" tabindex="0" aria-label="Step 4: Review">
+            <div class="step-circle" aria-hidden="true">4</div>
+            <div class="step-label">Review</div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="main-content" class="main-content" role="main" style="padding-bottom: 80px;">
+        <!-- Step 1: Upload -->
+        <div id="step-1" class="step-content active" role="region" aria-labelledby="step1-heading">
+            <h2 id="step1-heading" class="sr-only">Step 1: Upload Document</h2>
+            <div class="upload-area">
+                <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload PDF file. Click or drag and drop a PDF here.">
+                    <div class="drop-zone-icon" aria-hidden="true">📄</div>
+                    <div class="drop-zone-text">Drag and drop your PDF here</div>
+                    <div class="drop-zone-subtext">or click to browse files</div>
+                    <input type="file" id="file-input" accept=".pdf" style="display: none;" aria-label="Select PDF file to upload">
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Recipients -->
+        <div id="step-2" class="step-content" role="region" aria-labelledby="step2-heading">
+            <h2 id="step2-heading" class="sr-only">Step 2: Add Recipients</h2>
+            <div class="recipients-container">
+                <div class="card">
+                    <div class="card-header">
+                        <h3 id="add-recipients-heading">Add Recipients</h3>
+                    </div>
+                    <div class="card-body" role="form" aria-labelledby="add-recipients-heading">
+                        <div class="form-group" style="display: flex; gap: 0.5rem;">
+                            <div style="flex: 1;">
+                                <label for="recipient-first-name">First Name</label>
+                                <input type="text" id="recipient-first-name" placeholder="John" aria-required="true" autocomplete="given-name">
+                            </div>
+                            <div style="flex: 1;">
+                                <label for="recipient-last-name">Last Name</label>
+                                <input type="text" id="recipient-last-name" placeholder="Doe" aria-required="true" autocomplete="family-name">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="recipient-email">Email</label>
+                            <input type="email" id="recipient-email" placeholder="john@example.com" aria-required="true" autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label for="recipient-role">Role</label>
+                            <select id="recipient-role" aria-describedby="role-description">
+                                <option value="signer">Needs to Sign</option>
+                                <option value="viewer">Receives a Copy</option>
+                            </select>
+                            <span id="role-description" class="sr-only">Select whether this recipient needs to sign or only receives a copy</span>
+                        </div>
+                        <button id="add-recipient-btn" class="btn btn-primary" style="width: 100%;">
+                            Add Recipient
+                        </button>
+                    </div>
+
+                    <div class="card-header" style="border-top: 1px solid #e5e7eb;">
+                        <h3 id="signing-order-heading">Signing Order</h3>
+                        <span style="font-size: 0.75rem; color: #6b7280;" aria-hidden="true">Drag to reorder</span>
+                    </div>
+                    <div class="card-body">
+                        <ul id="recipient-list" class="recipient-list" role="list" aria-labelledby="signing-order-heading" aria-describedby="reorder-instructions">
+                            <span id="reorder-instructions" class="sr-only">Recipients can be reordered by dragging. The signing order determines who signs first.</span>
+                            <li style="text-align: center; color: #9ca3af; padding: 1rem;">
+                                No recipients added yet
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Document Preview</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="preview-container" class="pdf-preview-small"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: Fields -->
+        <div id="step-3" class="step-content" role="region" aria-labelledby="step3-heading">
+            <h2 id="step3-heading" class="sr-only">Step 3: Place Signature Fields</h2>
+            <div class="fields-container">
+                <aside class="field-toolbar" role="complementary" aria-label="Field placement tools">
+                    <div class="field-toolbar-header">
+                        <h3 id="assign-fields-heading">Assign Fields To</h3>
+                        <label for="current-recipient" class="sr-only">Select recipient for new fields</label>
+                        <select id="current-recipient" class="recipient-selector" aria-labelledby="assign-fields-heading">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="field-types" role="toolbar" aria-label="Field type selection">
+                        <div class="field-type" data-type="pointer" role="button" tabindex="0" aria-pressed="false" aria-label="Select and move mode">
+                            <div class="field-type-icon" aria-hidden="true">🖱️</div>
+                            <div class="field-type-label">Select / Move</div>
+                        </div>
+                        <div class="field-type" data-type="signature" role="button" tabindex="0" aria-pressed="false" aria-label="Place signature field">
+                            <div class="field-type-icon" aria-hidden="true">✍️</div>
+                            <div class="field-type-label">Signature</div>
+                        </div>
+                        <div class="field-type" data-type="initials" role="button" tabindex="0" aria-pressed="false" aria-label="Place initials field">
+                            <div class="field-type-icon" aria-hidden="true">🔤</div>
+                            <div class="field-type-label">Initials</div>
+                        </div>
+                        <div class="field-type" data-type="date" role="button" tabindex="0" aria-pressed="false" aria-label="Place date signed field">
+                            <div class="field-type-icon" aria-hidden="true">📅</div>
+                            <div class="field-type-label">Date Signed</div>
+                        </div>
+                        <div class="field-type" data-type="text" role="button" tabindex="0" aria-pressed="false" aria-label="Place text field">
+                            <div class="field-type-icon" aria-hidden="true">📝</div>
+                            <div class="field-type-label">Text Field</div>
+                        </div>
+                        <div class="field-type" data-type="checkbox" role="button" tabindex="0" aria-pressed="false" aria-label="Place checkbox field">
+                            <div class="field-type-icon" aria-hidden="true">☑️</div>
+                            <div class="field-type-label">Checkbox</div>
+                        </div>
+                    </div>
+                    <div class="field-toolbar-header" style="border-top: 1px solid #e5e7eb; margin-top: 0.5rem;">
+                        <h3 style="margin-bottom: 0.75rem;" id="field-options-heading">Field Options</h3>
+                        <label for="field-required" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer;">
+                            <input type="checkbox" id="field-required" checked style="width: auto; cursor: pointer;" aria-describedby="field-required-desc">
+                            <span>Required Field</span>
+                        </label>
+                        <span id="field-required-desc" class="sr-only">Mark this field as required for the signer to fill</span>
+                    </div>
+                    <div class="template-buttons">
+                        <button id="btn-save-template" class="btn btn-secondary btn-sm" aria-label="Save current fields as a reusable template">
+                            Save as Template
+                        </button>
+                        <button id="btn-load-template" class="btn btn-secondary btn-sm" aria-label="Load a saved field template">
+                            Load Template
+                        </button>
+                    </div>
+                </aside>
+
+                <div class="pdf-editor" role="application" aria-label="PDF document editor">
+                    <div class="pdf-editor-header">
+                        <div class="page-nav" role="navigation" aria-label="Page navigation">
+                            <button id="prev-page" aria-label="Go to previous page">← Prev</button>
+                            <span aria-live="polite">Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
+                            <button id="next-page" aria-label="Go to next page">Next →</button>
+                        </div>
+                        <div id="placement-hint" class="placement-hint" role="status" aria-live="polite">
+                            Click on document to place field. Press Esc to cancel.
+                        </div>
+                    </div>
+                    <div id="pdf-canvas-container" class="pdf-canvas-container" role="img" aria-label="PDF document. Click to place signature fields.">
+                        <div id="pdf-pages-wrapper" class="pdf-pages-wrapper">
+                            <!-- PDF pages rendered here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 4: Review -->
+        <div id="step-4" class="step-content" role="region" aria-labelledby="step4-heading">
+            <h2 id="step4-heading" class="sr-only">Step 4: Review and Sign</h2>
+            <div class="review-container">
+                <div class="review-pdf">
+                    <div class="review-pdf-header">
+                        <h3 id="doc-preview-heading">Document Preview</h3>
+                    </div>
+                    <div id="review-pdf-body" class="review-pdf-body" role="img" aria-labelledby="doc-preview-heading" aria-describedby="review-desc">
+                        <span id="review-desc" class="sr-only">Preview of document with signature fields highlighted</span>
+                        <!-- PDF pages rendered here -->
+                    </div>
+                </div>
+
+                <div class="review-sidebar">
+                    <div class="summary-card">
+                        <h4>Document Summary</h4>
+                        <div class="summary-item">
+                            <span class="summary-label">Document</span>
+                            <span id="summary-doc-name" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Pages</span>
+                            <span id="summary-pages" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Recipients</span>
+                            <span id="summary-recipients" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Fields</span>
+                            <span id="summary-fields" class="summary-value">-</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-card" id="expiration-card">
+                        <h4>Signing Deadline</h4>
+                        <p style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.75rem;">
+                            Set when the signing request expires
+                        </p>
+                        <div class="summary-item">
+                            <label for="expiration-select" style="font-size: 0.875rem;">Expires in</label>
+                            <select id="expiration-select" style="padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;">
+                                <option value="24">24 hours</option>
+                                <option value="48">48 hours</option>
+                                <option value="72">3 days</option>
+                                <option value="168" selected>7 days</option>
+                                <option value="336">14 days</option>
+                                <option value="720">30 days</option>
+                            </select>
+                        </div>
+                        <div id="expiration-info" class="hidden" style="margin-top: 0.5rem; padding: 0.5rem; background: #fef3c7; border-radius: 6px; font-size: 0.75rem;">
+                            <strong>Deadline:</strong> <span id="expiration-deadline">-</span>
+                        </div>
+                    </div>
+
+                    <div class="summary-card">
+                        <h4>Recipients</h4>
+                        <div id="review-recipients">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <div class="summary-card" id="ltv-timestamp-card" style="display: none;">
+                        <h4>Long-Term Validation (LTV)</h4>
+                        <p style="font-size: 0.75rem; color: #6b7280; margin-bottom: 0.75rem;">
+                            Add a trusted timestamp to ensure signature validity beyond certificate expiration
+                        </p>
+                        <button id="btn-add-timestamp" class="btn btn-primary" style="width: 100%; font-size: 0.875rem;">
+                            Add Timestamp
+                        </button>
+                        <div id="timestamp-status" class="hidden" style="margin-top: 0.75rem; padding: 0.75rem; border-radius: 6px; font-size: 0.75rem;">
+                            <!-- Status message -->
+                        </div>
+                    </div>
+
+                    <section class="audit-panel" aria-labelledby="audit-heading">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 id="audit-heading">Activity Log</h3>
+                            <span id="audit-verification" style="font-size: 0.875rem;" role="status" aria-live="polite"></span>
+                        </div>
+                        <div id="audit-log" style="max-height: 200px; overflow: auto;" role="log" aria-label="Document activity log">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer Actions -->
+    <footer class="footer-actions" role="contentinfo">
+        <div class="footer-left">
+            <button id="btn-back" class="btn btn-secondary hidden" aria-label="Go back to previous step">
+                ← Back
+            </button>
+        </div>
+        <div class="footer-right">
+            <button id="btn-save-draft" class="btn btn-secondary hidden" aria-label="Save current progress as draft">
+                Save Draft
+            </button>
+            <button id="btn-next" class="btn btn-primary hidden" aria-label="Continue to next step">
+                Next →
+            </button>
+            <button id="btn-generate-links" class="btn btn-secondary hidden" aria-label="Generate signing links for recipients">
+                🔗 Generate Links
+            </button>
+            <button id="btn-send" class="btn btn-success hidden" aria-label="Sign the document">
+                Send for Signing
+            </button>
+            <button id="btn-download" class="btn btn-primary hidden" aria-label="Download the signed PDF document">
+                Download Signed PDF
+            </button>
+        </div>
+    </footer>
+
+    <!-- Template Modals -->
+    <div id="save-template-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="save-template-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="save-template-title">Save Field Configuration as Template</h3>
+                <button class="modal-close" onclick="closeSaveTemplateModal()" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="template-name-input">Template Name</label>
+                    <input type="text" id="template-name-input" placeholder="e.g., NDA Template, Contract Fields" style="width: 100%; padding: 0.625rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;" aria-required="true">
+                </div>
+                <p style="font-size: 0.875rem; color: #6b7280; margin-top: 1rem;">
+                    This will save the current field positions and types as a reusable template.
+                    Field positions are stored as percentages, so they work across different PDF sizes.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSaveTemplateModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveTemplate()">Save Template</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="load-template-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="load-template-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="load-template-title">Load Field Template</h3>
+                <button class="modal-close" onclick="closeLoadTemplateModal()" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <ul id="template-list" class="template-list">
+                    <!-- Populated dynamically -->
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLoadTemplateModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signing Links Modal -->
+    <div id="signing-links-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="signing-links-title">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 id="signing-links-title">Signing Links Generated</h3>
+                <button class="modal-close" onclick="closeSigningLinksModal()" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 1rem;">
+                    Share these unique links with each signer. Each link is encrypted and can only be used by the intended recipient.
+                </p>
+                <div id="signing-links-rate-limit" class="hidden" style="padding: 1rem; background: #fef3c7; border-radius: 8px; color: #92400e; margin-bottom: 1rem; font-size: 0.875rem;">
+                    <!-- Rate limit warning -->
+                </div>
+                <div id="signing-links-list" style="display: flex; flex-direction: column; gap: 1rem;">
+                    <!-- Populated dynamically -->
+                </div>
+                <div id="signing-links-error" class="hidden" style="padding: 1rem; background: #fef2f2; border-radius: 8px; color: #991b1b; margin-top: 1rem;">
+                    <!-- Error message -->
+                </div>
+                <div style="margin-top: 1.5rem; padding: 1rem; background: #f0fdf4; border-radius: 8px;">
+                    <p style="font-size: 0.75rem; color: #166534; margin: 0;">
+                        <strong>Note:</strong> Links expire based on your deadline setting.
+                        The document is encrypted end-to-end - only recipients with the link can access it.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-send-emails" class="btn btn-primary" onclick="sendSigningEmails()">
+                    Send Emails
+                </button>
+                <button class="btn btn-secondary" onclick="closeSigningLinksModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- TSA Configuration Modal -->
+    <div id="tsa-config-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tsa-config-title">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 id="tsa-config-title">Configure Timestamp Authority</h3>
+                <button class="modal-close" onclick="closeTsaConfigModal()" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="tsa-url-input" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.5rem;">TSA Server URL</label>
+                    <input type="url" id="tsa-url-input" placeholder="https://freetsa.org/tsr" style="width: 100%; padding: 0.625rem; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.875rem;" aria-required="true">
+                </div>
+                <div style="padding: 1rem; background: #fef3c7; border-radius: 8px; margin-bottom: 1rem;">
+                    <p style="font-size: 0.75rem; color: #92400e; margin: 0;">
+                        <strong>Note:</strong> Free TSA servers like freetsa.org may have CORS restrictions.
+                        For production use, consider setting up your own TSA server or using a CORS proxy.
+                    </p>
+                </div>
+                <div style="padding: 1rem; background: #eff6ff; border-radius: 8px;">
+                    <p style="font-size: 0.75rem; color: #1e40af; margin: 0;">
+                        <strong>What is LTV?</strong> Long-Term Validation adds a trusted timestamp to your signature,
+                        ensuring it remains valid even after your certificate expires or is revoked.
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTsaConfigModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmAddTimestamp()">Add Timestamp</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 id="settings-title">Settings</h3>
+                <button class="modal-close" onclick="closeSettingsModal()" aria-label="Close dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Certificate Management Section -->
+                <div class="settings-section">
+                    <h4>Certificate Management</h4>
+                    <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.75rem;">
+                        Upload your certificate and private key for signing PDFs with PAdES.
+                    </p>
+
+                    <!-- File Inputs -->
+                    <div class="file-input-group">
+                        <label for="cert-file-input">Certificate File (.pem, .crt)</label>
+                        <input type="file" id="cert-file-input" accept=".pem,.crt" aria-label="Select certificate file">
+                    </div>
+                    <div class="file-input-group">
+                        <label for="key-file-input">Private Key File (.pem, .key)</label>
+                        <input type="file" id="key-file-input" accept=".pem,.key" aria-label="Select private key file">
+                    </div>
+                    <button class="btn btn-primary" onclick="importCertificate()" style="margin-top: 0.5rem;">
+                        Import Certificate
+                    </button>
+
+                    <!-- Current Certificate Info -->
+                    <div id="cert-info-container" class="hidden">
+                        <h5 style="margin: 1rem 0 0.5rem 0; font-size: 0.875rem; font-weight: 600;">Current Certificate</h5>
+                        <div id="cert-info-display" class="cert-info">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <button class="btn btn-secondary" onclick="clearCertificate()" style="margin-top: 0.75rem; width: 100%;">
+                            Clear Certificate
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeSettingsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { DocSign, init_storage } from './pkg/docsign_wasm.js';
+
+        // Configure PDF.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // Recipient colors
+        const recipientColors = ['#1e40af', '#059669', '#d97706', '#7c3aed', '#db2777'];
+
+        // Application State
+        const state = {
+            currentStep: 1,
+            docSign: null,
+            storage: null,
+            pdfDoc: null,
+            pdfBytes: null,
+            fileName: '',
+            recipients: [],
+            placedFields: [],
+            currentPage: 1,
+            totalPages: 0,
+            scale: 1.5,
+            // Field placement state
+            selectedFieldType: null, // 'signature', 'initials', etc. null means pointer mode
+            // Page dimensions cache (for coordinate conversion during signing)
+            pageDimensions: {}, // { pageNum: { width, height, canvasWidth, canvasHeight } }
+            // Sequential signing state
+            signingStatus: {
+                currentSignerIndex: 0, // Index in signers array (0-based)
+                completedSigners: []   // Array of recipient IDs who have signed
+            },
+            // Remote signing state
+            remoteSession: {
+                sessionId: null,
+                encryptionKey: null, // CryptoKey for AES-GCM
+                isRemoteSigner: false, // True when loaded from signing link
+                recipientId: null, // Current recipient's ID when signing remotely
+                expiresAt: null // ISO date string for session expiration
+            }
+        };
+
+        // DOM Elements
+        const elements = {
+            loadingOverlay: document.getElementById('loading-overlay'),
+            ghostField: document.getElementById('ghost-field'),
+            steps: document.querySelectorAll('.step'),
+            stepContents: document.querySelectorAll('.step-content'),
+            stepConnectors: document.querySelectorAll('.step-connector'),
+            dropZone: document.getElementById('drop-zone'),
+            fileInput: document.getElementById('file-input'),
+            docName: document.getElementById('doc-name'),
+            recipientFirstName: document.getElementById('recipient-first-name'),
+            recipientLastName: document.getElementById('recipient-last-name'),
+            recipientEmail: document.getElementById('recipient-email'),
+            recipientRole: document.getElementById('recipient-role'),
+            addRecipientBtn: document.getElementById('add-recipient-btn'),
+            recipientList: document.getElementById('recipient-list'),
+            previewContainer: document.getElementById('preview-container'),
+            currentRecipient: document.getElementById('current-recipient'),
+            fieldTypes: document.querySelectorAll('.field-type'),
+            fieldRequired: document.getElementById('field-required'),
+            pdfPagesWrapper: document.getElementById('pdf-pages-wrapper'),
+            pdfCanvasContainer: document.getElementById('pdf-canvas-container'),
+            currentPageSpan: document.getElementById('current-page'),
+            totalPagesSpan: document.getElementById('total-pages'),
+            prevPageBtn: document.getElementById('prev-page'),
+            nextPageBtn: document.getElementById('next-page'),
+            placementHint: document.getElementById('placement-hint'),
+            reviewPdfBody: document.getElementById('review-pdf-body'),
+            summaryDocName: document.getElementById('summary-doc-name'),
+            summaryPages: document.getElementById('summary-pages'),
+            summaryRecipients: document.getElementById('summary-recipients'),
+            summaryFields: document.getElementById('summary-fields'),
+            reviewRecipients: document.getElementById('review-recipients'),
+            auditLog: document.getElementById('audit-log'),
+            auditVerification: document.getElementById('audit-verification'),
+            btnBack: document.getElementById('btn-back'),
+            btnNext: document.getElementById('btn-next'),
+            btnSaveDraft: document.getElementById('btn-save-draft'),
+            btnSend: document.getElementById('btn-send'),
+            btnDownload: document.getElementById('btn-download'),
+            btnGenerateLinks: document.getElementById('btn-generate-links'),
+            btnSettings: document.getElementById('btn-settings'),
+            btnDarkMode: document.getElementById('btn-dark-mode'),
+            darkModeIcon: document.getElementById('dark-mode-icon'),
+        };
+
+        // Signing Worker Manager - handles async signing off main thread
+        class SigningWorker {
+            constructor() {
+                this.worker = null;
+                this.pendingCallbacks = new Map();
+                this.nextId = 1;
+                this.onProgress = null;
+            }
+
+            async init() {
+                if (this.worker) return;
+
+                return new Promise((resolve, reject) => {
+                    this.worker = new Worker('signing-worker.js', { type: 'module' });
+
+                    this.worker.onmessage = (e) => {
+                        const { id, type, ...data } = e.data;
+
+                        if (type === 'init') {
+                            if (data.success) resolve();
+                            else reject(new Error(data.error));
+                            return;
+                        }
+
+                        if (type === 'progress' && this.onProgress) {
+                            this.onProgress(data.stage, data.percent);
+                            return;
+                        }
+
+                        if (type === 'loaded') {
+                            const cb = this.pendingCallbacks.get('load');
+                            if (cb) {
+                                this.pendingCallbacks.delete('load');
+                                if (data.success) cb.resolve();
+                                else cb.reject(new Error(data.error));
+                            }
+                            return;
+                        }
+
+                        const callback = this.pendingCallbacks.get(id);
+                        if (callback) {
+                            this.pendingCallbacks.delete(id);
+                            if (data.error) callback.reject(new Error(data.error));
+                            else callback.resolve(data);
+                        }
+                    };
+
+                    this.worker.onerror = (err) => {
+                        reject(new Error(`Worker error: ${err.message}`));
+                    };
+
+                    // Send init message to worker
+                    this.worker.postMessage({ action: 'init' });
+                });
+            }
+
+            async loadPdf(pdfBytes) {
+                return new Promise((resolve, reject) => {
+                    this.pendingCallbacks.set('load', { resolve, reject });
+                    this.worker.postMessage({
+                        action: 'load',
+                        data: { pdfBytes }
+                    });
+                });
+            }
+
+            async signField(page, x, y, width, height, reason, signerEmail) {
+                const id = this.nextId++;
+                return new Promise((resolve, reject) => {
+                    this.pendingCallbacks.set(id, { resolve, reject });
+                    this.worker.postMessage({
+                        id,
+                        action: 'sign',
+                        data: { page, x, y, width, height, reason, signerEmail }
+                    });
+                });
+            }
+
+            async addTextField(page, x, y, width, height, value, fieldType) {
+                const id = this.nextId++;
+                return new Promise((resolve, reject) => {
+                    this.pendingCallbacks.set(id, { resolve, reject });
+                    this.worker.postMessage({
+                        id,
+                        action: 'addTextField',
+                        data: { page, x, y, width, height, value, fieldType }
+                    });
+                });
+            }
+
+            async addCheckbox(page, x, y, size, checked) {
+                const id = this.nextId++;
+                return new Promise((resolve, reject) => {
+                    this.pendingCallbacks.set(id, { resolve, reject });
+                    this.worker.postMessage({
+                        id,
+                        action: 'addCheckbox',
+                        data: { page, x, y, size, checked }
+                    });
+                });
+            }
+
+            async getPdf() {
+                const id = this.nextId++;
+                return new Promise((resolve, reject) => {
+                    this.pendingCallbacks.set(id, { resolve, reject });
+                    this.worker.postMessage({ id, action: 'getPdf' });
+                });
+            }
+
+            terminate() {
+                if (this.worker) {
+                    this.worker.terminate();
+                    this.worker = null;
+                }
+            }
+        }
+
+        // Global signing worker instance
+        let signingWorker = null;
+
+        // Initialize with timeout protection
+        async function initialize() {
+            const timeout = (promise, ms, name) => Promise.race([
+                promise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error(`${name} timeout after ${ms}ms`)), ms))
+            ]);
+
+            try {
+                console.log('Starting WASM init...');
+                await timeout(init(), 10000, 'WASM init');
+                console.log('WASM init complete, starting storage...');
+
+                try {
+                    state.storage = await timeout(init_storage(), 5000, 'Storage init');
+                    console.log('Storage initialized');
+                } catch (storageErr) {
+                    console.warn('Storage init failed (non-fatal):', storageErr.message);
+                    state.storage = null;
+                }
+
+                console.log('DocSigner initialized');
+
+                // Initialize dark mode (already handled by inline script, but call for module state)
+                // initDarkMode();
+
+                // Check for signing link in URL first
+                const hasSigningLink = window.location.hash.startsWith('#sign=');
+                if (hasSigningLink) {
+                    // Keep loading overlay while loading remote session
+                    await checkForSigningLink();
+                } else {
+                    elements.loadingOverlay.classList.add('hidden');
+                    updateStepUI();
+                    setupFieldPlacement();
+
+                    // Check for saved drafts
+                    try {
+                        await timeout(checkForDrafts(), 3000, 'Draft check');
+                    } catch (draftErr) {
+                        console.warn('Draft check failed (non-fatal):', draftErr.message);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to initialize:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Failed to initialize: ' + err.message);
+            }
+        }
+
+        // Dark Mode
+        function initDarkMode() {
+            // Check localStorage first, then system preference
+            const savedMode = localStorage.getItem('darkMode');
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+            if (savedMode === 'true' || (savedMode === null && prefersDark)) {
+                enableDarkMode();
+            }
+        }
+
+        function toggleDarkMode() {
+            if (document.body.classList.contains('dark-mode')) {
+                disableDarkMode();
+            } else {
+                enableDarkMode();
+            }
+        }
+
+        function enableDarkMode() {
+            document.body.classList.add('dark-mode');
+            elements.darkModeIcon.textContent = '☀️';
+            localStorage.setItem('darkMode', 'true');
+        }
+
+        function disableDarkMode() {
+            document.body.classList.remove('dark-mode');
+            elements.darkModeIcon.textContent = '🌙';
+            localStorage.setItem('darkMode', 'false');
+        }
+
+        // Expose dark mode toggle to window for onclick handler
+        window.toggleDarkMode = toggleDarkMode;
+
+        // Toast
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Update signing progress - shows in loading overlay
+        function updateSigningProgress(message, percent) {
+            const overlay = elements.loadingOverlay;
+            let progressEl = overlay.querySelector('.signing-progress');
+            if (!progressEl) {
+                progressEl = document.createElement('div');
+                progressEl.className = 'signing-progress';
+                progressEl.innerHTML = `
+                    <div class="progress-text"></div>
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                `;
+                overlay.appendChild(progressEl);
+            }
+            progressEl.querySelector('.progress-text').textContent = message;
+            progressEl.querySelector('.progress-fill').style.width = `${percent}%`;
+        }
+
+        // Step Navigation
+        function goToStep(step) {
+            if (step < 1 || step > 4) return;
+
+            // Validation before moving forward
+            if (step > state.currentStep) {
+                if (state.currentStep === 1 && !state.pdfDoc) {
+                    showToast('Please upload a PDF first');
+                    return;
+                }
+                if (state.currentStep === 2 && state.recipients.filter(r => r.role === 'signer').length === 0) {
+                    showToast('Please add at least one signer');
+                    return;
+                }
+                // Warn (but don't block) if no signature fields when going to review
+                if (state.currentStep === 3) {
+                    const signers = state.recipients.filter(r => r.role === 'signer');
+                    const signatureFields = state.placedFields.filter(f => f.type === 'signature');
+                    if (signatureFields.length === 0) {
+                        showToast('Warning: No signature fields placed. Signers won\'t be able to sign.');
+                    } else {
+                        // Check if each signer has at least one signature field
+                        const signersWithoutFields = signers.filter(signer =>
+                            !state.placedFields.some(f => f.type === 'signature' && f.recipientId === signer.id)
+                        );
+                        if (signersWithoutFields.length > 0) {
+                            const names = signersWithoutFields.map(s => s.name).join(', ');
+                            showToast(`Warning: ${names} has no signature field assigned.`);
+                        }
+                    }
+                }
+            }
+
+            state.currentStep = step;
+            updateStepUI();
+
+            // Run step-specific logic
+            if (step === 2) {
+                renderPreview();
+            } else if (step === 3) {
+                populateRecipientSelector();
+                renderAllPages();
+                setFieldType('pointer'); // Start in pointer mode
+            } else if (step === 4) {
+                renderReview();
+            }
+        }
+
+        function updateStepUI() {
+            // Update stepper with ARIA attributes
+            const stepLabels = ['Upload', 'Recipients', 'Fields', 'Review'];
+            elements.steps.forEach((stepEl, index) => {
+                const stepNum = index + 1;
+                stepEl.classList.remove('active', 'completed');
+
+                // Update aria-current for accessibility
+                if (stepNum === state.currentStep) {
+                    stepEl.classList.add('active');
+                    stepEl.setAttribute('aria-current', 'step');
+                    stepEl.setAttribute('aria-label', `Step ${stepNum}: ${stepLabels[index]}, current step`);
+                } else if (stepNum < state.currentStep) {
+                    stepEl.classList.add('completed');
+                    stepEl.removeAttribute('aria-current');
+                    stepEl.setAttribute('aria-label', `Step ${stepNum}: ${stepLabels[index]}, completed`);
+                } else {
+                    stepEl.removeAttribute('aria-current');
+                    stepEl.setAttribute('aria-label', `Step ${stepNum}: ${stepLabels[index]}`);
+                }
+            });
+
+            // Update connectors
+            elements.stepConnectors.forEach((connector, index) => {
+                connector.classList.toggle('completed', index < state.currentStep - 1);
+            });
+
+            // Update content
+            elements.stepContents.forEach((content, index) => {
+                content.classList.toggle('active', index + 1 === state.currentStep);
+            });
+
+            // Toggle full-width mode for step 3 (Fields placement needs more space)
+            const mainContent = document.querySelector('.main-content');
+            if (mainContent) {
+                mainContent.classList.toggle('full-width', state.currentStep === 3);
+            }
+
+            // Update buttons
+            elements.btnBack.classList.toggle('hidden', state.currentStep === 1);
+            elements.btnNext.classList.toggle('hidden', state.currentStep >= 4);
+            elements.btnSaveDraft.classList.toggle('hidden', state.currentStep === 1);
+            elements.btnSend.classList.toggle('hidden', state.currentStep !== 4);
+            // Show generate links button on step 4, but not for remote signers
+            elements.btnGenerateLinks.classList.toggle('hidden', state.currentStep !== 4 || state.remoteSession.isRemoteSigner);
+            elements.btnDownload.classList.add('hidden');
+        }
+
+        // File Upload
+        async function loadPDF(file) {
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+
+                const arrayBuffer = await file.arrayBuffer();
+                state.pdfBytes = new Uint8Array(arrayBuffer);
+                state.pdfBytesForWorker = state.pdfBytes.slice();  // Save copy for worker
+                state.fileName = file.name;
+
+                // Create DocSign instance
+                state.docSign = new DocSign();
+                const loadResult = state.docSign.load_pdf(state.pdfBytes);
+                if (loadResult && loadResult.error) {
+                    throw new Error(loadResult.error);
+                }
+                state.docSign.log_view();
+
+                // Update certificate indicator
+                updateCertificateIndicator();
+
+                // Load with PDF.js
+                const loadingTask = pdfjsLib.getDocument({ data: state.pdfBytes });
+                state.pdfDoc = await loadingTask.promise;
+                state.totalPages = state.pdfDoc.numPages;
+
+                // Cache page dimensions
+                for (let i = 1; i <= state.totalPages; i++) {
+                    try {
+                        const dims = state.docSign.page_dimensions(i);
+                        state.pageDimensions[i] = {
+                            width: dims.width,
+                            height: dims.height
+                        };
+                    } catch (e) {
+                        console.warn(`Could not get dimensions for page ${i}:`, e);
+                        // Fallback to PDF.js dimensions
+                        const page = await state.pdfDoc.getPage(i);
+                        const viewport = page.getViewport({ scale: 1 });
+                        state.pageDimensions[i] = {
+                            width: viewport.width,
+                            height: viewport.height
+                        };
+                    }
+                }
+
+                // Initialize signing worker with PDF (optional - falls back to main thread)
+                try {
+                    if (signingWorker) {
+                        signingWorker.terminate();
+                        signingWorker = null;
+                    }
+                    signingWorker = new SigningWorker();
+                    await Promise.race([
+                        signingWorker.init(),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Worker init timeout')), 5000))
+                    ]);
+                    await Promise.race([
+                        signingWorker.loadPdf(state.pdfBytesForWorker),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Worker load timeout')), 5000))
+                    ]);
+                    console.log('Signing worker initialized with PDF');
+                } catch (workerErr) {
+                    console.warn('Worker init failed, using main thread:', workerErr.message);
+                    if (signingWorker) {
+                        signingWorker.terminate();
+                        signingWorker = null;
+                    }
+                }
+
+                // Update UI
+                elements.docName.textContent = state.fileName;
+                elements.totalPagesSpan.textContent = state.totalPages;
+
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('PDF loaded successfully');
+
+                // Move to next step
+                goToStep(2);
+            } catch (err) {
+                console.error('Failed to load PDF:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Failed to load PDF: ' + (err.message || err));
+            }
+        }
+
+        // Recipients
+        function addRecipient() {
+            const firstName = elements.recipientFirstName.value.trim();
+            const lastName = elements.recipientLastName.value.trim();
+            const email = elements.recipientEmail.value.trim();
+            const role = elements.recipientRole.value;
+
+            if (!firstName || !lastName || !email) {
+                showToast('Please enter first name, last name, and email');
+                return;
+            }
+
+            if (!email.includes('@')) {
+                showToast('Please enter a valid email');
+                return;
+            }
+
+            const fullName = `${firstName} ${lastName}`;
+            state.recipients.push({
+                id: Date.now(),
+                firstName,
+                lastName,
+                name: fullName, // Keep for backward compatibility
+                email,
+                role,
+                order: state.recipients.length + 1,
+                color: recipientColors[state.recipients.length % recipientColors.length]
+            });
+
+            // Clear inputs
+            elements.recipientFirstName.value = '';
+            elements.recipientLastName.value = '';
+            elements.recipientEmail.value = '';
+
+            renderRecipientList();
+            showToast(`${fullName} added`);
+        }
+
+        function removeRecipient(id) {
+            state.recipients = state.recipients.filter(r => r.id !== id);
+            // Update order
+            state.recipients.forEach((r, i) => r.order = i + 1);
+            // Remove fields for this recipient
+            state.placedFields = state.placedFields.filter(f => f.recipientId !== id);
+            renderRecipientList();
+        }
+
+        function moveRecipient(id, direction) {
+            const index = state.recipients.findIndex(r => r.id === id);
+            if (index === -1) return;
+
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= state.recipients.length) return;
+
+            // Swap
+            [state.recipients[index], state.recipients[newIndex]] =
+            [state.recipients[newIndex], state.recipients[index]];
+
+            // Update order
+            state.recipients.forEach((r, i) => r.order = i + 1);
+            renderRecipientList();
+        }
+
+        function renderRecipientList() {
+            if (state.recipients.length === 0) {
+                elements.recipientList.innerHTML = `
+                    <li style="text-align: center; color: #9ca3af; padding: 1rem; cursor: default;">
+                        No recipients added yet
+                    </li>
+                `;
+                return;
+            }
+
+            elements.recipientList.innerHTML = state.recipients.map((r, index) => `
+                <li class="recipient-item" data-id="${r.id}" data-index="${index}" draggable="true">
+                    <div class="recipient-drag-handle" title="Drag to reorder">⋮⋮</div>
+                    <div class="recipient-order" style="background: ${r.color}">${r.order}</div>
+                    <div class="recipient-info">
+                        <div class="recipient-name">${r.name}</div>
+                        <div class="recipient-email">${r.email} (${r.role === 'signer' ? 'Signs' : 'Copy'})</div>
+                    </div>
+                    <div class="recipient-actions">
+                        <button onclick="event.stopPropagation(); window.removeRecipient(${r.id})" title="Remove">✕</button>
+                    </div>
+                </li>
+            `).join('');
+
+            // Setup drag handlers after rendering
+            setupRecipientDragHandlers();
+        }
+
+        // Drag-to-reorder state (kept separate to avoid re-renders during drag)
+        const dragState = {
+            isDragging: false,
+            draggedElement: null,
+            draggedIndex: null,
+            targetIndex: null,
+            placeholder: null,
+            startY: 0,
+            currentY: 0
+        };
+
+        function setupRecipientDragHandlers() {
+            const items = elements.recipientList.querySelectorAll('.recipient-item[draggable="true"]');
+
+            items.forEach(item => {
+                item.addEventListener('dragstart', handleDragStart);
+                item.addEventListener('dragend', handleDragEnd);
+                item.addEventListener('dragover', handleDragOver);
+                item.addEventListener('dragleave', handleDragLeave);
+                item.addEventListener('drop', handleDrop);
+            });
+        }
+
+        function handleDragStart(e) {
+            const item = e.currentTarget;
+            dragState.isDragging = true;
+            dragState.draggedElement = item;
+            dragState.draggedIndex = parseInt(item.dataset.index);
+
+            // Set drag image (use the element itself)
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', dragState.draggedIndex.toString());
+
+            // Apply dragging style after a tiny delay (so drag image captures properly)
+            requestAnimationFrame(() => {
+                item.classList.add('dragging');
+            });
+        }
+
+        function handleDragEnd(e) {
+            const item = e.currentTarget;
+            item.classList.remove('dragging');
+
+            // Clear all drag-over classes
+            elements.recipientList.querySelectorAll('.recipient-item').forEach(el => {
+                el.classList.remove('drag-over-above', 'drag-over-below', 'drag-ghost');
+            });
+
+            // Remove placeholder if exists
+            const placeholder = elements.recipientList.querySelector('.drag-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            // Perform the reorder if we have a valid target
+            if (dragState.isDragging && dragState.targetIndex !== null && dragState.targetIndex !== dragState.draggedIndex) {
+                reorderRecipients(dragState.draggedIndex, dragState.targetIndex);
+            }
+
+            // Reset drag state
+            dragState.isDragging = false;
+            dragState.draggedElement = null;
+            dragState.draggedIndex = null;
+            dragState.targetIndex = null;
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+
+            if (!dragState.isDragging) return;
+
+            const item = e.currentTarget;
+            const targetIndex = parseInt(item.dataset.index);
+
+            if (targetIndex === dragState.draggedIndex) return;
+
+            // Determine if we're in the top or bottom half of the target
+            const rect = item.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+            const isAbove = e.clientY < midpoint;
+
+            // Clear previous indicators
+            elements.recipientList.querySelectorAll('.recipient-item').forEach(el => {
+                if (el !== dragState.draggedElement) {
+                    el.classList.remove('drag-over-above', 'drag-over-below');
+                }
+            });
+
+            // Add indicator to current target
+            if (isAbove) {
+                item.classList.add('drag-over-above');
+                item.classList.remove('drag-over-below');
+                dragState.targetIndex = targetIndex;
+            } else {
+                item.classList.add('drag-over-below');
+                item.classList.remove('drag-over-above');
+                dragState.targetIndex = targetIndex + 1;
+            }
+
+            // Adjust if moving down
+            if (dragState.targetIndex > dragState.draggedIndex) {
+                dragState.targetIndex = targetIndex;
+            } else {
+                dragState.targetIndex = targetIndex;
+            }
+        }
+
+        function handleDragLeave(e) {
+            const item = e.currentTarget;
+            // Only remove if we're actually leaving (not entering a child)
+            if (!item.contains(e.relatedTarget)) {
+                item.classList.remove('drag-over-above', 'drag-over-below');
+            }
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            // The actual reorder happens in dragEnd to ensure clean state
+        }
+
+        function reorderRecipients(fromIndex, toIndex) {
+            if (fromIndex === toIndex) return;
+
+            // Remove from old position and insert at new position
+            const [moved] = state.recipients.splice(fromIndex, 1);
+
+            // Adjust toIndex if we removed from before it
+            const adjustedToIndex = fromIndex < toIndex ? toIndex - 1 : toIndex;
+
+            state.recipients.splice(adjustedToIndex, 0, moved);
+
+            // Update order numbers
+            state.recipients.forEach((r, i) => r.order = i + 1);
+
+            // Re-render the list (single render at end of drag)
+            renderRecipientList();
+        }
+
+        // Expose to window for inline handlers
+        window.removeRecipient = removeRecipient;
+        window.moveRecipient = moveRecipient;
+
+        // PDF Preview (Step 2)
+        async function renderPreview() {
+            if (!state.pdfDoc) return;
+
+            elements.previewContainer.innerHTML = '';
+            const page = await state.pdfDoc.getPage(1);
+            const viewport = page.getViewport({ scale: 0.5 });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            await page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport
+            }).promise;
+
+            elements.previewContainer.appendChild(canvas);
+        }
+
+        // PDF Editor (Step 3) - Render ALL pages for scrolling
+        function populateRecipientSelector() {
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            elements.currentRecipient.innerHTML = signers.map((r, i) => `
+                <option value="${r.id}" style="color: ${r.color}">${r.order}. ${r.name}</option>
+            `).join('');
+        }
+
+        async function renderAllPages() {
+            if (!state.pdfDoc) return;
+
+            elements.pdfPagesWrapper.innerHTML = '';
+
+            for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+                const page = await state.pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: state.scale });
+
+                const pageWrapper = document.createElement('div');
+                pageWrapper.className = 'pdf-page-wrapper';
+                pageWrapper.dataset.page = pageNum;
+                pageWrapper.style.width = viewport.width + 'px';
+                pageWrapper.style.height = viewport.height + 'px';
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+
+                pageWrapper.appendChild(canvas);
+                elements.pdfPagesWrapper.appendChild(pageWrapper);
+
+                await page.render({
+                    canvasContext: canvas.getContext('2d'),
+                    viewport
+                }).promise;
+
+                // Store canvas dimensions for coordinate conversion
+                state.pageDimensions[pageNum] = {
+                    ...state.pageDimensions[pageNum],
+                    canvasWidth: viewport.width,
+                    canvasHeight: viewport.height
+                };
+
+                // Add click handler for field placement
+                pageWrapper.addEventListener('click', (e) => handlePageClick(e, pageNum, pageWrapper));
+            }
+
+            renderPlacedFields();
+            updatePageNav();
+        }
+
+        function updatePageNav() {
+            // Update page navigation to scroll to page
+            elements.currentPageSpan.textContent = state.currentPage;
+            elements.prevPageBtn.disabled = state.currentPage <= 1;
+            elements.nextPageBtn.disabled = state.currentPage >= state.totalPages;
+        }
+
+        function scrollToPage(pageNum) {
+            const pageWrapper = elements.pdfPagesWrapper.querySelector(`[data-page="${pageNum}"]`);
+            if (pageWrapper) {
+                pageWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                state.currentPage = pageNum;
+                updatePageNav();
+            }
+        }
+
+        // Field Placement with Click-to-Attach UX
+        function setupFieldPlacement() {
+            // Handle field type selection
+            elements.fieldTypes.forEach(fieldType => {
+                fieldType.addEventListener('click', () => {
+                    const type = fieldType.dataset.type;
+                    setFieldType(type);
+                });
+            });
+
+            // Handle mouse move for ghost field
+            document.addEventListener('mousemove', (e) => {
+                if (state.selectedFieldType && state.selectedFieldType !== 'pointer') {
+                    elements.ghostField.style.left = (e.clientX + 10) + 'px';
+                    elements.ghostField.style.top = (e.clientY + 10) + 'px';
+                }
+            });
+
+            // Handle Escape key to cancel placement
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && state.selectedFieldType && state.selectedFieldType !== 'pointer') {
+                    setFieldType('pointer');
+                    showToast('Field placement cancelled');
+                }
+            });
+        }
+
+        function setFieldType(type) {
+            state.selectedFieldType = type;
+
+            // Update UI and aria-pressed for accessibility
+            elements.fieldTypes.forEach(ft => {
+                const isSelected = ft.dataset.type === type;
+                ft.classList.toggle('selected', isSelected);
+                ft.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+            });
+
+            // Update "Required Field" checkbox based on field type
+            // Signature fields are always required, others default to checked but can be changed
+            if (type === 'signature') {
+                elements.fieldRequired.checked = true;
+                elements.fieldRequired.disabled = true; // Can't uncheck signature fields
+            } else if (type && type !== 'pointer') {
+                elements.fieldRequired.disabled = false;
+                // Keep current state for other fields
+            }
+
+            // Update ghost field
+            if (type && type !== 'pointer') {
+                elements.ghostField.textContent = getFieldLabel(type);
+                elements.ghostField.classList.remove('hidden');
+                elements.placementHint.classList.add('active');
+
+                // Update page wrappers cursor
+                document.querySelectorAll('.pdf-page-wrapper').forEach(pw => {
+                    pw.classList.add('placement-mode');
+                });
+            } else {
+                elements.ghostField.classList.add('hidden');
+                elements.placementHint.classList.remove('active');
+
+                document.querySelectorAll('.pdf-page-wrapper').forEach(pw => {
+                    pw.classList.remove('placement-mode');
+                });
+            }
+        }
+
+        function handlePageClick(e, pageNum, pageWrapper) {
+            // If not in placement mode, do nothing (allow dragging existing fields)
+            if (!state.selectedFieldType || state.selectedFieldType === 'pointer') {
+                return;
+            }
+
+            // Don't place if clicking on existing field
+            if (e.target.closest('.placed-field')) {
+                return;
+            }
+
+            const recipientId = parseInt(elements.currentRecipient.value);
+            if (!recipientId) {
+                showToast('Please select a recipient first');
+                return;
+            }
+
+            const rect = pageWrapper.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            addField(state.selectedFieldType, pageNum, x, y);
+
+            // Stay in placement mode for quick multiple placements
+            // User can click pointer or press Esc to exit
+        }
+
+        function addField(type, page, x, y) {
+            const recipientId = parseInt(elements.currentRecipient.value);
+            if (!recipientId) {
+                showToast('Please select a recipient first');
+                return;
+            }
+
+            const recipient = state.recipients.find(r => r.id === recipientId);
+
+            // Determine if field should be required (default: true for signature, user choice for others)
+            const isRequired = type === 'signature' ? true : elements.fieldRequired.checked;
+
+            const field = {
+                id: Date.now(),
+                type,
+                recipientId,
+                page,
+                x,
+                y,
+                width: type === 'checkbox' ? 24 : (type === 'signature' ? 150 : 100),
+                height: type === 'checkbox' ? 24 : (type === 'signature' ? 50 : 30),
+                value: '', // For text, date, initials fields
+                checked: false, // For checkbox fields
+                required: isRequired // Required vs optional
+            };
+
+            // Handle field-specific initialization
+            if (type === 'text') {
+                const text = prompt('Enter text for this field:', '');
+                if (text === null) return; // User cancelled
+                field.value = text || 'Text';
+            } else if (type === 'date') {
+                // Placeholder - actual date filled at signing time
+                field.value = 'Date';
+            } else if (type === 'initials') {
+                // Auto-generate initials from recipient name
+                if (recipient) {
+                    const parts = recipient.name.trim().split(/\s+/);
+                    field.value = parts.map(p => p[0]?.toUpperCase() || '').join('');
+                } else {
+                    field.value = 'XX';
+                }
+            } else if (type === 'checkbox') {
+                field.checked = true; // Default to checked
+            }
+
+            state.placedFields.push(field);
+            renderPlacedFields();
+        }
+
+        function renderPlacedFields() {
+            // Remove existing field elements
+            document.querySelectorAll('.placed-field').forEach(el => el.remove());
+
+            // Render fields on their respective pages
+            state.placedFields.forEach(field => {
+                const pageWrapper = elements.pdfPagesWrapper.querySelector(`[data-page="${field.page}"]`);
+                if (!pageWrapper) return;
+
+                const recipient = state.recipients.find(r => r.id === field.recipientId);
+
+                const el = document.createElement('div');
+                el.className = 'placed-field';
+                el.style.cssText = `left:${field.x}px;top:${field.y}px;width:${field.width}px;height:${field.height}px;--recipient-color:${recipient?.color || '#1e40af'}`;
+                el.dataset.fieldId = field.id;
+
+                // Show field value based on type
+                let displayContent;
+                if (field.type === 'checkbox') {
+                    displayContent = field.checked ? '☑️' : '☐';
+                } else if (field.type === 'text' || field.type === 'date' || field.type === 'initials') {
+                    displayContent = field.value || getFieldLabel(field.type);
+                } else {
+                    displayContent = getFieldLabel(field.type);
+                }
+
+                el.innerHTML = `
+                    ${field.required ? '<span class="required-indicator">*</span>' : ''}
+                    <span class="field-content">${displayContent}</span>
+                    <button class="delete-btn" onclick="event.stopPropagation(); window.deleteField(${field.id})">×</button>
+                    <div class="resize-handle"></div>
+                `;
+
+                // Add click handler for checkbox toggle
+                if (field.type === 'checkbox') {
+                    el.addEventListener('dblclick', (e) => {
+                        if (e.target.classList.contains('delete-btn')) return;
+                        field.checked = !field.checked;
+                        renderPlacedFields();
+                    });
+                }
+
+                // Add click handler to edit text fields
+                if (field.type === 'text') {
+                    el.addEventListener('dblclick', (e) => {
+                        if (e.target.classList.contains('delete-btn')) return;
+                        const newValue = prompt('Edit text:', field.value);
+                        if (newValue !== null) {
+                            field.value = newValue || 'Text';
+                            renderPlacedFields();
+                        }
+                    });
+                }
+
+                // Add right-click menu to toggle required status (except for signature fields)
+                if (field.type !== 'signature') {
+                    el.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        field.required = !field.required;
+                        renderPlacedFields();
+                        showToast(`Field marked as ${field.required ? 'required' : 'optional'}`);
+                    });
+                }
+
+                makeDraggable(el, field);
+                makeResizable(el, field);
+
+                pageWrapper.appendChild(el);
+            });
+        }
+
+        function getFieldLabel(type) {
+            const labels = {
+                signature: '✍️ Signature',
+                initials: '🔤 Initials',
+                date: '📅 Date',
+                text: '📝 Text',
+                checkbox: '☑️ Check'
+            };
+            return labels[type] || type;
+        }
+
+        window.deleteField = function(id) {
+            state.placedFields = state.placedFields.filter(f => f.id !== id);
+            renderPlacedFields();
+        };
+
+        function makeDraggable(el, field) {
+            let isDragging = false;
+            let startX, startY, initialX, initialY;
+
+            el.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('delete-btn') || e.target.classList.contains('resize-handle')) return;
+                if (state.selectedFieldType && state.selectedFieldType !== 'pointer') return; // Don't drag in placement mode
+
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                initialX = field.x;
+                initialY = field.y;
+                el.classList.add('selected');
+                e.preventDefault();
+                e.stopPropagation();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                field.x = Math.max(0, initialX + dx);
+                field.y = Math.max(0, initialY + dy);
+                el.style.left = field.x + 'px';
+                el.style.top = field.y + 'px';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    el.classList.remove('selected');
+                }
+            });
+        }
+
+        function makeResizable(el, field) {
+            const handle = el.querySelector('.resize-handle');
+            let isResizing = false;
+            let startX, startY, initialW, initialH;
+
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                initialW = field.width;
+                initialH = field.height;
+                e.stopPropagation();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                field.width = Math.max(50, initialW + dx);
+                field.height = Math.max(20, initialH + dy);
+                el.style.width = field.width + 'px';
+                el.style.height = field.height + 'px';
+            });
+
+            document.addEventListener('mouseup', () => {
+                isResizing = false;
+            });
+        }
+
+        // Update Signing Button
+        function updateSigningButton() {
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            if (signers.length === 0) {
+                elements.btnSend.classList.add('hidden');
+                return;
+            }
+
+            if (state.signingStatus.currentSignerIndex >= signers.length) {
+                // All done
+                elements.btnSend.classList.add('hidden');
+                elements.btnDownload.classList.remove('hidden');
+            } else {
+                const currentSigner = signers[state.signingStatus.currentSignerIndex];
+                elements.btnSend.innerHTML = `Sign as ${currentSigner.name}`;
+                elements.btnSend.classList.remove('hidden');
+                elements.btnDownload.classList.add('hidden');
+            }
+        }
+
+        // Review (Step 4)
+        const REVIEW_SCALE = 1.5; // Scale for review preview (matches editor scale)
+
+        async function renderReview() {
+            // Update signing button text
+            updateSigningButton();
+            // Summary
+            elements.summaryDocName.textContent = state.fileName;
+            elements.summaryPages.textContent = state.totalPages;
+            elements.summaryRecipients.textContent = state.recipients.length;
+            elements.summaryFields.textContent = state.placedFields.length;
+
+            // Expiration display
+            const expirationCard = document.getElementById('expiration-card');
+            const expirationSelect = document.getElementById('expiration-select');
+            const expirationInfo = document.getElementById('expiration-info');
+            const expirationDeadline = document.getElementById('expiration-deadline');
+
+            if (state.remoteSession.isRemoteSigner && state.remoteSession.expiresAt) {
+                // Hide select, show expiration info for remote signers
+                if (expirationSelect) expirationSelect.style.display = 'none';
+                if (expirationInfo) {
+                    expirationInfo.classList.remove('hidden');
+                    const expiresAt = new Date(state.remoteSession.expiresAt);
+                    const now = new Date();
+                    const hoursLeft = Math.max(0, Math.round((expiresAt - now) / (1000 * 60 * 60)));
+                    const daysLeft = Math.floor(hoursLeft / 24);
+                    const timeLeft = daysLeft > 0 ? `${daysLeft} days` : `${hoursLeft} hours`;
+                    expirationDeadline.textContent = `${expiresAt.toLocaleString()} (${timeLeft} remaining)`;
+
+                    // Change color if expiring soon
+                    if (hoursLeft < 24) {
+                        expirationInfo.style.background = '#fee2e2'; // Red background
+                    } else if (hoursLeft < 72) {
+                        expirationInfo.style.background = '#fef3c7'; // Yellow background
+                    }
+                }
+            } else {
+                // Show select for document sender
+                if (expirationSelect) expirationSelect.style.display = '';
+                if (expirationInfo) expirationInfo.classList.add('hidden');
+            }
+
+            // Recipients with signing status
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            elements.reviewRecipients.innerHTML = state.recipients.map((r, index) => {
+                let statusBadge = '';
+                if (r.role === 'signer') {
+                    const signerIndex = signers.findIndex(s => s.id === r.id);
+                    if (state.signingStatus.completedSigners.includes(r.id)) {
+                        statusBadge = '<span style="padding:0.125rem 0.5rem;background:#10b981;color:white;border-radius:4px;font-size:0.625rem;font-weight:600;">SIGNED</span>';
+                    } else if (signerIndex === state.signingStatus.currentSignerIndex) {
+                        statusBadge = '<span style="padding:0.125rem 0.5rem;background:#f59e0b;color:white;border-radius:4px;font-size:0.625rem;font-weight:600;">CURRENT</span>';
+                    } else {
+                        statusBadge = '<span style="padding:0.125rem 0.5rem;background:#9ca3af;color:white;border-radius:4px;font-size:0.625rem;font-weight:600;">PENDING</span>';
+                    }
+                }
+                return `
+                    <div class="summary-item">
+                        <span class="summary-label" style="display:flex;align-items:center;gap:0.5rem;">
+                            <span style="width:8px;height:8px;background:${r.color};border-radius:50%;"></span>
+                            ${r.name}
+                        </span>
+                        <span class="summary-value" style="display:flex;align-items:center;gap:0.5rem;">
+                            ${statusBadge || (r.role === 'signer' ? 'Signs' : 'Copy')}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+
+            // Audit log
+            updateAuditLog();
+
+            // Render all pages with field overlays
+            elements.reviewPdfBody.innerHTML = '';
+
+            for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+                const page = await state.pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: REVIEW_SCALE });
+
+                // Create page container for relative positioning
+                const pageContainer = document.createElement('div');
+                pageContainer.className = 'review-page-container';
+                pageContainer.style.cssText = `
+                    position: relative;
+                    width: ${viewport.width}px;
+                    height: ${viewport.height}px;
+                    margin: 0 auto 1rem;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    background: white;
+                `;
+                pageContainer.dataset.page = pageNum;
+
+                // Create and render canvas
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.display = 'block';
+
+                await page.render({
+                    canvasContext: canvas.getContext('2d'),
+                    viewport
+                }).promise;
+
+                pageContainer.appendChild(canvas);
+
+                // Add field overlays for this page
+                const pageFields = state.placedFields.filter(f => f.page === pageNum);
+                const scaleRatio = REVIEW_SCALE / state.scale; // Convert from editor scale to review scale
+
+                pageFields.forEach(field => {
+                    const recipient = state.recipients.find(r => r.id === field.recipientId);
+                    const fieldOverlay = document.createElement('div');
+
+                    // Scale field position and size
+                    const scaledX = field.x * scaleRatio;
+                    const scaledY = field.y * scaleRatio;
+                    const scaledWidth = field.width * scaleRatio;
+                    const scaledHeight = field.height * scaleRatio;
+
+                    fieldOverlay.className = 'review-field-overlay';
+                    fieldOverlay.style.cssText = `
+                        position: absolute;
+                        left: ${scaledX}px;
+                        top: ${scaledY}px;
+                        width: ${scaledWidth}px;
+                        height: ${scaledHeight}px;
+                        border: 2px solid ${recipient?.color || '#1e40af'};
+                        background: ${recipient?.color || '#1e40af'}15;
+                        border-radius: 4px;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: ${Math.max(9, scaledHeight * 0.3)}px;
+                        color: ${recipient?.color || '#1e40af'};
+                        font-weight: 500;
+                        pointer-events: none;
+                        box-sizing: border-box;
+                        overflow: hidden;
+                    `;
+
+                    // Field content
+                    const icon = getFieldIcon(field.type);
+                    const recipientName = recipient ? recipient.name.split(' ')[0] : 'Signer';
+
+                    fieldOverlay.innerHTML = `
+                        <span style="font-size: ${Math.max(12, scaledHeight * 0.4)}px;">${icon}</span>
+                        <span style="font-size: ${Math.max(8, scaledHeight * 0.25)}px; opacity: 0.8; margin-top: 2px;">${recipientName}</span>
+                    `;
+
+                    pageContainer.appendChild(fieldOverlay);
+                });
+
+                elements.reviewPdfBody.appendChild(pageContainer);
+            }
+        }
+
+        function getFieldIcon(type) {
+            const icons = {
+                signature: '✍️',
+                initials: '🔤',
+                date: '📅',
+                text: '📝',
+                checkbox: '☑️'
+            };
+            return icons[type] || '📌';
+        }
+
+        function updateAuditLog() {
+            if (!state.docSign) {
+                elements.auditLog.innerHTML = '<div class="audit-entry"><span class="audit-event">No activity yet</span></div>';
+                elements.auditVerification.innerHTML = '';
+                return;
+            }
+
+            try {
+                const summary = state.docSign.get_audit_summary();
+                if (!summary || summary.length === 0) {
+                    elements.auditLog.innerHTML = '<div class="audit-entry"><span class="audit-event">No activity yet</span></div>';
+                    elements.auditVerification.innerHTML = '';
+                    return;
+                }
+
+                elements.auditLog.innerHTML = summary.map(entry => {
+                    // entry is a string like "[date] email - ACTION"
+                    return `<div class="audit-entry"><span class="audit-event">${entry}</span></div>`;
+                }).join('');
+
+                // Verify audit chain integrity
+                try {
+                    const isValid = state.docSign.verify_audit_chain();
+                    if (isValid) {
+                        elements.auditVerification.innerHTML = '<span style="color: #22c55e;">✓ Verified</span>';
+                        elements.auditVerification.title = 'Audit chain integrity verified - no tampering detected';
+                    } else {
+                        elements.auditVerification.innerHTML = '<span style="color: #ef4444;">⚠ Invalid</span>';
+                        elements.auditVerification.title = 'Audit chain verification failed - possible tampering';
+                    }
+                } catch (verifyErr) {
+                    console.error('Audit verification error:', verifyErr);
+                    elements.auditVerification.innerHTML = '<span style="color: #f59e0b;">? Unknown</span>';
+                    elements.auditVerification.title = 'Could not verify audit chain';
+                }
+            } catch (err) {
+                console.error('Audit log error:', err);
+                elements.auditLog.innerHTML = '<div class="audit-entry"><span class="audit-event">-</span></div>';
+                elements.auditVerification.innerHTML = '';
+            }
+        }
+
+        // Validate Required Fields
+        function validateRequiredFields() {
+            const missingFields = [];
+
+            state.placedFields.forEach(field => {
+                if (!field.required) return; // Skip optional fields
+
+                // Check if field has a value based on its type
+                let isEmpty = false;
+
+                if (field.type === 'signature' || field.type === 'initials') {
+                    // Signature and initials are considered "empty" until signed
+                    // We'll allow them to be processed during signing
+                    isEmpty = false;
+                } else if (field.type === 'text') {
+                    isEmpty = !field.value || field.value.trim() === '';
+                } else if (field.type === 'date') {
+                    isEmpty = !field.value || field.value.trim() === '';
+                } else if (field.type === 'checkbox') {
+                    // Checkboxes are always considered filled (they have a checked state)
+                    isEmpty = false;
+                }
+
+                if (isEmpty) {
+                    const recipient = state.recipients.find(r => r.id === field.recipientId);
+                    missingFields.push({
+                        type: field.type,
+                        recipientName: recipient ? recipient.name : 'Unknown',
+                        page: field.page
+                    });
+                }
+            });
+
+            return missingFields;
+        }
+
+        // Send for Signing - Async with Web Worker for large PDFs
+        async function sendForSigning() {
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            if (signers.length === 0) {
+                showToast('No signers added');
+                return;
+            }
+
+            if (state.signingStatus.currentSignerIndex >= signers.length) {
+                showToast('All signers have completed signing');
+                return;
+            }
+
+            const currentSigner = signers[state.signingStatus.currentSignerIndex];
+            const signatureFields = state.placedFields.filter(f => f.type === 'signature' && f.recipientId === currentSigner.id);
+
+            if (signatureFields.length === 0) {
+                showToast(`No signature fields for ${currentSigner.name}`);
+                return;
+            }
+
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+                updateSigningProgress('Preparing document...', 5);
+
+                // Helper: Convert DOM coords to PDF coords
+                function domToPdfCoords(field) {
+                    const pageDims = state.pageDimensions[field.page];
+                    if (!pageDims) return null;
+
+                    const pdfWidth = pageDims.width;
+                    const pdfHeight = pageDims.height;
+                    const canvasWidth = pageDims.canvasWidth || (pdfWidth * state.scale);
+                    const canvasHeight = pageDims.canvasHeight || (pdfHeight * state.scale);
+                    const scaleX = pdfWidth / canvasWidth;
+                    const scaleY = pdfHeight / canvasHeight;
+
+                    return {
+                        x: field.x * scaleX,
+                        y: pdfHeight - (field.y + field.height) * scaleY,
+                        width: field.width * scaleX,
+                        height: field.height * scaleY
+                    };
+                }
+
+                // Use Web Worker if available, otherwise fall back to main thread
+                const useWorker = !!signingWorker;
+
+                // On first signature, add all non-signature fields
+                if (state.signingStatus.currentSignerIndex === 0) {
+                    const nonSigFields = state.placedFields.filter(f =>
+                        f.type === 'date' || f.type === 'text' || f.type === 'initials' || f.type === 'checkbox'
+                    );
+
+                    updateSigningProgress('Adding form fields...', 15);
+                    let fieldCount = 0;
+                    for (const field of nonSigFields) {
+                        const coords = domToPdfCoords(field);
+                        if (!coords) continue;
+
+                        try {
+                            // For date fields, fill in current date at signing time
+                            const fieldValue = field.type === 'date'
+                                ? new Date().toLocaleDateString()
+                                : (field.value || '');
+
+                            if (useWorker) {
+                                if (field.type === 'checkbox') {
+                                    await signingWorker.addCheckbox(field.page, coords.x, coords.y,
+                                        Math.min(coords.width, coords.height), field.checked);
+                                } else {
+                                    await signingWorker.addTextField(field.page, coords.x, coords.y,
+                                        coords.width, coords.height, fieldValue, field.type);
+                                }
+                            } else {
+                                // Main thread fallback
+                                if (field.type === 'checkbox') {
+                                    state.docSign.add_checkbox_field(field.page, coords.x, coords.y,
+                                        Math.min(coords.width, coords.height), field.checked);
+                                } else {
+                                    state.docSign.add_text_field(field.page, coords.x, coords.y,
+                                        coords.width, coords.height, fieldValue, field.type);
+                                }
+                            }
+                            fieldCount++;
+                            updateSigningProgress(`Adding fields (${fieldCount}/${nonSigFields.length})...`, 15 + (fieldCount / nonSigFields.length) * 15);
+                        } catch (fieldErr) {
+                            console.error(`Failed to add ${field.type} field:`, fieldErr);
+                        }
+                        // Yield to UI thread periodically
+                        if (fieldCount % 5 === 0) await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+
+                // Sign for current signer
+                if (!useWorker) {
+                    state.docSign.set_signer_email(currentSigner.email);
+                }
+                updateSigningProgress('Signing document...', 40);
+
+                let sigCount = 0;
+                for (const field of signatureFields) {
+                    const coords = domToPdfCoords(field);
+                    if (!coords) continue;
+
+                    updateSigningProgress(`Signing field ${sigCount + 1}/${signatureFields.length}...`, 40 + (sigCount / signatureFields.length) * 50);
+
+                    try {
+                        // Yield before heavy operation
+                        await new Promise(r => setTimeout(r, 10));
+
+                        if (useWorker) {
+                            await signingWorker.signField(field.page, coords.x, coords.y,
+                                coords.width, coords.height, `Signed by ${currentSigner.name}`, currentSigner.email);
+                        } else {
+                            state.docSign.sign_document(field.page, coords.x, coords.y,
+                                coords.width, coords.height, `Signed by ${currentSigner.name}`);
+                        }
+                        sigCount++;
+                    } catch (signErr) {
+                        console.error('Sign error:', signErr);
+                        throw new Error(`Failed to sign field on page ${field.page}: ${signErr.message || signErr}`);
+                    }
+                }
+
+                // Mark current signer as completed
+                state.signingStatus.completedSigners.push(currentSigner.id);
+
+                // Move to next signer
+                state.signingStatus.currentSignerIndex++;
+
+                showToast(`${currentSigner.name} signed successfully!`);
+
+                // Check if all signers are done
+                if (state.signingStatus.currentSignerIndex >= signers.length) {
+                    // All done - show download button
+                    elements.btnSend.classList.add('hidden');
+                    elements.btnDownload.classList.remove('hidden');
+
+                    // If remote signer, submit back to server
+                    if (state.remoteSession.isRemoteSigner) {
+                        await submitSignedDocument();
+                        showToast('Signing complete! Document submitted.');
+                    } else {
+                        showToast('All signers have completed! Document ready for download.');
+                    }
+                } else {
+                    // Update button for next signer
+                    updateSigningButton();
+
+                    // If remote signer, submit after each signature
+                    if (state.remoteSession.isRemoteSigner) {
+                        await submitSignedDocument();
+                    }
+                }
+
+                // Update UI
+                updateSigningProgress('Complete!', 100);
+                updateAuditLog();
+                renderReview();
+
+                // Clean up progress and hide overlay
+                const progressEl = elements.loadingOverlay.querySelector('.signing-progress');
+                if (progressEl) progressEl.remove();
+                elements.loadingOverlay.classList.add('hidden');
+
+            } catch (err) {
+                console.error('Signing failed:', err);
+                const progressEl = elements.loadingOverlay.querySelector('.signing-progress');
+                if (progressEl) progressEl.remove();
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Signing failed: ' + (err.message || String(err) || 'Unknown error'));
+            }
+        }
+
+        // Settings
+        function openSettings() {
+            updateCertificateDisplay();
+            document.getElementById('settings-modal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        async function importCertificate() {
+            const certFileInput = document.getElementById('cert-file-input');
+            const keyFileInput = document.getElementById('key-file-input');
+            if (!certFileInput.files[0] || !keyFileInput.files[0]) {
+                showToast('Please select both certificate and private key files');
+                return;
+            }
+            try {
+                const certFile = certFileInput.files[0];
+                const certPem = await certFile.text();
+                const keyFile = keyFileInput.files[0];
+                const keyPem = await keyFile.text();
+                if (!state.docSign) {
+                    showToast('DocSign not initialized');
+                    return;
+                }
+                state.docSign.import_certificate(certPem, keyPem);
+                updateCertificateDisplay();
+                updateCertificateIndicator();
+                showToast('Certificate imported successfully');
+                certFileInput.value = '';
+                keyFileInput.value = '';
+            } catch (err) {
+                console.error('Certificate import failed:', err);
+                showToast('Certificate import failed: ' + (err.message || String(err)));
+            }
+        }
+
+        function clearCertificate() {
+            if (!state.docSign) return;
+            if (confirm('Are you sure you want to clear the current certificate?')) {
+                state.docSign.clear_certificate();
+                updateCertificateDisplay();
+                updateCertificateIndicator();
+                showToast('Certificate cleared');
+            }
+        }
+
+        function updateCertificateDisplay() {
+            if (!state.docSign) return;
+            const hasCert = state.docSign.has_certificate();
+            const certInfoContainer = document.getElementById('cert-info-container');
+            const certInfoDisplay = document.getElementById('cert-info-display');
+            if (hasCert) {
+                try {
+                    const info = state.docSign.get_certificate_info();
+                    const validityClass = info.isValid ? 'cert-valid' : 'cert-invalid';
+                    const validityText = info.isValid ? 'Valid' : 'Invalid';
+                    certInfoDisplay.innerHTML = `
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Subject</span>
+                            <span class="cert-info-value">${escapeHtml(info.subject)}</span>
+                        </div>
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Issuer</span>
+                            <span class="cert-info-value">${escapeHtml(info.issuer)}</span>
+                        </div>
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Serial Number</span>
+                            <span class="cert-info-value">${escapeHtml(info.serialNumber)}</span>
+                        </div>
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Valid From</span>
+                            <span class="cert-info-value">${escapeHtml(info.notBefore)}</span>
+                        </div>
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Valid Until</span>
+                            <span class="cert-info-value">${escapeHtml(info.notAfter)}</span>
+                        </div>
+                        <div class="cert-info-row">
+                            <span class="cert-info-label">Status</span>
+                            <span class="cert-info-value ${validityClass}">${validityText}</span>
+                        </div>
+                    `;
+                    certInfoContainer.classList.remove('hidden');
+                } catch (err) {
+                    console.error('Failed to get certificate info:', err);
+                    certInfoContainer.classList.add('hidden');
+                }
+            } else {
+                certInfoContainer.classList.add('hidden');
+            }
+        }
+
+        function updateCertificateIndicator() {
+            if (!state.docSign) return;
+            const indicator = document.getElementById('cert-status-indicator');
+            const hasCert = state.docSign.has_certificate();
+            if (hasCert) {
+                indicator.classList.remove('hidden');
+            } else {
+                indicator.classList.add('hidden');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Email sending via Cloudflare Worker
+        async function sendEmailsToRecipients(serverUrl, recipients) {
+            if (!state.docSign) return;
+
+            try {
+                const pdfBytes = state.docSign.get_document_bytes();
+                const pdfBase64 = btoa(String.fromCharCode(...pdfBytes));
+                const filename = state.fileName.replace('.pdf', '_signed.pdf');
+
+                let successCount = 0;
+                let failCount = 0;
+
+                for (const recipient of recipients) {
+                    try {
+                        const response = await fetch(`${serverUrl}/send`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                to: recipient.email,
+                                subject: `Document for Signature: ${state.fileName}`,
+                                pdf_base64: pdfBase64,
+                                filename: filename
+                            })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                            successCount++;
+                            console.log(`Email sent to ${recipient.email}. Remaining: ${result.remaining_today}/day, ${result.remaining_month}/month`);
+                        } else {
+                            failCount++;
+                            console.error(`Failed to send to ${recipient.email}: ${result.message}`);
+                        }
+                    } catch (emailErr) {
+                        failCount++;
+                        console.error(`Failed to send to ${recipient.email}:`, emailErr);
+                    }
+                }
+
+                if (successCount > 0 && failCount === 0) {
+                    showToast(`Sent to ${successCount} recipient(s)`);
+                } else if (successCount > 0) {
+                    showToast(`Sent to ${successCount}, failed ${failCount}`);
+                } else {
+                    showToast('Failed to send emails');
+                }
+            } catch (err) {
+                console.error('Email sending failed:', err);
+                showToast('Failed to send emails: ' + (err.message || err));
+            }
+        }
+
+        async function downloadPDF() {
+            if (!signingWorker && !state.docSign) {
+                showToast('No signed document available');
+                return;
+            }
+
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+                updateSigningProgress('Preparing download...', 50);
+
+                let bytes;
+                if (signingWorker) {
+                    const pdfBuffer = await signingWorker.getPdf();
+                    bytes = new Uint8Array(pdfBuffer);
+                } else {
+                    bytes = state.docSign.get_document_bytes();
+                }
+
+                const blob = new Blob([bytes], { type: 'application/pdf' });
+                const url = URL.createObjectURL(blob);
+
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = state.fileName.replace('.pdf', '_signed.pdf');
+                a.click();
+
+                URL.revokeObjectURL(url);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Download started');
+            } catch (err) {
+                console.error('Download failed:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Download failed: ' + (err.message || err));
+            }
+        }
+
+        // Draft Management
+        async function saveDraft() {
+            if (!state.storage || !state.pdfBytes) {
+                showToast('Nothing to save');
+                return;
+            }
+
+            try {
+                const documentId = state.docSign?.document_id() || `draft_${Date.now()}`;
+
+                // Serialize state (only serializable parts)
+                const draftState = {
+                    currentStep: state.currentStep,
+                    fileName: state.fileName,
+                    recipients: state.recipients,
+                    placedFields: state.placedFields,
+                    currentPage: state.currentPage,
+                    totalPages: state.totalPages,
+                    pageDimensions: state.pageDimensions,
+                    savedAt: new Date().toISOString()
+                };
+
+                // Store the PDF bytes
+                await state.storage.store_document(documentId, state.pdfBytes, state.fileName);
+
+                // Store the draft state
+                await state.storage.store_draft(documentId, JSON.stringify(draftState));
+
+                // Remember the draft ID for later
+                localStorage.setItem('lastDraftId', documentId);
+
+                showToast('Draft saved');
+            } catch (err) {
+                console.error('Save draft failed:', err);
+                showToast('Save failed: ' + (err.message || err));
+            }
+        }
+
+        async function loadDraft(draftId) {
+            if (!state.storage) return false;
+
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+
+                // Load draft state
+                const draftJson = await state.storage.get_draft(draftId);
+                if (!draftJson) {
+                    elements.loadingOverlay.classList.add('hidden');
+                    return false;
+                }
+                const draft = JSON.parse(draftJson);
+
+                // Load PDF bytes (get_document returns the Uint8Array directly)
+                const docData = await state.storage.get_document(draftId);
+                if (!docData || docData.length === 0) {
+                    elements.loadingOverlay.classList.add('hidden');
+                    return false;
+                }
+
+                // Restore state
+                state.pdfBytes = new Uint8Array(docData);
+                state.fileName = draft.fileName;
+                state.recipients = draft.recipients || [];
+                state.placedFields = draft.placedFields || [];
+                state.currentPage = draft.currentPage || 1;
+                state.pageDimensions = draft.pageDimensions || {};
+
+                // Re-initialize PDF
+                state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;
+                state.totalPages = state.pdfDoc.numPages;
+
+                // Re-initialize WASM
+                state.docSign = new DocSign();
+                await state.docSign.load_pdf(state.pdfBytes);
+
+                // Update certificate indicator
+                updateCertificateIndicator();
+
+                // Go to saved step
+                goToStep(draft.currentStep || 2);
+
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Draft loaded');
+                return true;
+            } catch (err) {
+                console.error('Load draft failed:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Could not load draft');
+                return false;
+            }
+        }
+
+        async function checkForDrafts() {
+            const lastDraftId = localStorage.getItem('lastDraftId');
+            if (!lastDraftId || !state.storage) return;
+
+            try {
+                const draftJson = await state.storage.get_draft(lastDraftId);
+                if (draftJson) {
+                    const draft = JSON.parse(draftJson);
+                    const savedAt = new Date(draft.savedAt).toLocaleString();
+
+                    if (confirm(`Found a saved draft from ${savedAt}.\n\nFile: ${draft.fileName}\nRecipients: ${draft.recipients?.length || 0}\n\nWould you like to continue where you left off?`)) {
+                        await loadDraft(lastDraftId);
+                    } else {
+                        // Clear the draft reference if user declines
+                        localStorage.removeItem('lastDraftId');
+                    }
+                }
+            } catch (err) {
+                console.error('Check drafts failed:', err);
+            }
+        }
+
+        // Template Management
+        async function saveTemplateAs() {
+            if (state.placedFields.length === 0) {
+                showToast('No fields to save as template');
+                return;
+            }
+
+            document.getElementById('save-template-modal').classList.remove('hidden');
+            document.getElementById('template-name-input').value = '';
+            document.getElementById('template-name-input').focus();
+        }
+
+        function closeSaveTemplateModal() {
+            document.getElementById('save-template-modal').classList.add('hidden');
+        }
+
+        async function saveTemplate() {
+            const name = document.getElementById('template-name-input').value.trim();
+            if (!name) {
+                showToast('Please enter a template name');
+                return;
+            }
+
+            try {
+                // Convert placed fields to percentage-based positions
+                const templateFields = state.placedFields.map(field => {
+                    const pageDims = state.pageDimensions[field.page];
+                    const canvasWidth = pageDims?.canvasWidth || 800;
+                    const canvasHeight = pageDims?.canvasHeight || 1000;
+
+                    return {
+                        type: field.type,
+                        page: field.page,
+                        xPercent: (field.x / canvasWidth) * 100,
+                        yPercent: (field.y / canvasHeight) * 100,
+                        widthPercent: (field.width / canvasWidth) * 100,
+                        heightPercent: (field.height / canvasHeight) * 100,
+                        value: field.value || '',
+                        checked: field.checked || false,
+                        required: field.required || false
+                    };
+                });
+
+                const template = {
+                    name,
+                    fields: templateFields,
+                    fieldCount: templateFields.length,
+                    createdAt: new Date().toISOString()
+                };
+
+                // Store in IndexedDB using the same storage API
+                const templateId = `template_${Date.now()}`;
+                await state.storage.store_draft(templateId, JSON.stringify(template));
+
+                // Keep track of template IDs in localStorage
+                const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
+                templates.push({ id: templateId, name, createdAt: template.createdAt });
+                localStorage.setItem('fieldTemplates', JSON.stringify(templates));
+
+                closeSaveTemplateModal();
+                showToast(`Template "${name}" saved`);
+            } catch (err) {
+                console.error('Failed to save template:', err);
+                showToast('Failed to save template: ' + (err.message || err));
+            }
+        }
+
+        async function loadTemplateModal() {
+            document.getElementById('load-template-modal').classList.remove('hidden');
+            await renderTemplateList();
+        }
+
+        function closeLoadTemplateModal() {
+            document.getElementById('load-template-modal').classList.add('hidden');
+        }
+
+        async function renderTemplateList() {
+            const templateList = document.getElementById('template-list');
+            const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
+
+            if (templates.length === 0) {
+                templateList.innerHTML = '<div class="empty-state">No templates saved yet</div>';
+                return;
+            }
+
+            const templateItems = await Promise.all(templates.map(async (tmpl) => {
+                try {
+                    const templateJson = await state.storage.get_draft(tmpl.id);
+                    if (!templateJson) return null;
+
+                    const template = JSON.parse(templateJson);
+                    const createdDate = new Date(template.createdAt).toLocaleDateString();
+
+                    return `
+                        <li class="template-item" data-template-id="${tmpl.id}">
+                            <div class="template-info">
+                                <div class="template-name">${template.name}</div>
+                                <div class="template-meta">${template.fieldCount} fields &bull; ${createdDate}</div>
+                            </div>
+                            <div class="template-actions">
+                                <button class="btn-load" onclick="loadTemplate('${tmpl.id}')">Load</button>
+                                <button class="btn-delete" onclick="deleteTemplate('${tmpl.id}')">Delete</button>
+                            </div>
+                        </li>
+                    `;
+                } catch (err) {
+                    console.error('Error rendering template:', err);
+                    return null;
+                }
+            }));
+
+            templateList.innerHTML = templateItems.filter(item => item !== null).join('');
+        }
+
+        async function loadTemplate(templateId) {
+            try {
+                const templateJson = await state.storage.get_draft(templateId);
+                if (!templateJson) {
+                    showToast('Template not found');
+                    return;
+                }
+
+                const template = JSON.parse(templateJson);
+
+                if (!template.fields || template.fields.length === 0) {
+                    showToast('Template has no fields');
+                    return;
+                }
+
+                // Check if there's a current recipient selected
+                const recipientId = parseInt(elements.currentRecipient.value);
+                if (!recipientId) {
+                    showToast('Please select a recipient first');
+                    return;
+                }
+
+                // Convert percentage-based positions back to absolute positions
+                const newFields = template.fields.map(tmplField => {
+                    const pageDims = state.pageDimensions[tmplField.page];
+                    if (!pageDims) {
+                        console.warn(`No dimensions for page ${tmplField.page}`);
+                        return null;
+                    }
+
+                    const canvasWidth = pageDims.canvasWidth || 800;
+                    const canvasHeight = pageDims.canvasHeight || 1000;
+
+                    return {
+                        id: Date.now() + Math.random(),
+                        type: tmplField.type,
+                        recipientId,
+                        page: tmplField.page,
+                        x: (tmplField.xPercent / 100) * canvasWidth,
+                        y: (tmplField.yPercent / 100) * canvasHeight,
+                        width: (tmplField.widthPercent / 100) * canvasWidth,
+                        height: (tmplField.heightPercent / 100) * canvasHeight,
+                        value: tmplField.value || '',
+                        checked: tmplField.checked || false,
+                        required: tmplField.required !== undefined ? tmplField.required : true
+                    };
+                }).filter(f => f !== null);
+
+                // Add fields to state
+                state.placedFields.push(...newFields);
+                renderPlacedFields();
+
+                closeLoadTemplateModal();
+                showToast(`Loaded ${newFields.length} fields from template`);
+            } catch (err) {
+                console.error('Failed to load template:', err);
+                showToast('Failed to load template: ' + (err.message || err));
+            }
+        }
+
+        async function deleteTemplate(templateId) {
+            if (!confirm('Are you sure you want to delete this template?')) {
+                return;
+            }
+
+            try {
+                // Remove from localStorage
+                const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
+                const updated = templates.filter(t => t.id !== templateId);
+                localStorage.setItem('fieldTemplates', JSON.stringify(updated));
+
+                showToast('Template deleted');
+                await renderTemplateList();
+            } catch (err) {
+                console.error('Failed to delete template:', err);
+                showToast('Failed to delete template');
+            }
+        }
+
+        // Expose template functions to window for onclick handlers
+        window.closeSaveTemplateModal = closeSaveTemplateModal;
+        window.saveTemplate = saveTemplate;
+        window.closeLoadTemplateModal = closeLoadTemplateModal;
+        window.loadTemplate = loadTemplate;
+        window.deleteTemplate = deleteTemplate;
+
+        // Signing Links Generation
+        async function generateSigningLinks() {
+            if (!state.pdfBytes || state.recipients.length === 0) {
+                showToast('Please upload a PDF and add recipients first');
+                return;
+            }
+
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            if (signers.length === 0) {
+                showToast('No signers to generate links for');
+                return;
+            }
+
+            const linksList = document.getElementById('signing-links-list');
+            const errorDiv = document.getElementById('signing-links-error');
+            const rateLimitDiv = document.getElementById('signing-links-rate-limit');
+            linksList.innerHTML = '<p style="text-align: center; color: #6b7280;">Generating links...</p>';
+            errorDiv.classList.add('hidden');
+            if (rateLimitDiv) rateLimitDiv.classList.add('hidden');
+            document.getElementById('signing-links-modal').classList.remove('hidden');
+
+            try {
+                // Generate unique encryption key for the session
+                const key = await generateEncryptionKey();
+                const keyBase64 = await exportKeyToBase64(key);
+
+                // Encrypt document
+                const encryptedDoc = await encryptDocument(state.pdfBytes, key);
+                const encryptedDocBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedDoc)));
+
+                // Get expiration hours from selector
+                const expiryHours = parseInt(document.getElementById('expiration-select')?.value || '168');
+
+                // Prepare session data for server
+                const sessionRequest = {
+                    encrypted_document: encryptedDocBase64,
+                    metadata: {
+                        filename: state.fileName || 'document.pdf',
+                        page_count: state.totalPages || 1,
+                        created_at: new Date().toISOString(),
+                        created_by: 'Anonymous' // Could be from user settings
+                    },
+                    recipients: state.recipients.map(r => ({
+                        id: r.id.toString(),
+                        name: r.name,
+                        email: r.email,
+                        role: r.role,
+                        signed: false,
+                        signed_at: null
+                    })),
+                    fields: state.placedFields.map(f => ({
+                        id: f.id,
+                        field_type: f.type,
+                        recipient_id: f.recipientId.toString(),
+                        page: f.page,
+                        x_percent: f.xPercent || (f.x / (state.pageDimensions[f.page]?.width || 612)) * 100,
+                        y_percent: f.yPercent || (f.y / (state.pageDimensions[f.page]?.height || 792)) * 100,
+                        width_percent: f.widthPercent || (f.width / (state.pageDimensions[f.page]?.width || 612)) * 100,
+                        height_percent: f.heightPercent || (f.height / (state.pageDimensions[f.page]?.height || 792)) * 100,
+                        required: f.required !== false,
+                        value: f.value || null
+                    })),
+                    expiry_hours: expiryHours
+                };
+
+                // Call worker to create session
+                const response = await fetch(`${SIGNING_SERVER_URL}/session`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(sessionRequest)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+
+                const sessionResult = await response.json();
+                if (!sessionResult.success) {
+                    throw new Error(sessionResult.message || 'Failed to create session');
+                }
+
+                const sessionId = sessionResult.session_id;
+
+                // Generate signing links for each signer
+                const baseUrl = window.location.origin + window.location.pathname;
+                const links = signers.map(signer => ({
+                    name: signer.name,
+                    email: signer.email,
+                    recipientId: signer.id,
+                    link: `${baseUrl}#sign=${sessionId}:${signer.id}:${keyBase64}`,
+                    sessionId
+                }));
+
+                // Store session info in state for email sending
+                state.currentSessionId = sessionId;
+                state.currentSessionKey = keyBase64;
+                state.signingLinks = links;
+
+                // Display the generated links
+                linksList.innerHTML = links.map((l, i) => `
+                    <div class="signing-link-item" style="padding: 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <div>
+                                <strong class="link-recipient-name">${escapeHtml(l.name)}</strong>
+                                <span style="color: #6b7280; font-size: 0.75rem;">(${escapeHtml(l.email)})</span>
+                            </div>
+                            <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">
+                                Signer ${i + 1}
+                            </span>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" readonly value="${l.link}" class="link-url"
+                                   style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.75rem; background: white; color: var(--text-primary);">
+                            <button class="btn btn-secondary btn-sm btn-copy-link" onclick="copySigningLink(this, '${l.link}')" style="padding: 0.5rem 1rem; font-size: 0.75rem; white-space: nowrap;">
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+
+                addAuditEntry('Signing links generated for ' + links.length + ' signer(s)');
+
+                // Show rate limit info if available
+                if (sessionResult.remaining_today !== undefined || sessionResult.remaining_month !== undefined) {
+                    showRateLimitInfo(sessionResult.remaining_today, sessionResult.remaining_month);
+                }
+
+            } catch (err) {
+                console.error('Failed to generate signing links:', err);
+                errorDiv.textContent = 'Failed to generate links: ' + (err.message || 'Unknown error');
+                errorDiv.classList.remove('hidden');
+                linksList.innerHTML = '';
+            }
+        }
+
+        function openSigningLinksModal() {
+            document.getElementById('signing-links-modal').classList.remove('hidden');
+        }
+
+        function closeSigningLinksModal() {
+            document.getElementById('signing-links-modal').classList.add('hidden');
+        }
+
+        function copySigningLink(button, link) {
+            navigator.clipboard.writeText(link).then(() => {
+                button.textContent = 'Copied!';
+                button.classList.add('copied');
+                setTimeout(() => {
+                    button.textContent = 'Copy';
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showToast('Failed to copy link');
+            });
+        }
+
+        async function sendSigningEmails() {
+            if (!state.signingLinks || state.signingLinks.length === 0) {
+                showToast('Please generate signing links first');
+                return;
+            }
+
+            const sendBtn = document.getElementById('btn-send-emails');
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+
+            try {
+                // Prepare invitations data
+                const invitations = state.signingLinks.map(link => ({
+                    recipient_id: link.recipientId.toString(),
+                    name: link.name,
+                    email: link.email,
+                    signing_link: link.link
+                }));
+
+                // Call /invite endpoint
+                const response = await fetch(`${SIGNING_SERVER_URL}/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: state.currentSessionId,
+                        document_name: state.fileName || 'document.pdf',
+                        sender_name: 'DocSigner', // Could be from user settings
+                        invitations: invitations
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Emails';
+
+                if (result.success) {
+                    showToast(`Emails sent to ${invitations.length} signer(s)`);
+                    addAuditEntry(`Signing invitations sent to ${invitations.length} recipient(s)`);
+
+                    // Show rate limit info if available
+                    if (result.remaining_today !== undefined || result.remaining_month !== undefined) {
+                        showRateLimitInfo(result.remaining_today, result.remaining_month);
+                    }
+
+                    // Close modal after successful send
+                    setTimeout(() => {
+                        closeSigningLinksModal();
+                    }, 2000);
+                } else {
+                    throw new Error(result.message || 'Failed to send invitations');
+                }
+
+            } catch (err) {
+                console.error('Failed to send emails:', err);
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Emails';
+
+                const errorDiv = document.getElementById('signing-links-error');
+                if (errorDiv) {
+                    errorDiv.textContent = 'Failed to send emails: ' + (err.message || 'Unknown error');
+                    errorDiv.classList.remove('hidden');
+                }
+
+                showToast('Failed to send emails. Check server configuration.');
+            }
+        }
+
+        function showRateLimitInfo(remainingToday, remainingMonth) {
+            const rateLimitDiv = document.getElementById('signing-links-rate-limit');
+            if (!rateLimitDiv) return;
+
+            const warnings = [];
+            if (remainingToday !== undefined && remainingToday < 20) {
+                warnings.push(`${remainingToday} emails remaining today`);
+            }
+            if (remainingMonth !== undefined && remainingMonth < 100) {
+                warnings.push(`${remainingMonth} emails remaining this month`);
+            }
+
+            if (warnings.length > 0) {
+                rateLimitDiv.innerHTML = `<strong>Rate Limit Warning:</strong> ${warnings.join(', ')}. Consider upgrading your plan if you need more capacity.`;
+                rateLimitDiv.classList.remove('hidden');
+            } else {
+                rateLimitDiv.classList.add('hidden');
+            }
+        }
+
+        // Expose signing link functions to window for onclick handlers
+        window.closeSigningLinksModal = closeSigningLinksModal;
+        window.sendSigningEmails = sendSigningEmails;
+        window.copySigningLink = copySigningLink;
+
+        // Remote Signing - Encryption/Decryption using Web Crypto
+        const SIGNING_SERVER_URL = 'https://api.getsignatures.org';
+
+        async function generateEncryptionKey() {
+            return await crypto.subtle.generateKey(
+                { name: 'AES-GCM', length: 256 },
+                true, // extractable
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        async function exportKeyToBase64(key) {
+            const exported = await crypto.subtle.exportKey('raw', key);
+            return btoa(String.fromCharCode(...new Uint8Array(exported)));
+        }
+
+        async function importKeyFromBase64(base64Key) {
+            const keyData = Uint8Array.from(atob(base64Key), c => c.charCodeAt(0));
+            return await crypto.subtle.importKey(
+                'raw',
+                keyData,
+                { name: 'AES-GCM' },
+                true,
+                ['encrypt', 'decrypt']
+            );
+        }
+
+        async function encryptDocument(pdfBytes, key) {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                pdfBytes
+            );
+            // Prepend IV to encrypted data
+            const combined = new Uint8Array(iv.length + encrypted.byteLength);
+            combined.set(iv);
+            combined.set(new Uint8Array(encrypted), iv.length);
+            return btoa(String.fromCharCode(...combined));
+        }
+
+        async function decryptDocument(encryptedBase64, key) {
+            const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+            const iv = combined.slice(0, 12);
+            const encrypted = combined.slice(12);
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                key,
+                encrypted
+            );
+            return new Uint8Array(decrypted);
+        }
+
+        async function createSigningSession() {
+            try {
+                // Generate encryption key
+                const key = await generateEncryptionKey();
+                const keyBase64 = await exportKeyToBase64(key);
+
+                // Encrypt the current PDF
+                const encryptedDoc = await encryptDocument(state.pdfBytes, key);
+
+                // Prepare session data
+                const sessionData = {
+                    encrypted_document: encryptedDoc,
+                    metadata: {
+                        filename: state.filename,
+                        page_count: state.totalPages,
+                        created_at: new Date().toISOString(),
+                        created_by: 'DocSigner'
+                    },
+                    recipients: state.recipients.map(r => ({
+                        id: String(r.id),
+                        name: r.name,
+                        email: r.email,
+                        role: r.role,
+                        signed: false
+                    })),
+                    fields: state.placedFields.map(f => {
+                        const pageDims = state.pageDimensions[f.page];
+                        const canvasWidth = pageDims?.canvasWidth || 800;
+                        const canvasHeight = pageDims?.canvasHeight || 1000;
+                        return {
+                            id: String(f.id),
+                            field_type: f.type,
+                            recipient_id: String(f.recipientId),
+                            page: f.page,
+                            x_percent: (f.x / canvasWidth) * 100,
+                            y_percent: (f.y / canvasHeight) * 100,
+                            width_percent: (f.width / canvasWidth) * 100,
+                            height_percent: (f.height / canvasHeight) * 100,
+                            required: f.required || false,
+                            value: f.value || null
+                        };
+                    }),
+                    expiry_hours: parseInt(document.getElementById('expiration-select')?.value || '168')
+                };
+
+                // Create session on server
+                const response = await fetch(`${SIGNING_SERVER_URL}/session`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(sessionData)
+                });
+
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.message || 'Failed to create session');
+                }
+
+                // Store session info
+                state.remoteSession.sessionId = result.session_id;
+                state.remoteSession.encryptionKey = key;
+
+                // Return signing links for each signer
+                const baseUrl = window.location.origin + window.location.pathname;
+                const signingLinks = state.recipients
+                    .filter(r => r.role === 'signer')
+                    .map(r => ({
+                        recipient: r,
+                        link: `${baseUrl}#sign=${result.session_id}&key=${encodeURIComponent(keyBase64)}&r=${r.id}`
+                    }));
+
+                return { sessionId: result.session_id, keyBase64, signingLinks };
+            } catch (err) {
+                console.error('Failed to create signing session:', err);
+                throw err;
+            }
+        }
+
+        async function loadRemoteSession(sessionId, keyBase64, recipientId) {
+            try {
+                // Fetch session from server
+                const response = await fetch(`${SIGNING_SERVER_URL}/session/${sessionId}`);
+                const result = await response.json();
+
+                if (!result.success || !result.session) {
+                    // Check for expired session
+                    if (response.status === 410) {
+                        throw new Error('This signing request has expired');
+                    }
+                    throw new Error(result.message || 'Session not found');
+                }
+
+                // Check expiration on client side as well
+                if (result.session.expires_at) {
+                    const expiresAt = new Date(result.session.expires_at);
+                    if (expiresAt < new Date()) {
+                        throw new Error('This signing request has expired');
+                    }
+                    // Store expiration for display
+                    state.remoteSession.expiresAt = result.session.expires_at;
+                }
+
+                // Import encryption key
+                const key = await importKeyFromBase64(keyBase64);
+
+                // Decrypt document
+                const pdfBytes = await decryptDocument(result.session.encrypted_document, key);
+
+                // Store session state
+                state.remoteSession.sessionId = sessionId;
+                state.remoteSession.encryptionKey = key;
+                state.remoteSession.isRemoteSigner = true;
+                state.remoteSession.recipientId = recipientId;
+
+                // Load the document
+                state.pdfBytes = pdfBytes;
+                state.filename = result.session.metadata.filename;
+                state.recipients = result.session.recipients.map(r => ({
+                    id: parseInt(r.id),
+                    name: r.name,
+                    email: r.email,
+                    role: r.role
+                }));
+
+                // Convert percentage-based fields to absolute positions
+                // (will be finalized after PDF renders)
+                state.placedFields = result.session.fields.map(f => ({
+                    id: parseFloat(f.id) || Date.now() + Math.random(),
+                    type: f.field_type,
+                    recipientId: parseInt(f.recipient_id),
+                    page: f.page,
+                    xPercent: f.x_percent,
+                    yPercent: f.y_percent,
+                    widthPercent: f.width_percent,
+                    heightPercent: f.height_percent,
+                    required: f.required,
+                    value: f.value
+                }));
+
+                // Load PDF
+                await loadPdf(pdfBytes);
+
+                // Find current recipient and set signing status
+                const currentRecipient = result.session.recipients.find(r => r.id === recipientId);
+                if (!currentRecipient) {
+                    throw new Error('Recipient not found in this signing session');
+                }
+
+                // Update signing status
+                const signerIndex = result.session.recipients
+                    .filter(r => r.role === 'signer')
+                    .findIndex(r => r.id === recipientId);
+
+                state.signingStatus.currentSignerIndex = signerIndex >= 0 ? signerIndex : 0;
+                state.signingStatus.completedSigners = result.session.recipients
+                    .filter(r => r.signed)
+                    .map(r => parseInt(r.id));
+
+                showToast(`Ready to sign as ${currentRecipient.name}`);
+
+                // Setup UI
+                elements.loadingOverlay.classList.add('hidden');
+                setupFieldPlacement();
+
+                // Go directly to review/sign step
+                goToStep(4);
+            } catch (err) {
+                console.error('Failed to load remote session:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Failed to load signing session: ' + (err.message || err));
+            }
+        }
+
+        async function submitSignedDocument() {
+            try {
+                if (!state.remoteSession.sessionId || !state.remoteSession.encryptionKey) {
+                    throw new Error('No active signing session');
+                }
+
+                // Encrypt the signed PDF
+                const encryptedDoc = await encryptDocument(state.pdfBytes, state.remoteSession.encryptionKey);
+
+                // Submit to server
+                const response = await fetch(
+                    `${SIGNING_SERVER_URL}/session/${state.remoteSession.sessionId}/signed`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            recipient_id: state.remoteSession.recipientId,
+                            encrypted_document: encryptedDoc
+                        })
+                    }
+                );
+
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.message || 'Failed to submit signed document');
+                }
+
+                showToast('Signed document submitted successfully!');
+                return true;
+            } catch (err) {
+                console.error('Failed to submit signed document:', err);
+                showToast('Failed to submit: ' + (err.message || err));
+                return false;
+            }
+        }
+
+        // Check for signing link on page load
+        async function checkForSigningLink() {
+            const hash = window.location.hash;
+            if (hash.startsWith('#sign=')) {
+                const params = new URLSearchParams(hash.slice(1));
+                const sessionId = params.get('sign');
+                const keyBase64 = params.get('key');
+                const recipientId = params.get('r');
+
+                if (sessionId && keyBase64 && recipientId) {
+                    // Clear hash to prevent reload issues
+                    history.replaceState(null, '', window.location.pathname);
+
+                    // Show loading
+                    elements.loadingOverlay.classList.remove('hidden');
+
+                    // Load the remote session
+                    await loadRemoteSession(sessionId, keyBase64, recipientId);
+                }
+            }
+        }
+
+        // Event Listeners
+        elements.dropZone.addEventListener('click', () => elements.fileInput.click());
+        elements.dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            elements.dropZone.classList.add('dragover');
+        });
+        elements.dropZone.addEventListener('dragleave', () => {
+            elements.dropZone.classList.remove('dragover');
+        });
+        elements.dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            elements.dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file?.type === 'application/pdf') {
+                loadPDF(file);
+            } else {
+                showToast('Please drop a PDF file');
+            }
+        });
+        elements.fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) loadPDF(e.target.files[0]);
+        });
+
+        elements.addRecipientBtn.addEventListener('click', addRecipient);
+        elements.recipientEmail.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') addRecipient();
+        });
+
+        elements.prevPageBtn.addEventListener('click', () => {
+            if (state.currentPage > 1) {
+                state.currentPage--;
+                scrollToPage(state.currentPage);
+            }
+        });
+        elements.nextPageBtn.addEventListener('click', () => {
+            if (state.currentPage < state.totalPages) {
+                state.currentPage++;
+                scrollToPage(state.currentPage);
+            }
+        });
+
+        // Navigation buttons
+        elements.btnBack.addEventListener('click', () => goToStep(state.currentStep - 1));
+        elements.btnNext.addEventListener('click', () => goToStep(state.currentStep + 1));
+        elements.btnSaveDraft.addEventListener('click', saveDraft);
+        elements.btnSend.addEventListener('click', sendForSigning);
+        elements.btnDownload.addEventListener('click', downloadPDF);
+        elements.btnGenerateLinks.addEventListener('click', generateSigningLinks);
+        elements.btnSettings.addEventListener('click', openSettings);
+        elements.btnDarkMode.addEventListener('click', toggleDarkMode);
+
+        // Template buttons
+        document.getElementById('btn-save-template').addEventListener('click', saveTemplateAs);
+        document.getElementById('btn-load-template').addEventListener('click', loadTemplateModal);
+
+        // Stepper click navigation with keyboard support
+        elements.steps.forEach(step => {
+            const handleStepActivation = () => {
+                const targetStep = parseInt(step.dataset.step);
+                // Only allow going back or to completed steps
+                if (targetStep < state.currentStep) {
+                    goToStep(targetStep);
+                }
+            };
+            step.addEventListener('click', handleStepActivation);
+            step.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleStepActivation();
+                }
+            });
+            step.style.cursor = 'pointer';
+        });
+
+        // Field type keyboard support
+        elements.fieldTypes.forEach(fieldType => {
+            fieldType.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    const type = fieldType.dataset.type;
+                    setFieldType(type);
+                }
+            });
+        });
+
+        // Drop zone keyboard support
+        elements.dropZone.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                elements.fileInput.click();
+            }
+        });
+
+        // Initialize
+        initialize();
+
+        // Expose state for E2E testing
+        window.state = state;
+    </script>
+</body>
+</html>

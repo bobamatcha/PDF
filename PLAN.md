@@ -1,5 +1,7 @@
 # Monolith Integration Plan
 
+> **Development Guidelines**: See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
+
 > Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with two deployable web applications.
 
 ## Quick Reference
@@ -31,6 +33,63 @@
 12. [Test Coverage Strategy](#12-test-coverage-strategy)
 13. [Demo Functionality Preservation](#13-demo-functionality-preservation)
 14. [Future Considerations](#14-future-considerations)
+
+---
+
+## Current Progress (Phase 0)
+
+### ✅ Completed
+
+| Component | Status | Tests | Notes |
+|-----------|--------|-------|-------|
+| **Workspace Structure** | ✅ Complete | - | Cargo.toml with all crates and shared dependencies |
+| **shared-types** | ✅ Tests Pass | 82 | Document, Violation, ComplianceReport types |
+| **shared-pdf** | ✅ Tests Pass | 30 | PDF parsing, coordinate transforms, signer |
+| **shared-crypto** | ✅ Tests Pass | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
+| **compliance-engine** | ✅ Tests Pass | 31 | 10 Florida Chapter 83 rules |
+| **docsign-core** | ✅ Tests Pass | 2 | PAdES signing, audit chain |
+| **typst-engine** | ✅ Tests Pass | 107 | Document rendering, templates, verifier (63 unit + 42 + 2 doc) |
+| **mcp-server** | ✅ Compiles | - | Claude Desktop MCP integration |
+| **agentpdf-wasm** | ✅ Compiles | - | WASM bindings for agentPDF.org |
+| **docsign-wasm** | ✅ Compiles | - | WASM bindings for getsignatures.org |
+| **CI/CD** | ✅ Set up | - | GitHub Actions for fmt, clippy, tests, WASM |
+| **Pre-commit Hook** | ✅ Installed | - | Runs fmt, clippy, tests before commit |
+| **Demo Verification** | ✅ Complete | - | Both demos verified with Puppeteer |
+
+**Total Tests: 307 passing**
+
+### ✅ Quality Checks
+
+| Check | Status |
+|-------|--------|
+| **cargo test --workspace** | ✅ 307 tests passing |
+| **cargo clippy --workspace -- -D warnings** | ✅ Clean |
+| **cargo fmt --all -- --check** | ✅ Formatted |
+| **Demo Verification (Puppeteer)** | ✅ Both apps working |
+
+### ⏸️ Blocked/Deferred
+
+| Component | Status | Reason |
+|-----------|--------|--------|
+| **corpus-core** | ⏸️ Excluded | fastembed/ort_sys size_t compatibility issue |
+| **corpus-api** | ⏸️ Depends on corpus-core | Waiting for corpus-core fix |
+| **docsign-web/worker** | ⏸️ Excluded | worker-sys crate needs update |
+
+### Build Commands
+
+```bash
+# Full workspace check
+cargo check --workspace
+
+# Run all tests
+cargo test --all-features --workspace
+
+# Build WASM for agentPDF.org
+cd apps/agentpdf-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
+
+# Build WASM for getsignatures.org
+cd apps/docsign-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
+```
 
 ---
 

@@ -1,0 +1,27 @@
+[package]
+name = "shared-types"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# PDF processing
+lopdf = { version = "0.33", default-features = false, features = ["pom_parser"] }
+
+# Cryptography
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
+sha2 = { version = "0.10", default-features = false }
+rand_core = { version = "0.6", features = ["getrandom"] }
+hex = "0.4"
+
+# Audit chain
+uuid = { version = "1", features = ["v4", "js"] }
+chrono = { workspace = true }
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+proptest = "1.4"
