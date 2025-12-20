@@ -11,6 +11,8 @@
 
 **Goal:** Deploy simple working versions to both domains ASAP, then iterate.
 
+**Strategic Context:** See [STRATEGY.md](./STRATEGY.md) for market positioning, vertical targeting, and go-to-market approach.
+
 ---
 
 ## Table of Contents
@@ -69,6 +71,21 @@ The [RESEARCH.md](./RESEARCH.md) document provides architectural guidance. Key a
 
 > **Note:** The research proposes a Tauri desktop app. For ASAP web deployment, we defer Tauri but preserve the architecture for future desktop builds.
 
+### Insights from Strategy
+
+The [STRATEGY.md](./STRATEGY.md) document provides market positioning and go-to-market guidance. Key strategic priorities that inform this plan:
+
+| Strategic Priority | Implementation Impact | Timeline |
+|--------------------|----------------------|----------|
+| **Florida RE Dogfooding** | Phase 0 targets Florida real estate agents & property managers | **Short-Term** |
+| **Offline-First Competitive Moat** | Preserve existing local-first architecture in both apps | Short-Term |
+| **Medical Mode** | Plan for HIPAA-compliant local encryption in docsign-web | Medium-Term |
+| **Field Ops Mode** | Add GPS/photo evidence capture to getsignatures.org | Medium-Term |
+| **MCP as AI Infrastructure** | Ensure mcp-server app is production-ready for enterprise | Medium-Term |
+| **Government Micro-Purchase** | Keep annual pricing under $10K threshold | Long-Term |
+
+> **Why Florida RE First:** The corpus already contains Florida residential lease templates. Targeting landlords and property managers first allows focused dogfooding before pivoting to other verticals. Regulatory pressure (§ 83.512, HB 615) creates natural market urgency.
+
 ---
 
 ## 2. Architecture Overview
@@ -110,7 +127,8 @@ monolith/
 │
 ├── Cargo.toml                  # Workspace manifest
 ├── PLAN.md                     # This file
-└── RESEARCH.md                 # Architectural research
+├── RESEARCH.md                 # Architectural research
+└── STRATEGY.md                 # Market positioning & GTM
 ```
 
 ### Deployment Model
@@ -393,6 +411,7 @@ monolith/
 ├── Cargo.lock
 ├── PLAN.md                         # This file
 ├── RESEARCH.md                     # Architectural research
+├── STRATEGY.md                     # Market positioning & GTM
 ├── Makefile                        # Top-level build commands
 │
 ├── crates/
@@ -780,6 +799,19 @@ build:
 
 **Strategy:** Copy existing microservices with minimal modifications.
 
+### Strategic Alignment (from [STRATEGY.md](./STRATEGY.md))
+
+Phase 0 aligns with **Florida Real Estate Dogfooding**—launching first to landlords and property managers:
+
+| Strategic Priority | Phase 0 Action | Why First |
+|--------------------|----------------|-----------|
+| § 83.512 Flood Disclosure | Add Flood Disclosure Wizard to agentPDF.org | Regulatory urgency creates demand |
+| HB 615 Email Consent | Hardcode consent checkbox in signature flow | Cost savings pitch to property managers |
+| 30-Day Termination | Update templates (already in existing code) | Templates already in corpus |
+| Offline-First Moat | Preserve existing IndexedDB architecture | Foundation for all verticals |
+
+> **Dogfooding Strategy:** The corpus already contains Florida residential lease templates and related documents. Targeting this vertical first validates the product with a focused user persona before expanding to healthcare and legal field operations.
+
 ### 8.0.1 agentPDF.org - Immediate Deployment
 
 The existing `agentPDF-web` is **already deployable**. Steps:
@@ -808,6 +840,12 @@ cd ../www
 - Florida compliance checking (10 rules)
 - Field placement
 - IndexedDB storage
+
+**Florida RE Dogfooding Enhancements** (short-term priority):
+- § 83.512 Flood Disclosure Wizard (interview-based form generation)
+- HB 615 Email Consent checkbox (digitally verifiable audit trail)
+- Updated 30-day termination language in templates
+- Target users: Florida landlords, property managers, real estate agents
 
 ### 8.0.2 getsignatures.org - Immediate Deployment
 
@@ -841,6 +879,12 @@ cd ../www
 - Recipient management
 - PAdES digital signatures
 - Email dispatch via Cloudflare Worker
+
+**Field Ops Mode Enhancements** (medium-term, after Florida RE validation):
+- GPS/photo evidence capture for process servers
+- Medical Mode with HIPAA-compliant local encryption
+- Offline-first sync for rural healthcare
+- Target users: Mobile notaries, visiting nurses, process servers
 
 ### 8.0.3 Handoff Link
 
@@ -1337,28 +1381,67 @@ The `apps/mcp-server/` provides Claude Desktop integration:
 - Compliance checking via conversation
 - Document generation via MCP tools
 
+Per [STRATEGY.md](./STRATEGY.md), MCP is positioned as **AI Infrastructure**:
+- "Trojan Horse" strategy: bundle with getsignatures.org as differentiator
+- First AI-Ready e-signature platform
+- OAuth2 authentication for enterprise
+- List on directories: Glama, Smith.ai, MCP.so
+
+### 14.4 Government Micro-Purchase Strategy
+
+Per [STRATEGY.md](./STRATEGY.md) Section 5, target federal micro-purchases (<$10K):
+
+| Requirement | Implementation |
+|-------------|----------------|
+| **Section 508 Compliance** | VPAT, screen reader support, keyboard nav |
+| **Data Sovereignty** | Emphasize local-first, US-hosted |
+| **SAM.gov Registration** | Keywords: "Disaster Response", "Rural Access" |
+| **Pricing** | Annual license at $9,500 (under threshold) |
+
+### 14.5 Vertical Mode Roadmap
+
+Per [STRATEGY.md](./STRATEGY.md) Phase 2:
+
+| Mode | Platform | Target Market | Key Features |
+|------|----------|---------------|--------------|
+| **Medical Mode** | getsignatures.org | Rural healthcare, visiting nurses | HIPAA encryption, EVV compliance, parking lot sync |
+| **Field Ops Mode** | getsignatures.org | Process servers, mobile notaries | GPS stamping, photo evidence, evidentiary metadata |
+| **Compliance Mode** | agentPDF.org | Florida landlords, property managers | Flood disclosure wizard, notice consent, template library |
+
 ---
 
 ## Summary
 
-### Immediate Actions (Phase 0)
+### Strategic Timeline (from [STRATEGY.md](./STRATEGY.md))
+
+| Phase | Priority | Focus |
+|-------|----------|-------|
+| **Florida RE Dogfooding** | Short-Term | Landlords, property managers, real estate agents |
+| **Field Ops Pivot** | Medium-Term | Medical Mode + Field Ops Mode (after FL validation) |
+| **Government Scale** | Long-Term | Micro-purchase revenue |
+
+### Short-Term: Florida RE Dogfooding
 
 1. **Copy** existing `agentPDF-web` to `apps/agentpdf-web/`
 2. **Copy** existing `docsign-web` to `apps/docsign-web/`
 3. **Deploy** both sites to Cloudflare Pages
 4. **Add** handoff link from agentPDF.org → getsignatures.org
+5. **Add** § 83.512 Flood Disclosure Wizard to agentPDF.org
+6. **Add** HB 615 Email Consent to signature flow
+7. **Validate** with Florida landlords and property managers (dogfooding)
 
-### Short-Term (Phases 1-2)
+### Short-Term: Shared Foundation
 
-5. **Extract** shared crates (shared-types, shared-pdf, shared-crypto)
-6. **Unify** compliance engine with all 13 Florida rules
-7. **Migrate** 243+ tests to monolith structure
+8. **Extract** shared crates (shared-types, shared-pdf, shared-crypto)
+9. **Unify** compliance engine with all 13 Florida rules
+10. **Migrate** 243+ tests to monolith structure
 
-### Medium-Term (Phase 3)
+### Medium-Term: Field Ops Pivot (after Florida RE validation)
 
-8. **Integrate** template system from corpus-server
-9. **Add** Typst rendering to agentPDF.org
-10. **Polish** cross-site deep linking
+11. **Integrate** template system from corpus-server
+12. **Add** Typst rendering to agentPDF.org
+13. **Implement** Medical Mode with HIPAA encryption
+14. **Implement** Field Ops Mode with GPS/photo evidence
 
 ### Deployment URLs
 
