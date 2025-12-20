@@ -38,6 +38,7 @@ dependencies = [
 name = "agentpdf-wasm"
 version = "0.1.0"
 dependencies = [
+ "base64 0.21.7",
  "compliance-engine",
  "console_error_panic_hook",
  "js-sys",
@@ -49,6 +50,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "shared-types",
+ "typst-engine",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4193,6 +4195,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "comemo",
+ "ecow",
  "lazy_static",
  "once_cell",
  "pdf-extract",

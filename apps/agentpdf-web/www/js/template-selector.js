@@ -1,14 +1,14 @@
 /**
  * Template Selector Module
  *
- * Fetches templates from MCP server API and provides UI for template selection
- * and field population.
+ * Local-first template rendering using WASM (Typst compiler runs in browser).
+ * Falls back to API if WASM unavailable.
  */
 
 const TemplateSelector = {
     // Configuration
     config: {
-        // API base URL - defaults to localhost for dev, override for production
+        // API base URL - fallback only (local-first prefers WASM)
         apiBaseUrl: window.location.hostname === 'localhost'
             ? 'http://localhost:3000'
             : window.location.hostname === 'agentpdf.org'
@@ -19,11 +19,23 @@ const TemplateSelector = {
         templates: null,
 
         // Modal element ID
-        modalId: 'template-modal'
+        modalId: 'template-modal',
+
+        // Whether WASM rendering is available
+        wasmAvailable: false
     },
 
     /**
-     * Set custom API URL
+     * Check if WASM template rendering is available
+     * @returns {boolean}
+     */
+    isWasmAvailable() {
+        const wasm = window.wasmBindings || window.wasm;
+        return wasm && typeof wasm.render_template === 'function';
+    },
+
+    /**
+     * Set custom API URL (for fallback)
      * @param {string} url - The API base URL
      */
     setApiUrl(url) {
@@ -31,7 +43,7 @@ const TemplateSelector = {
     },
 
     /**
-     * Fetch available templates from API
+     * Fetch available templates - LOCAL-FIRST from WASM
      * @returns {Promise<Array>} - List of templates
      */
     async fetchTemplates() {
@@ -39,6 +51,28 @@ const TemplateSelector = {
             return this.config.templates;
         }
 
+        // Try WASM first (local-first)
+        try {
+            const wasm = window.wasmBindings || window.wasm;
+            if (wasm && typeof wasm.list_templates === 'function') {
+                const templatesJson = wasm.list_templates();
+                const templates = JSON.parse(templatesJson);
+                // Normalize field names for UI compatibility
+                this.config.templates = templates.map(t => ({
+                    ...t,
+                    id: t.name,
+                    required_fields: t.required_inputs || [],
+                    optional_fields: t.optional_inputs || []
+                }));
+                this.config.wasmAvailable = true;
+                console.log('TemplateSelector: Loaded', this.config.templates.length, 'templates from WASM (local-first)');
+                return this.config.templates;
+            }
+        } catch (err) {
+            console.warn('TemplateSelector: WASM list_templates failed:', err);
+        }
+
+        // Fallback to API
         try {
             const response = await fetch(`${this.config.apiBaseUrl}/api/templates`);
             if (!response.ok) {
@@ -55,13 +89,38 @@ const TemplateSelector = {
     },
 
     /**
-     * Render a template with given inputs
+     * Render a template with given inputs - LOCAL-FIRST using WASM
      * @param {string} templateName - The template name (e.g., "florida_lease")
      * @param {Object} inputs - The template variables
-     * @param {string} format - Output format (pdf, svg, png)
+     * @param {string} format - Output format (pdf, svg, png) - only pdf supported locally
      * @returns {Promise<{success: boolean, data?: string, error?: string}>}
      */
     async renderTemplate(templateName, inputs, format = 'pdf') {
+        // Try WASM first (local-first) - $0 server cost!
+        try {
+            const wasm = window.wasmBindings || window.wasm;
+            if (wasm && typeof wasm.render_template === 'function' && format === 'pdf') {
+                console.log('TemplateSelector: Rendering locally via WASM...');
+                const startTime = performance.now();
+
+                const inputsJson = JSON.stringify(inputs);
+                const pdfBase64 = wasm.render_template(templateName, inputsJson);
+
+                const endTime = performance.now();
+                console.log(`TemplateSelector: Rendered in ${Math.round(endTime - startTime)}ms (local, $0 cost)`);
+
+                return {
+                    success: true,
+                    data: pdfBase64,
+                    local: true,
+                    renderTimeMs: Math.round(endTime - startTime)
+                };
+            }
+        } catch (err) {
+            console.warn('TemplateSelector: WASM render failed, falling back to API:', err);
+        }
+
+        // Fallback to API
         try {
             const response = await fetch(`${this.config.apiBaseUrl}/api/render`, {
                 method: 'POST',
@@ -77,7 +136,7 @@ const TemplateSelector = {
             });
 
             const data = await response.json();
-            return data;
+            return { ...data, local: false };
         } catch (err) {
             console.error('Failed to render template:', err);
             return {
@@ -397,8 +456,10 @@ const StateSelector = {
 
         try {
             // Try to get states from WASM
-            if (window.wasm && typeof window.wasm.get_supported_states === 'function') {
-                const statesJson = window.wasm.get_supported_states();
+            // Check both window.wasmBindings (trunk) and window.wasm (wasm-pack direct)
+            const wasm = window.wasmBindings || window.wasm;
+            if (wasm && typeof wasm.get_supported_states === 'function') {
+                const statesJson = wasm.get_supported_states();
                 this.states = JSON.parse(statesJson);
                 this._loaded = true;
                 console.log('StateSelector: Loaded', this.states.length, 'states from WASM');

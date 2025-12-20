@@ -1,10 +1,13 @@
 //! Core rendering logic
 //!
-//! This module handles the actual Typst compilation with timeout handling
+//! This module handles Typst compilation with optional timeout handling
 //! and error extraction.
+//!
+//! Two compilation modes are available:
+//! - `compile_document` (async, requires `server` feature) - with timeout protection
+//! - `compile_document_sync` (sync, always available) - for WASM/browser use
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use base64::Engine;
 use typst::diag::{Severity, SourceDiagnostic};
@@ -17,21 +20,37 @@ use super::{RenderArtifact, RenderRequest, RenderResponse};
 use crate::templates;
 use crate::world::VirtualWorld;
 
-/// Compile a Typst document with timeout
+/// Compile a Typst document synchronously (WASM-compatible)
+///
+/// This function runs the Typst compiler directly without async or timeout.
+/// Use this for browser/WASM environments where tokio is not available.
+pub fn compile_document_sync(request: RenderRequest) -> Result<RenderResponse, ServerError> {
+    // 1. Resolve source - check if it's a template URI or raw source
+    let source = resolve_source(&request.source)?;
+
+    // 2. Decode base64 assets
+    let assets = decode_assets(&request.assets)?;
+
+    // 3. Create VirtualWorld
+    let world = VirtualWorld::new(source, request.inputs.clone(), assets)?;
+
+    // 4. Compile directly (no timeout in sync mode)
+    let compile_result = typst::compile(&world);
+
+    // 5. Process compilation result
+    process_compile_result(compile_result, request.format, request.ppi)
+}
+
+/// Compile a Typst document with timeout (requires `server` feature)
+#[cfg(feature = "server")]
 pub async fn compile_document(
     request: RenderRequest,
     timeout_ms: u64,
 ) -> Result<RenderResponse, ServerError> {
+    use std::time::Duration;
+
     // 1. Resolve source - check if it's a template URI or raw source
-    let source = if request.source.starts_with("typst://templates/") {
-        let template_name = request
-            .source
-            .strip_prefix("typst://templates/")
-            .unwrap_or(&request.source);
-        templates::get_template_source(template_name)?
-    } else {
-        request.source.clone()
-    };
+    let source = resolve_source(&request.source)?;
 
     // 2. Decode base64 assets
     let assets = decode_assets(&request.assets)?;
@@ -61,14 +80,31 @@ pub async fn compile_document(
     };
 
     // 6. Process compilation result
-    // Warned<Result<Document, EcoVec<SourceDiagnostic>>> - access .output field
-    let warned = compile_result;
-    let compilation_warnings = warned.warnings.clone();
+    process_compile_result(compile_result, request.format, request.ppi)
+}
 
-    match warned.output {
+/// Resolve source string to actual Typst source
+fn resolve_source(source: &str) -> Result<String, ServerError> {
+    if source.starts_with("typst://templates/") {
+        let template_name = source.strip_prefix("typst://templates/").unwrap_or(source);
+        templates::get_template_source(template_name)
+    } else {
+        Ok(source.to_string())
+    }
+}
+
+/// Process the compilation result into a RenderResponse
+fn process_compile_result(
+    compile_result: typst::diag::Warned<Result<Document, ecow::EcoVec<SourceDiagnostic>>>,
+    format: OutputFormat,
+    ppi: Option<u32>,
+) -> Result<RenderResponse, ServerError> {
+    let compilation_warnings = compile_result.warnings.clone();
+
+    match compile_result.output {
         Ok(document) => {
             // Export to requested format
-            let artifact = export_document(&document, request.format, request.ppi)?;
+            let artifact = export_document(&document, format, ppi)?;
             let (_, warnings) = categorize_diagnostics(&compilation_warnings);
             Ok(RenderResponse {
                 status: RenderStatus::Success,
@@ -218,8 +254,97 @@ fn categorize_diagnostics(
 mod tests {
     use super::*;
 
+    // ===== Sync tests (always available, WASM-compatible) =====
+
+    #[test]
+    fn test_compile_sync_simple_document() {
+        let request = RenderRequest {
+            source: "Hello, *World*!".to_string(),
+            inputs: HashMap::new(),
+            assets: HashMap::new(),
+            format: OutputFormat::Pdf,
+            ppi: None,
+        };
+
+        let result = compile_document_sync(request);
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status, RenderStatus::Success);
+        assert!(response.artifact.is_some());
+    }
+
+    #[test]
+    fn test_compile_sync_with_inputs() {
+        let mut inputs = HashMap::new();
+        inputs.insert("name".to_string(), serde_json::json!("Alice"));
+
+        let request = RenderRequest {
+            source: r#"#let name = sys.inputs.at("name", default: "World")
+Hello, #name!"#
+                .to_string(),
+            inputs,
+            assets: HashMap::new(),
+            format: OutputFormat::Pdf,
+            ppi: None,
+        };
+
+        let result = compile_document_sync(request);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_compile_sync_syntax_error() {
+        let request = RenderRequest {
+            source: "#invalid{{{{".to_string(),
+            inputs: HashMap::new(),
+            assets: HashMap::new(),
+            format: OutputFormat::Pdf,
+            ppi: None,
+        };
+
+        let result = compile_document_sync(request);
+        assert!(result.is_ok()); // Returns Ok with error status
+
+        let response = result.unwrap();
+        assert_eq!(response.status, RenderStatus::Error);
+        assert!(!response.errors.is_empty());
+    }
+
+    #[test]
+    fn test_compile_sync_template() {
+        let request = RenderRequest {
+            source: "typst://templates/letter".to_string(),
+            inputs: HashMap::new(),
+            assets: HashMap::new(),
+            format: OutputFormat::Pdf,
+            ppi: None,
+        };
+
+        let result = compile_document_sync(request);
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.status, RenderStatus::Success);
+    }
+
+    #[test]
+    fn test_validate_syntax_valid() {
+        let errors = validate_syntax("Hello, World!");
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_syntax_invalid() {
+        let errors = validate_syntax("#let x = ");
+        assert!(!errors.is_empty());
+    }
+
+    // ===== Async tests (server feature only) =====
+
+    #[cfg(feature = "server")]
     #[tokio::test]
-    async fn test_compile_simple_document() {
+    async fn test_compile_async_simple_document() {
         let request = RenderRequest {
             source: "Hello, *World*!".to_string(),
             inputs: HashMap::new(),
@@ -236,8 +361,9 @@ mod tests {
         assert!(response.artifact.is_some());
     }
 
+    #[cfg(feature = "server")]
     #[tokio::test]
-    async fn test_compile_with_inputs() {
+    async fn test_compile_async_with_inputs() {
         let mut inputs = HashMap::new();
         inputs.insert("name".to_string(), serde_json::json!("Alice"));
 
@@ -255,8 +381,9 @@ Hello, #name!"#
         assert!(result.is_ok());
     }
 
+    #[cfg(feature = "server")]
     #[tokio::test]
-    async fn test_compile_syntax_error() {
+    async fn test_compile_async_syntax_error() {
         let request = RenderRequest {
             source: "#invalid{{{{".to_string(),
             inputs: HashMap::new(),
@@ -271,17 +398,5 @@ Hello, #name!"#
         let response = result.unwrap();
         assert_eq!(response.status, RenderStatus::Error);
         assert!(!response.errors.is_empty());
-    }
-
-    #[test]
-    fn test_validate_syntax_valid() {
-        let errors = validate_syntax("Hello, World!");
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_validate_syntax_invalid() {
-        let errors = validate_syntax("#let x = ");
-        assert!(!errors.is_empty());
     }
 }

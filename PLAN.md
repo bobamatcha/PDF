@@ -17,6 +17,100 @@
 
 ---
 
+## 🚀 PRIORITY: Local-First Template Generation
+
+> **Status: ✅ IMPLEMENTED** - Template rendering now runs entirely in browser via WASM. Zero server cost per document.
+
+### Architecture Change
+
+```
+BEFORE (Server-Side):
+Browser → HTTP API → MCP Server (Typst) → PDF → Browser
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+         Server cost per request
+
+AFTER (Local-First):
+Browser → WASM (Typst) → PDF
+          ~~~~~~~~~~~~
+          $0 marginal cost, runs entirely client-side
+```
+
+### Implementation Summary
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `compile_document_sync()` | ✅ Done | Sync version of Typst compilation for WASM |
+| Feature flags (`server`/`wasm`) | ✅ Done | tokio optional via feature flag |
+| `render_template()` WASM export | ✅ Done | Exposed in agentpdf-wasm |
+| `render_typst()` WASM export | ✅ Done | Raw Typst source rendering |
+| `list_templates()` WASM export | ✅ Done | Template discovery |
+| `validate_typst_syntax()` WASM | ✅ Done | Syntax validation |
+
+### WASM API (agentpdf-wasm)
+
+```javascript
+// Render embedded template to PDF (returns base64)
+const pdfBase64 = wasm.render_template("florida_lease", JSON.stringify({
+  landlord_name: "John Smith",
+  tenant_name: "Jane Doe",
+  property_address: "123 Main St, Miami, FL 33101",
+  monthly_rent: "2000"
+}));
+
+// Render raw Typst source
+const pdfBase64 = wasm.render_typst("Hello, *World*!", "{}");
+
+// List available templates
+const templates = JSON.parse(wasm.list_templates());
+
+// Validate syntax before rendering
+const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
+```
+
+### Cost Comparison
+
+| Model | Server Cost | UX |
+|-------|-------------|-----|
+| Server-side (MCP) | Per-request | Fast first render |
+| **Local-first (WASM)** | **$0** | ~20-40MB initial download, then instant |
+| Hybrid (cache) | $0 after first load | Best of both worlds |
+
+### Trade-offs
+
+**WASM Bundle Size** (mitigated by lazy loading):
+- Typst compiler: ~15-20 MB
+- typst-assets fonts: ~25-30 MB
+- Application code: ~2-3 MB
+- **Total: ~45-55 MB** (lazy-loaded on first template render)
+
+**Mitigation**: Compliance checking (small WASM) loads immediately. Template rendering (large) loads on-demand when user clicks "Generate".
+
+### UI Integration
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Template selector modal | ✅ Done | Loads templates from WASM |
+| Form generation | ✅ Done | Dynamic form from template fields |
+| Local-first rendering | ✅ Done | Falls back to API if WASM unavailable |
+| PDF viewer integration | ✅ Done | Generated PDF loads in viewer |
+
+### Performance (Measured)
+
+- **WASM bundle size**: 26 MB uncompressed, 8.3 MB brotli
+- **Template render time**: ~650ms (florida_lease, 14 pages)
+- **Server cost**: $0 per document
+
+### Files Changed
+
+- `crates/typst-engine/Cargo.toml` - Added `server`/`wasm` feature flags
+- `crates/typst-engine/src/compiler/render.rs` - Added `compile_document_sync()`
+- `crates/typst-engine/src/lib.rs` - Feature-gated exports
+- `apps/agentpdf-web/wasm/src/lib.rs` - Added template rendering exports
+- `apps/agentpdf-web/www/js/template-selector.js` - Local-first rendering logic
+- `apps/agentpdf-web/www/index.html` - Template callback integration
+
+---
+
 ## Table of Contents
 
 1. [Executive Summary](#1-executive-summary)
@@ -49,7 +143,7 @@
 | **shared-types** | ✅ Tests Pass | 22 | Document, Violation, ComplianceReport types |
 | **shared-pdf** | ✅ Tests Pass | 30 | PDF parsing, coordinate transforms, signer |
 | **shared-crypto** | ✅ Tests Pass | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
-| **compliance-engine** | ✅ Tests Pass | 218 | 16 states (FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN) |
+| **compliance-engine** | ✅ Tests Pass | 227 | 16 states (FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN) |
 | **docsign-core** | ✅ Tests Pass | 2 | PAdES signing, audit chain |
 | **typst-engine** | ✅ Tests Pass | 42 | Document rendering, 3 templates, verifier |
 | **mcp-server** | ✅ Tests Pass | 29 | Claude Desktop MCP with HTTP transport, REST API, property tests |
@@ -93,19 +187,28 @@
 | **Template selector UI** | ✅ Complete | Modal UI for template selection + form filling |
 | **Deep link parsing** | ✅ Complete | Signing links + agentpdf integration |
 
-**Total Tests: 446+ passing** (including property tests for REST API and session/magic link, plus 16-state compliance)
+**Total Tests: 460+ passing** (including property tests for REST API and session/magic link, plus 16-state compliance)
 
 ### ✅ Quality Checks
 
 | Check | Status |
 |-------|--------|
-| **cargo test --workspace --all-features** | ✅ 446+ tests passing |
+| **cargo test --workspace --all-features** | ✅ 460+ tests passing |
 | **cargo clippy --workspace --all-features -- -D warnings** | ✅ Clean |
 | **cargo fmt --all -- --check** | ✅ Formatted |
 | **WASM Compilation (agentpdf-wasm)** | ✅ Compiles (wasm-opt disabled) |
 | **WASM Compilation (docsign-wasm)** | ✅ Compiles (wasm-opt disabled) |
 | **docsign-worker** | ✅ Compiles | Upgraded to worker 0.7 |
 | **Demo Verification (Puppeteer)** | ✅ Both apps working |
+| **Trunk Build System** | ✅ Migrated | Both apps use `trunk serve/build` |
+
+### ✅ Dev Tooling: Trunk Migration
+
+Migrated from Python `http.server` to **Trunk** for local development:
+- **Single command**: `trunk serve www/index.html` builds WASM + serves with hot reload
+- **Production build**: `trunk build www/index.html --release` outputs to `www/dist/`
+- **No manual wasm-pack**: Trunk handles wasm-bindgen and bundling automatically
+- **State data from Rust**: StateSelector now loads states + statute citations from WASM (no JS duplication)
 
 ### ⏸️ Blocked/Deferred
 
@@ -424,11 +527,13 @@ cargo check --workspace
 # Run all tests
 cargo test --all-features --workspace
 
-# Build WASM for agentPDF.org
-cd apps/agentpdf-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
+# Development servers (Trunk - recommended)
+cd apps/agentpdf-web && trunk serve www/index.html --port 8080
+cd apps/docsign-web && trunk serve www/index.html --port 8081
 
-# Build WASM for getsignatures.org
-cd apps/docsign-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
+# Production builds (Trunk)
+cd apps/agentpdf-web && trunk build www/index.html --release  # Output: www/dist/
+cd apps/docsign-web && trunk build www/index.html --release   # Output: www/dist/
 ```
 
 ---
@@ -1155,39 +1260,46 @@ jobs:
 
 ### 7.3 Local Development
 
+**Using Trunk (Recommended):**
+```bash
+# Install trunk once
+cargo install trunk
+
+# Development servers (auto-builds WASM with hot reload)
+cd apps/agentpdf-web && trunk serve www/index.html --port 8080
+cd apps/docsign-web && trunk serve www/index.html --port 8081
+
+# Production builds
+cd apps/agentpdf-web && trunk build www/index.html --release  # Output: www/dist/
+cd apps/docsign-web && trunk build www/index.html --release   # Output: www/dist/
+```
+
 **Makefile:**
 ```makefile
-.PHONY: dev-agentpdf dev-docsign dev-all test build
+.PHONY: dev-agentpdf dev-docsign test build
 
-# Development servers
+# Development servers (Trunk handles WASM build + hot reload)
 dev-agentpdf:
-	cd apps/agentpdf-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
-	cd apps/agentpdf-web/www && python3 -m http.server 8080
+	cd apps/agentpdf-web && trunk serve www/index.html --port 8080
 
 dev-docsign:
-	cd apps/docsign-web/wasm && wasm-pack build --target web --out-dir ../www/pkg
-	cd apps/docsign-web/www && python3 -m http.server 8081
-
-dev-all:
-	make dev-agentpdf & make dev-docsign
+	cd apps/docsign-web && trunk serve www/index.html --port 8081
 
 # Testing
 test:
-	cargo test --workspace
+	cargo test --workspace --all-features
 
 test-agentpdf:
 	cargo test -p agentpdf-wasm
-	cd apps/agentpdf-web/tests/e2e && npm test
 
 test-docsign:
 	cargo test -p docsign-wasm
-	cd apps/docsign-web/tests/e2e && npm test
 
-# Build
+# Production builds
 build:
 	cargo build --workspace --release
-	cd apps/agentpdf-web/wasm && wasm-pack build --target web --release
-	cd apps/docsign-web/wasm && wasm-pack build --target web --release
+	cd apps/agentpdf-web && trunk build www/index.html --release
+	cd apps/docsign-web && trunk build www/index.html --release
 ```
 
 ---
@@ -1222,16 +1334,12 @@ The existing `agentPDF-web` is **already deployable**. Steps:
 ```bash
 # Quick deploy script
 cd apps/agentpdf-web
-cp -r ../../microservices/agentPDF-web/www/* www/
-cp -r ../../microservices/agentPDF-web/agentpdf/crates/agentpdf-wasm wasm/
 
-# Update Cargo.toml paths to use workspace dependencies
-# Build
-cd wasm && wasm-pack build --target web --out-dir ../www/pkg
+# Build with Trunk (handles WASM compilation automatically)
+trunk build www/index.html --release
 
-# Deploy (Cloudflare Pages, Vercel, or Netlify)
-cd ../www
-# Upload to hosting provider
+# Deploy to Cloudflare Pages (output in www/dist/)
+# Or use: ./scripts/deploy-agentpdf.sh
 ```
 
 **Result:** agentPDF.org live with:
@@ -1257,19 +1365,15 @@ The existing `docsign-web` is **already deployable**. Steps:
 ```bash
 # Quick deploy script
 cd apps/docsign-web
-cp -r ../../microservices/docsign-web/www/* www/
-cp -r ../../microservices/docsign-web/docsign-wasm wasm/
-cp -r ../../microservices/docsign-web/docsign-server worker/
 
-# Build WASM
-cd wasm && wasm-pack build --target web --out-dir ../www/pkg
+# Build with Trunk (handles WASM compilation automatically)
+trunk build www/index.html --release
 
 # Deploy worker
-cd ../worker && npx wrangler deploy
+cd worker && npx wrangler deploy
 
-# Deploy static site
-cd ../www
-# Upload to hosting provider
+# Deploy static site to Cloudflare Pages (output in www/dist/)
+# Or use: ./scripts/deploy-docsign.sh
 ```
 
 **Result:** getsignatures.org live with:

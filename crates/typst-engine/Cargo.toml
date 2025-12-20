@@ -3,6 +3,11 @@ name = "typst-engine"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["server"]
+server = ["dep:tokio"]  # MCP server uses async with timeout
+wasm = []               # Browser WASM - sync only, no tokio
+
 [dependencies]
 shared-types = { workspace = true }
 serde = { workspace = true }
@@ -10,12 +15,13 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, optional = true }
 once_cell = "1.21"
 
 # Typst
 typst = { workspace = true }
 comemo = { workspace = true }
+ecow = "0.2"
 typst-pdf = "0.12"
 typst-svg = "0.12"
 typst-render = "0.12"

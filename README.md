@@ -38,7 +38,7 @@ crates/                     # Shared libraries
 ├── shared-types/           # Document, Violation, ComplianceReport
 ├── shared-pdf/             # PDF parsing, coordinate transforms, PAdES signer
 ├── shared-crypto/          # ECDSA P-256, CMS/PKCS#7, certificates, TSA
-├── compliance-engine/      # Florida Chapter 83 rules (10 rules)
+├── compliance-engine/      # 16-state landlord-tenant rules (227 tests)
 ├── docsign-core/           # PAdES signing, audit chain
 └── typst-engine/           # Typst rendering + 3 embedded templates
 
@@ -55,9 +55,10 @@ apps/                       # Deployable applications
 ## Features
 
 ### Compliance Engine
-- **10 Florida Chapter 83 Rules** - Automated lease compliance checking
+- **16-State Coverage** - FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN
+- **227 Tests** - Comprehensive rule validation with property-based testing
 - **Violation Detection** - Pattern matching with severity levels (Critical, Warning, Info)
-- **Statutes Covered**: § 83.47 (Prohibited Provisions), § 83.48 (Attorney Fees), § 83.49 (Security Deposits), § 83.56/§ 83.57 (Notices)
+- **State-specific Rules** - Security deposits, notice periods, prohibited provisions, disclosures
 
 ### Document Templates
 - **3 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`
@@ -89,7 +90,40 @@ apps/                       # Deployable applications
 
 ## Development
 
-### Build WASM Packages
+### Build & Serve with Trunk (Recommended)
+
+Trunk handles WASM compilation, bundling, and serving with hot reload.
+
+```bash
+# Install trunk (if not already installed)
+cargo install trunk
+
+# agentPDF.org (port 8080)
+cd apps/agentpdf-web
+trunk serve www/index.html --port 8080
+
+# getsignatures.org (port 8081)
+cd apps/docsign-web
+trunk serve www/index.html --port 8081
+```
+
+### Build for Production
+
+```bash
+# agentPDF.org
+cd apps/agentpdf-web
+trunk build www/index.html --release
+# Output in www/dist/
+
+# getsignatures.org
+cd apps/docsign-web
+trunk build www/index.html --release
+# Output in www/dist/
+```
+
+### Alternative: Manual wasm-pack Build
+
+If you need to build WASM separately:
 
 ```bash
 # agentPDF.org
@@ -99,18 +133,6 @@ wasm-pack build --target web --out-dir ../www/pkg
 # getsignatures.org
 cd apps/docsign-web/wasm
 wasm-pack build --target web --out-dir ../www/pkg
-```
-
-### Run Local Development Server
-
-```bash
-# agentPDF.org (port 8080)
-cd apps/agentpdf-web/www
-python3 -m http.server 8080
-
-# getsignatures.org (port 8081)
-cd apps/docsign-web/www
-python3 -m http.server 8081
 ```
 
 ### Run MCP Server (HTTP Mode)
@@ -157,17 +179,14 @@ apt-get install chromium-browser
 The agentPDF demo verifies:
 - PDF upload via drag-drop or file picker
 - PDF.js rendering with page navigation
-- Florida compliance checking (10 rules)
+- Multi-state compliance checking (16 states)
 - Violation highlighting with positions
 - IndexedDB persistence
 
 ```bash
-# Build WASM first
-cd apps/agentpdf-web/wasm
-wasm-pack build --target web --out-dir ../www/pkg
-
-# Start server (in background)
-cd ../www && python3 -m http.server 8080 &
+# Start trunk dev server (builds WASM automatically)
+cd apps/agentpdf-web
+trunk serve www/index.html --port 8080 &
 
 # Run demo (if demo binary exists)
 cargo run -p agentpdf-demo --release
@@ -182,12 +201,9 @@ The docsign demo verifies the complete signing workflow:
 4. **Review** - Generate PAdES digital signature
 
 ```bash
-# Build WASM first
-cd apps/docsign-web/wasm
-wasm-pack build --target web --out-dir ../www/pkg
-
-# Start server (in background)
-cd ../www && python3 -m http.server 8081 &
+# Start trunk dev server (builds WASM automatically)
+cd apps/docsign-web
+trunk serve www/index.html --port 8081 &
 
 # Run demo (if demo binary exists)
 cargo run -p docsign-demo --release
@@ -195,14 +211,18 @@ cargo run -p docsign-demo --release
 
 ### Manual Browser Verification
 
-For manual testing, open the local servers in Chrome:
+For manual testing, start trunk servers and open in Chrome:
 
 ```bash
-# agentPDF.org
-open http://localhost:8080
+# Start agentPDF.org (in one terminal)
+cd apps/agentpdf-web && trunk serve www/index.html --port 8080
 
-# getsignatures.org
-open http://localhost:8081
+# Start getsignatures.org (in another terminal)
+cd apps/docsign-web && trunk serve www/index.html --port 8081
+
+# Open in browser
+open http://localhost:8080  # agentPDF.org
+open http://localhost:8081  # getsignatures.org
 ```
 
 **agentPDF.org Checklist:**
@@ -392,28 +412,28 @@ See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
 
 | Check | Status |
 |-------|--------|
-| **Tests** | ✅ 365 passing (including property tests) |
+| **Tests** | ✅ 460+ passing (including property tests) |
 | **Clippy** | ✅ Clean (`-D warnings`) |
 | **Format** | ✅ Formatted |
 | **WASM** | ✅ Both apps compile (wasm-opt disabled) |
 | **Worker** | ✅ docsign-worker compiles (worker 0.7) |
 | **Demos** | ✅ Both verified with Puppeteer |
 
-### Test Results: 365 Tests Passing
+### Test Results: 460+ Tests Passing
 
 | Crate | Tests | Description |
 |-------|-------|-------------|
+| compliance-engine | 227 | 16-state landlord-tenant rules (FL, TX, CA, NY, etc.) |
 | agentpdf-wasm | 82 | WASM bindings + compliance integration |
 | docsign-wasm | 63 | WASM bindings + signing workflow |
 | typst-engine | 42 | Document rendering, 3 templates, verifier |
 | shared-crypto | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
-| compliance-engine | 31 | Florida Chapter 83 rules (10 rules) |
+| docsign-worker | 31 | Cloudflare Worker + session/magic link property tests |
 | shared-pdf | 30 | PDF parsing, coordinate transforms, signer |
 | mcp-server | 29 | MCP protocol, HTTP transport, REST API property tests |
 | shared-types | 22 | Document, Violation, ComplianceReport types |
-| docsign-worker | 31 | Cloudflare Worker + session/magic link property tests |
 | docsign-core | 2 | PAdES signing, audit chain |
-| **Total** | **365** | All tests passing |
+| **Total** | **460+** | All tests passing |
 
 ### All Components Compiling
 

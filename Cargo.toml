@@ -142,10 +142,11 @@ docsign-core = { path = "crates/docsign-core" }
 typst-engine = { path = "crates/typst-engine" }
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"  # Smallest size (was "s")
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"  # Smaller binary, no unwinding
 
 [profile.release.package."*"]
-opt-level = "s"
+opt-level = "z"
