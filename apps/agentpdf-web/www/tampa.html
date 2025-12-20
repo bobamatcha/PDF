@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Free Florida Lease Compliance Tools for Tampa Bay Landlords - HB 615 Email Consent, Flood Disclosure Forms">
+    <title>Tampa Bay Landlord Tools | agentPDF.org</title>
+    <style>
+        :root {
+            --gulf-stream-blue: #005163;
+            --gulf-stream-dark: #003d4a;
+            --sunset-gold: #AB946C;
+            --paper-white: #FFFFFF;
+            --critical-red: #DC2626;
+            --warning-orange: #F59E0B;
+            --success-green: #10B981;
+            --text-primary: #1F2937;
+            --text-secondary: #6B7280;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #005163 0%, #003d4a 100%);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: rgba(0, 61, 74, 0.9);
+            backdrop-filter: blur(10px);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            color: white;
+            font-size: 1.5rem;
+        }
+
+        .header h1 span {
+            color: var(--sunset-gold);
+        }
+
+        .header-cta {
+            background: var(--sunset-gold);
+            color: white;
+            padding: 0.5rem 1.5rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .header-cta:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        .hero {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: white;
+        }
+
+        .hero h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            line-height: 1.2;
+        }
+
+        .hero h2 span {
+            color: var(--sunset-gold);
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto 2rem;
+        }
+
+        .alert-banner {
+            background: var(--critical-red);
+            color: white;
+            padding: 1rem 2rem;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .alert-banner a {
+            color: white;
+            text-decoration: underline;
+        }
+
+        .tools-section {
+            padding: 4rem 2rem;
+            background: white;
+        }
+
+        .tools-section h3 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--gulf-stream-blue);
+        }
+
+        .tools-section .subtitle {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 3rem;
+        }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .tool-card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            border: 2px solid transparent;
+            transition: border-color 0.3s, transform 0.3s;
+        }
+
+        .tool-card:hover {
+            border-color: var(--gulf-stream-blue);
+            transform: translateY(-4px);
+        }
+
+        .tool-card.critical {
+            border-color: var(--critical-red);
+            background: linear-gradient(to bottom, #fef2f2, white);
+        }
+
+        .tool-card h4 {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tool-card .badge {
+            font-size: 0.625rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .badge.required {
+            background: var(--critical-red);
+            color: white;
+        }
+
+        .badge.free {
+            background: var(--success-green);
+            color: white;
+        }
+
+        .tool-card p {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        .tool-card .statute {
+            font-size: 0.875rem;
+            color: var(--gulf-stream-blue);
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .tool-card a.btn {
+            display: inline-block;
+            background: var(--gulf-stream-blue);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .tool-card a.btn:hover {
+            background: var(--gulf-stream-dark);
+        }
+
+        .why-section {
+            padding: 4rem 2rem;
+            background: #f9fafb;
+        }
+
+        .why-section h3 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 3rem;
+            color: var(--gulf-stream-blue);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature h4 {
+            margin-bottom: 0.5rem;
+            color: var(--gulf-stream-blue);
+        }
+
+        .feature p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .local-section {
+            padding: 4rem 2rem;
+            background: var(--gulf-stream-dark);
+            color: white;
+            text-align: center;
+        }
+
+        .local-section h3 {
+            font-size: 1.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .local-section p {
+            opacity: 0.9;
+            max-width: 600px;
+            margin: 0 auto 2rem;
+        }
+
+        .events {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+            margin-top: 2rem;
+        }
+
+        .event {
+            background: rgba(255,255,255,0.1);
+            padding: 1.5rem;
+            border-radius: 8px;
+            min-width: 200px;
+        }
+
+        .event h5 {
+            color: var(--sunset-gold);
+            margin-bottom: 0.5rem;
+        }
+
+        .footer {
+            background: #1f2937;
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .footer a {
+            color: var(--sunset-gold);
+        }
+
+        @media (max-width: 768px) {
+            .hero h2 {
+                font-size: 1.75rem;
+            }
+            .tools-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>agent<span>PDF</span>.org</h1>
+        <a href="index.html" class="header-cta">Open App</a>
+    </header>
+
+    <div class="alert-banner">
+        New Florida Laws Effective Soon - Is Your Lease Compliant?
+    </div>
+
+    <section class="hero">
+        <h2>Free <span>Florida Compliance</span> Tools<br>for Tampa Bay Landlords</h2>
+        <p>Generate the mandatory forms required by new Florida statutes. Zero cost. Works offline. Built by a local Tampa developer.</p>
+    </section>
+
+    <section class="tools-section">
+        <h3>Florida Compliance Forms</h3>
+        <p class="subtitle">Required by new Florida statutes - don't risk lease voidability</p>
+
+        <div class="tools-grid">
+            <div class="tool-card critical">
+                <h4>
+                    Flood Disclosure
+                    <span class="badge required">Required</span>
+                </h4>
+                <p class="statute">F.S. § 83.512 (SB 948)</p>
+                <p>Mandatory disclosure of flooding history, insurance claims, and FEMA assistance. Non-compliance allows tenant to terminate lease and demand rent refund.</p>
+                <a href="index.html?template=florida_lease" class="btn">Generate Form</a>
+            </div>
+
+            <div class="tool-card">
+                <h4>
+                    Email Notice Consent
+                    <span class="badge free">Free</span>
+                </h4>
+                <p class="statute">F.S. § 83.56 (HB 615)</p>
+                <p>Stop paying for certified mail. This addendum makes email delivery of 3-day and 7-day notices legally valid in Florida.</p>
+                <a href="index.html?template=florida_lease" class="btn">Generate Form</a>
+            </div>
+
+            <div class="tool-card">
+                <h4>
+                    Complete Florida Lease
+                    <span class="badge free">Free</span>
+                </h4>
+                <p class="statute">F.S. Chapter 83</p>
+                <p>Full residential lease with all required disclosures: Radon, Lead Paint, Security Deposit, Electronic Notices, and Flood Disclosure.</p>
+                <a href="index.html?template=florida_lease" class="btn">Generate Lease</a>
+            </div>
+
+            <div class="tool-card">
+                <h4>
+                    Lease Compliance Check
+                    <span class="badge free">Free</span>
+                </h4>
+                <p class="statute">16-State Coverage</p>
+                <p>Upload any PDF lease and get instant compliance feedback. Detects prohibited clauses, missing disclosures, and statutory violations.</p>
+                <a href="index.html" class="btn">Check Your Lease</a>
+            </div>
+        </div>
+    </section>
+
+    <section class="why-section">
+        <h3>Why agentPDF?</h3>
+        <div class="features-grid">
+            <div class="feature">
+                <div class="feature-icon">&#9889;</div>
+                <h4>Zero Latency</h4>
+                <p>Runs entirely on your device. No waiting for servers. Works in concrete basements with no signal.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#128274;</div>
+                <h4>Offline-First</h4>
+                <p>The only lease app that works during a Category 3 hurricane. Your data never leaves your device.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#128176;</div>
+                <h4>Free Forever</h4>
+                <p>Core features are free. We only charge for optional cloud features like remote signing.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#9878;</div>
+                <h4>Legally Compliant</h4>
+                <p>Templates updated for 2025 Florida statutes including SB 948 and HB 615.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="local-section">
+        <h3>Built by a Tampa Developer</h3>
+        <p>I built this because I was frustrated watching landlords get blindsided by new compliance requirements. Most free forms online are outdated. agentPDF keeps you compliant automatically.</p>
+
+        <div class="events">
+            <div class="event">
+                <h5>Tampa REIA</h5>
+                <p>2nd Thursday Monthly</p>
+            </div>
+            <div class="event">
+                <h5>Beach REIA</h5>
+                <p>3rd Thursday Monthly</p>
+            </div>
+            <div class="event">
+                <h5>NARPM Tampa</h5>
+                <p>Check Calendar</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <p>&copy; 2025 agentPDF.org | <a href="index.html">Open App</a> | <a href="https://getsignatures.org">Get Signatures</a></p>
+        <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.875rem;">
+            This tool generates documents based on Florida statutes. It is not legal advice. Consult an attorney for complex situations.
+        </p>
+    </footer>
+</body>
+</html>

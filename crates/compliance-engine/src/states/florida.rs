@@ -22,6 +22,8 @@ pub fn check_florida_compliance(text: &str) -> Vec<Violation> {
     violations.extend(check_security_deposit(text));
     violations.extend(check_attorney_fees(text));
     violations.extend(check_notice_requirements(text));
+    violations.extend(check_electronic_notice_consent(text));
+    violations.extend(check_flood_disclosure(text));
 
     violations
 }
@@ -397,6 +399,145 @@ fn check_termination_notice(text: &str) -> Vec<Violation> {
     violations
 }
 
+// ============================================================================
+// HB 615 - Electronic Notice Consent (§ 83.56 amendment)
+// ============================================================================
+
+/// Check for proper electronic notice consent per HB 615 (amending § 83.56)
+///
+/// HB 615 allows landlords and tenants to agree to send legally required notices
+/// (3-day, 7-day, termination notices, etc.) via email, but ONLY if there is
+/// explicit written consent in the lease.
+pub fn check_electronic_notice_consent(text: &str) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let text_lower = text.to_lowercase();
+
+    // Check if lease mentions electronic/email notices
+    let mentions_email_notices = (text_lower.contains("email")
+        || text_lower.contains("electronic"))
+        && text_lower.contains("notice");
+
+    if !mentions_email_notices {
+        // No email notice mentioned, no check needed
+        return violations;
+    }
+
+    // Check for proper consent language per HB 615
+    let has_hb615_consent = text_lower.contains("hb 615")
+        || text_lower.contains("hb615")
+        || (text_lower.contains("83.56") && text_lower.contains("amended"))
+        || (text_lower.contains("electronic notice consent")
+            && text_lower.contains("expressly consent"));
+
+    // Check for explicit consent elements
+    let has_explicit_consent = text_lower.contains("expressly consent")
+        || text_lower.contains("explicitly consent")
+        || text_lower.contains("agree to receive")
+            && text_lower.contains("electronic")
+            && text_lower.contains("notice");
+
+    if !has_hb615_consent && !has_explicit_consent {
+        let text_position = find_text_position(text, "email").map(|(start, end)| TextPosition {
+            start_offset: start,
+            end_offset: end,
+        });
+        violations.push(Violation {
+            statute: "F.S. § 83.56 (HB 615)".to_string(),
+            severity: Severity::Warning,
+            message: "Lease mentions electronic/email notices but lacks explicit consent language required by HB 615. \
+                     Add an Electronic Notice Consent addendum with explicit tenant consent to receive legally required notices via email.".to_string(),
+            page: None,
+            text_snippet: Some(extract_snippet(text, "email")),
+            text_position,
+        });
+    }
+
+    violations
+}
+
+// ============================================================================
+// § 83.512 - Flood Disclosure (SB 948)
+// ============================================================================
+
+/// Check for required flood disclosure per Florida Statute § 83.512 (SB 948)
+///
+/// Effective for residential leases of 1 year or longer, landlords must disclose:
+/// 1. Knowledge of past flooding at the property
+/// 2. Any flood insurance claims filed
+/// 3. Any federal flood assistance (e.g., FEMA) received
+///
+/// Failure to disclose allows tenant to terminate and seek damages.
+pub fn check_flood_disclosure(text: &str) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let text_lower = text.to_lowercase();
+
+    // Check for proper flood disclosure language
+    let has_flood_disclosure_header =
+        text_lower.contains("flood disclosure") || text_lower.contains("83.512");
+
+    // Required disclosure elements per SB 948
+    let has_flooding_history = text_lower.contains("knowledge of")
+        && (text_lower.contains("flood") || text_lower.contains("flooding"))
+        || text_lower.contains("prior flooding")
+        || text_lower.contains("past flooding")
+        || text_lower.contains("no knowledge of") && text_lower.contains("flood");
+
+    let has_insurance_claims = text_lower.contains("flood insurance")
+        && text_lower.contains("claim")
+        || text_lower.contains("insurance claim") && text_lower.contains("flood");
+
+    let has_federal_assistance = text_lower.contains("fema")
+        || text_lower.contains("federal")
+            && (text_lower.contains("flood") || text_lower.contains("assistance"))
+        || text_lower.contains("federal flood assistance");
+
+    // Full compliance requires all three elements
+    let is_fully_compliant = has_flood_disclosure_header
+        && has_flooding_history
+        && has_insurance_claims
+        && has_federal_assistance;
+
+    if !is_fully_compliant {
+        let text_position = find_text_position(text, "flood").map(|(start, end)| TextPosition {
+            start_offset: start,
+            end_offset: end,
+        });
+
+        let mut missing_elements = Vec::new();
+        if !has_flood_disclosure_header {
+            missing_elements.push("Flood Disclosure header/§ 83.512 reference");
+        }
+        if !has_flooding_history {
+            missing_elements.push("disclosure of landlord's knowledge of past flooding");
+        }
+        if !has_insurance_claims {
+            missing_elements.push("disclosure of flood insurance claims");
+        }
+        if !has_federal_assistance {
+            missing_elements.push("disclosure of federal flood assistance (FEMA)");
+        }
+
+        violations.push(Violation {
+            statute: "F.S. § 83.512 (SB 948)".to_string(),
+            severity: Severity::Warning,
+            message: format!(
+                "Lease is missing required flood disclosure elements per § 83.512. Missing: {}. \
+                 Landlord must disclose flooding history, insurance claims, and federal assistance before lease execution.",
+                missing_elements.join(", ")
+            ),
+            page: None,
+            text_snippet: if text_lower.contains("flood") {
+                Some(extract_snippet(text, "flood"))
+            } else {
+                Some(text.chars().take(100).collect())
+            },
+            text_position,
+        });
+    }
+
+    violations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +565,99 @@ mod tests {
             .filter(|v| v.severity == Severity::Critical)
             .collect();
         assert!(critical.is_empty());
+    }
+
+    // ========================================================================
+    // HB 615 - Electronic Notice Consent (§ 83.56 amendment)
+    // ========================================================================
+
+    #[test]
+    fn test_hb615_missing_email_consent_warns() {
+        // Lease mentions email for notices but lacks explicit HB 615 consent
+        let text = "Notices may be sent via email. Monthly rent: $2,000.";
+        let violations = check_florida_compliance(text);
+
+        assert!(
+            violations.iter().any(|v| v.statute.contains("83.56")
+                && v.message.to_lowercase().contains("electronic")
+                && v.severity == Severity::Warning),
+            "Should warn about missing HB 615 electronic notice consent. Got: {:?}",
+            violations
+        );
+    }
+
+    #[test]
+    fn test_hb615_proper_consent_no_violation() {
+        // Lease has proper HB 615 electronic notice consent language
+        let text = "ELECTRONIC NOTICE CONSENT: Pursuant to Florida Statute § 83.56 as amended by HB 615, \
+                    Tenant expressly consents to receive all legally required notices via electronic mail. \
+                    Tenant email: tenant@example.com. \
+                    Security deposit held at First National Bank, Miami, Florida. \
+                    Landlord returns deposit within 15 days if no claim.";
+        let violations = check_florida_compliance(text);
+
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.statute.contains("83.56")
+                    && v.message.to_lowercase().contains("electronic")),
+            "Should NOT warn when HB 615 consent is present. Got: {:?}",
+            violations
+        );
+    }
+
+    // ========================================================================
+    // § 83.512 - Flood Disclosure (SB 948)
+    // ========================================================================
+
+    #[test]
+    fn test_flood_disclosure_missing_warns() {
+        // Standard lease without flood disclosure
+        let text = "This residential lease is for property at 123 Main St, Tampa, FL. \
+                    Security deposit held at First National Bank, Miami, Florida. \
+                    Landlord returns deposit within 15 days if no claim.";
+        let violations = check_florida_compliance(text);
+
+        assert!(
+            violations.iter().any(|v| v.statute.contains("83.512")
+                && v.message.to_lowercase().contains("flood")
+                && v.severity == Severity::Warning),
+            "Should warn about missing § 83.512 flood disclosure. Got: {:?}",
+            violations
+        );
+    }
+
+    #[test]
+    fn test_flood_disclosure_present_no_violation() {
+        // Lease with proper flood disclosure per SB 948
+        let text = "FLOOD DISCLOSURE: Pursuant to Florida Statute § 83.512, Landlord discloses: \
+                    (1) Landlord has no knowledge of prior flooding at this property. \
+                    (2) No flood insurance claims have been filed for this property. \
+                    (3) No federal flood assistance has been received for this property. \
+                    Security deposit held at First National Bank, Miami, Florida. \
+                    Landlord returns deposit within 15 days if no claim.";
+        let violations = check_florida_compliance(text);
+
+        assert!(
+            !violations.iter().any(|v| v.statute.contains("83.512")),
+            "Should NOT warn when flood disclosure is present. Got: {:?}",
+            violations
+        );
+    }
+
+    #[test]
+    fn test_flood_disclosure_partial_still_warns() {
+        // Lease mentions flood but doesn't have all required elements
+        let text = "This property may be in a flood zone. Check with FEMA for details. \
+                    Security deposit held at First National Bank, Miami, Florida.";
+        let violations = check_florida_compliance(text);
+
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.statute.contains("83.512") && v.severity == Severity::Warning),
+            "Should warn when flood disclosure is incomplete. Got: {:?}",
+            violations
+        );
     }
 }

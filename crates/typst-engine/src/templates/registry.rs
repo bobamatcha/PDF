@@ -59,8 +59,9 @@ pub fn list_templates() -> Vec<TemplateInfo> {
         },
         TemplateInfo {
             name: "florida_lease".to_string(),
-            description: "Florida residential lease agreement (F.S. Chapter 83 compliant)"
-                .to_string(),
+            description:
+                "Florida residential lease with HB 615 Email Consent & SB 948 Flood Disclosure"
+                    .to_string(),
             uri: "typst://templates/florida_lease".to_string(),
             required_inputs: vec![
                 "landlord_name".to_string(),
@@ -72,9 +73,18 @@ pub fn list_templates() -> Vec<TemplateInfo> {
             ],
             optional_inputs: vec![
                 "landlord_address".to_string(),
+                "landlord_email".to_string(),
+                "tenant_email".to_string(),
                 "year_built".to_string(),
                 "is_pre_1978".to_string(),
                 "deposit_details".to_string(),
+                // HB 615 - Electronic Notice Consent
+                "email_consent".to_string(),
+                // SB 948 - Flood Disclosure (§ 83.512)
+                "has_prior_flooding".to_string(),
+                "has_flood_claims".to_string(),
+                "has_fema_assistance".to_string(),
+                "flooding_description".to_string(),
             ],
         },
     ]

@@ -2,9 +2,9 @@
 # Run: trunk serve (dev) or trunk build --release (prod)
 
 [build]
-# Target directory for build output
-target = "www/dist"
-# Path to the WASM crate
+# Path to the input HTML file
+target = "www/index.html"
+# Output directory for build artifacts
 dist = "www/dist"
 
 [watch]
@@ -23,3 +23,9 @@ open = false
 stage = "post_build"
 command = "sh"
 command_arguments = ["-c", "cp -r www/js www/dist/ 2>/dev/null || true"]
+
+[[hooks]]
+# Copy landing pages to dist
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "cp www/tampa.html www/dist/ 2>/dev/null || true"]

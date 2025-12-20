@@ -149,6 +149,8 @@
 #v(0.3em)
 #toc_item("A.", "Pet Addendum (if applicable)")
 #toc_item("B.", "Parking Addendum (if applicable)")
+#toc_item("G.", "Electronic Notice Consent (HB 615)")
+#toc_item("H.", "Flood Disclosure (§ 83.512)")
 #toc_item("C.", "Rules and Regulations (if applicable)")
 #toc_item("D.", "Lead-Based Paint Disclosure (pre-1978 properties)")
 #toc_item("E.", "Radon Gas Notification (Required)")
@@ -1072,6 +1074,276 @@ Tenant must provide a forwarding address in writing within 10 days after vacatin
 #text(size: 11pt, weight: "bold")[ACKNOWLEDGMENT]
 
 By signing below, Tenant acknowledges receipt of this Security Deposit Disclosure as required by Florida Statutes § 83.49.
+
+#v(2em)
+
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 40pt,
+  [
+    #text(weight: "bold")[LANDLORD]
+    #v(1.5em)
+    Signature: #box(width: 150pt, repeat[\_])
+    #v(0.5em)
+    Print Name: #get("landlord_name", default: "[Landlord Name]")
+    #v(0.5em)
+    Date: #box(width: 100pt, repeat[\_])
+  ],
+  [
+    #text(weight: "bold")[TENANT]
+    #v(1.5em)
+    Signature: #box(width: 150pt, repeat[\_])
+    #v(0.5em)
+    Print Name: #get("tenant_name", default: "[Tenant Name]")
+    #v(0.5em)
+    Date: #box(width: 100pt, repeat[\_])
+  ]
+)
+
+#pagebreak()
+
+// ============================================================================
+// ADDENDUM G: ELECTRONIC NOTICE CONSENT (HB 615 - § 83.56)
+// ============================================================================
+
+#text(size: 14pt, weight: "bold")[ADDENDUM G: ELECTRONIC NOTICE CONSENT]
+#v(0.5em)
+#text(size: 10pt, style: "italic")[Pursuant to Florida Statutes § 83.56 as amended by HB 615]
+#v(1em)
+
+#rect(
+  width: 100%,
+  inset: 15pt,
+  stroke: 2pt + rgb("#0066cc"),
+  fill: rgb("#f0f8ff"),
+  radius: 4pt,
+)[
+  #text(weight: "bold", size: 12pt)[CONSENT TO ELECTRONIC DELIVERY OF NOTICES]
+
+  #v(1em)
+
+  Florida law (HB 615, amending F.S. § 83.56) permits landlords and tenants to agree to the electronic delivery of legally required notices, including but not limited to:
+
+  #v(0.5em)
+
+  - Three (3) day notices for nonpayment of rent
+  - Seven (7) day notices for lease violations
+  - Notices of termination or non-renewal
+  - Notices regarding security deposit claims
+  - Any other notices required under Florida Statutes Chapter 83
+
+  #v(1em)
+
+  #text(weight: "bold")[This consent is OPTIONAL.] If Tenant declines, all notices will be delivered via personal delivery or certified mail as required by law.
+]
+
+#v(1em)
+
+#text(size: 12pt, weight: "bold")[TENANT'S ELECTION]
+#v(0.5em)
+
+#let email_consent = get_bool("email_consent")
+
+#if email_consent [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] *I CONSENT* to receive all legally required notices via electronic mail.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] I DECLINE and require notices via personal delivery or certified mail.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] I CONSENT to receive all legally required notices via electronic mail.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] *I DECLINE* and require notices via personal delivery or certified mail.
+]
+
+#v(1em)
+
+#text(size: 12pt, weight: "bold")[TENANT EMAIL ADDRESS FOR NOTICES]
+#v(0.5em)
+
+Email: #get("tenant_email", default: "[Tenant Email Address]")
+
+#v(0.5em)
+
+#text(size: 9pt, style: "italic")[
+  By providing an email address above and consenting to electronic notices, Tenant agrees that delivery of any legally required notice to this email address constitutes valid delivery under Florida law. Tenant is responsible for maintaining access to this email address and promptly notifying Landlord of any changes.
+]
+
+#v(1em)
+
+#text(size: 12pt, weight: "bold")[LANDLORD EMAIL ADDRESS FOR NOTICES]
+#v(0.5em)
+
+Email: #get("landlord_email", default: "[Landlord Email Address]")
+
+#v(2em)
+
+#text(size: 11pt, weight: "bold")[ACKNOWLEDGMENT]
+
+By signing below, both parties acknowledge and agree to the electronic notice provisions selected above pursuant to Florida Statutes § 83.56 as amended by HB 615.
+
+#v(2em)
+
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 40pt,
+  [
+    #text(weight: "bold")[LANDLORD]
+    #v(1.5em)
+    Signature: #box(width: 150pt, repeat[\_])
+    #v(0.5em)
+    Print Name: #get("landlord_name", default: "[Landlord Name]")
+    #v(0.5em)
+    Date: #box(width: 100pt, repeat[\_])
+  ],
+  [
+    #text(weight: "bold")[TENANT]
+    #v(1.5em)
+    Signature: #box(width: 150pt, repeat[\_])
+    #v(0.5em)
+    Print Name: #get("tenant_name", default: "[Tenant Name]")
+    #v(0.5em)
+    Date: #box(width: 100pt, repeat[\_])
+  ]
+)
+
+#pagebreak()
+
+// ============================================================================
+// ADDENDUM H: FLOOD DISCLOSURE (SB 948 - § 83.512)
+// ============================================================================
+
+#text(size: 14pt, weight: "bold")[ADDENDUM H: FLOOD DISCLOSURE]
+#v(0.5em)
+#text(size: 10pt, style: "italic")[Required by Florida Statutes § 83.512 (SB 948)]
+#v(1em)
+
+#rect(
+  width: 100%,
+  inset: 15pt,
+  stroke: 2pt + rgb("#dc2626"),
+  fill: rgb("#fef2f2"),
+  radius: 4pt,
+)[
+  #text(weight: "bold", size: 12pt)[MANDATORY FLOOD DISCLOSURE]
+
+  #v(1em)
+
+  Pursuant to Florida Statutes § 83.512, the Landlord is required to disclose to the Tenant, prior to execution of a residential lease for a term of one year or longer, the following information regarding the property located at:
+
+  #v(0.5em)
+
+  #text(weight: "bold")[#get("property_address", default: "[Property Address]")]
+]
+
+#v(1em)
+
+#text(size: 12pt, weight: "bold")[LANDLORD'S DISCLOSURE]
+#v(0.5em)
+
+#text(weight: "bold")[1. KNOWLEDGE OF PRIOR FLOODING]
+
+#let has_prior_flooding = get_bool("has_prior_flooding")
+
+#if has_prior_flooding [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord HAS knowledge of prior flooding at this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord has NO knowledge of prior flooding at this property.
+
+  #v(0.5em)
+
+  Description of flooding: #get("flooding_description", default: "[Describe flooding events]")
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord HAS knowledge of prior flooding at this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord has NO knowledge of prior flooding at this property.
+]
+
+#v(1em)
+
+#text(weight: "bold")[2. FLOOD INSURANCE CLAIMS]
+
+#let has_flood_claims = get_bool("has_flood_claims")
+
+#if has_flood_claims [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Flood insurance claims HAVE been filed for this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No flood insurance claims have been filed for this property.
+
+  #v(0.5em)
+
+  Details: #get("flood_claims_details", default: "[Describe claims]")
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Flood insurance claims HAVE been filed for this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] No flood insurance claims have been filed for this property.
+]
+
+#v(1em)
+
+#text(weight: "bold")[3. FEDERAL FLOOD ASSISTANCE (FEMA)]
+
+#let has_fema_assistance = get_bool("has_fema_assistance")
+
+#if has_fema_assistance [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Federal flood assistance (FEMA) HAS been received for this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No federal flood assistance has been received for this property.
+
+  #v(0.5em)
+
+  Details: #get("fema_details", default: "[Describe assistance received]")
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Federal flood assistance (FEMA) HAS been received for this property.
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] No federal flood assistance has been received for this property.
+]
+
+#v(1em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 1pt + rgb("#666"),
+  fill: rgb("#fffbeb"),
+  radius: 4pt,
+)[
+  #text(weight: "bold")[TENANT'S RIGHTS UNDER § 83.512]
+
+  #v(0.5em)
+
+  If the Landlord fails to provide this disclosure and the Tenant suffers a loss due to flooding, the Tenant may have the right to:
+
+  - Terminate the lease immediately
+  - Seek a full refund of rent paid
+  - Pursue damages as provided by law
+
+  #v(0.5em)
+
+  #text(size: 9pt, style: "italic")[
+    Tenants are encouraged to independently verify flood zone status at FEMA's Flood Map Service Center (msc.fema.gov) and consider obtaining renter's flood insurance.
+  ]
+]
+
+#v(2em)
+
+#text(size: 11pt, weight: "bold")[ACKNOWLEDGMENT]
+
+By signing below, both parties certify that this Flood Disclosure has been provided and received prior to execution of the Residential Lease Agreement, as required by Florida Statutes § 83.512.
 
 #v(2em)
 

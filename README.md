@@ -64,6 +64,8 @@ apps/                       # Deployable applications
 - **3 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`
 - **florida_lease.typ**: 1100-line comprehensive Florida residential lease (F.S. Chapter 83 compliant)
 - **Dynamic Field Population**: 40+ customizable fields via JSON inputs
+- **HB 615 Email Consent**: Addendum G - Electronic notice consent per § 83.56
+- **SB 948 Flood Disclosure**: Addendum H - Mandatory flood history disclosure per § 83.512
 
 ### Digital Signatures
 - **PAdES-B Signatures**: PDF Advanced Electronic Signatures
@@ -100,24 +102,26 @@ cargo install trunk
 
 # agentPDF.org (port 8080)
 cd apps/agentpdf-web
-trunk serve www/index.html --port 8080
+trunk serve --port 8080
 
 # getsignatures.org (port 8081)
 cd apps/docsign-web
-trunk serve www/index.html --port 8081
+trunk serve --port 8081
 ```
+
+**Note**: Trunk reads `Trunk.toml` for configuration. The `target` field points to the input HTML file (`www/index.html`), and `dist` specifies the output directory (`www/dist`). Static files like `tampa.html` are copied via post-build hooks.
 
 ### Build for Production
 
 ```bash
 # agentPDF.org
 cd apps/agentpdf-web
-trunk build www/index.html --release
-# Output in www/dist/
+trunk build --release
+# Output in www/dist/ (includes tampa.html landing page)
 
 # getsignatures.org
 cd apps/docsign-web
-trunk build www/index.html --release
+trunk build --release
 # Output in www/dist/
 ```
 
@@ -162,6 +166,49 @@ cargo test -p shared-crypto
 ## Demo Verification
 
 Both web applications can be verified using browser automation. The demos use chromiumoxide (Rust CDP bindings) to drive a headless Chrome browser.
+
+### Demo New Florida Compliance Features
+
+The florida_lease template now includes HB 615 and SB 948 compliance:
+
+**1. Tampa Landing Page (NEW)**
+```bash
+# Start dev server
+cd apps/agentpdf-web && trunk serve --port 8080
+
+# Open Tampa landing page
+open http://localhost:8080/tampa.html
+```
+- Shows 4 compliance tools: Flood Disclosure, Email Consent, Complete Lease, Compliance Check
+- Local Tampa REIA event info
+- Links to main app
+
+**2. Florida Lease with HB 615 + SB 948**
+```bash
+# Open main app
+open http://localhost:8080
+
+# Click "Use a Template" → Select "florida_lease"
+# Expand "Optional Fields (11)" to see:
+#   - email_consent (HB 615)
+#   - has_prior_flooding, has_flood_claims, has_fema_assistance (§ 83.512)
+```
+
+**3. Compliance Check for HB 615 / § 83.512**
+- Upload any PDF lease
+- Select "Florida (F.S. Chapter 83)" from state selector
+- System checks for proper HB 615 consent language and § 83.512 flood disclosure
+
+**4. Tampa REIA Demo Script**
+```bash
+# Interactive walkthrough for Tampa REIA meetings
+./scripts/tampa-demo.sh
+```
+- Starts dev server automatically
+- Opens Tampa landing page
+- Step-by-step talking points for each feature
+- Covers flood disclosure, email consent, compliance check
+- Includes upcoming REIA meeting dates
 
 ### Prerequisites
 
