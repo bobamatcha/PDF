@@ -1,0 +1,65 @@
+# agentPDF.org Performance Benchmark Scenarios
+# Comprehensive benchmarking configuration for the agentPDF web application
+
+[benchmark]
+# Name of the benchmark suite
+name = "agentPDF Performance"
+
+# Base URL for local testing
+base_url = "http://localhost:3000"
+
+# Number of iterations per scenario
+iterations = 30
+
+# Number of warmup runs before measurement
+warmup = 3
+
+# Number of parallel browser contexts
+parallel_contexts = 4
+
+[throttling]
+# Network profile to simulate real-world conditions
+network_profile = "Fast3G"
+
+# CPU slowdown multiplier (4x slower to simulate mid-range devices)
+cpu_slowdown = 4.0
+
+[thresholds]
+# Largest Contentful Paint p95 threshold (2.5 seconds)
+lcp_p95 = 2500.0
+
+# Interaction to Next Paint p95 threshold (200ms)
+inp_p95 = 200.0
+
+# Cumulative Layout Shift p95 threshold
+cls_p95 = 0.1
+
+# Scenario 1: Homepage load performance
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "homepage" }
+]
+
+# Scenario 2: PDF upload and processing flow
+[[scenarios]]
+name = "PDF Upload"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#upload-input" },
+    { type = "upload", selector = "#upload-input", file_path = "/tmp/test-document.pdf" },
+    { type = "wait", wait_for = "selector", selector = ".processing-complete" },
+    { type = "measure", label = "pdf-upload-complete" }
+]
+
+# Scenario 3: Document viewer rendering
+[[scenarios]]
+name = "Document Viewer"
+steps = [
+    { type = "navigate", url = "/document/sample" },
+    { type = "wait", wait_for = "selector", selector = ".document-viewer" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "document-viewer-ready" }
+]
