@@ -44,13 +44,34 @@ pub fn check_compliance_for_state_wasm(
     state_code: &str,
     year_built: Option<u32>,
 ) -> Result<String, JsValue> {
+    check_compliance_with_zip_wasm(document_json, state_code, year_built, None)
+}
+
+/// WASM entry point for compliance checking with state and ZIP code
+///
+/// ZIP code enables Layer 3 (local) compliance checks:
+/// - Chicago RLTO for 606xx ZIPs
+/// - NYC rent stabilization for 100xx/110xx ZIPs
+/// - SF/LA rent control for California ZIPs
+#[wasm_bindgen]
+pub fn check_compliance_with_zip_wasm(
+    document_json: &str,
+    state_code: &str,
+    year_built: Option<u32>,
+    zip_code: Option<String>,
+) -> Result<String, JsValue> {
     let document: LeaseDocument = serde_json::from_str(document_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse document: {}", e)))?;
 
     let state = State::parse_code(state_code)
         .ok_or_else(|| JsValue::from_str(&format!("Unsupported state: {}", state_code)))?;
 
-    let jurisdiction = Jurisdiction::new(state);
+    // Create jurisdiction with locality detection from ZIP code
+    let jurisdiction = match zip_code {
+        Some(ref zip) if !zip.is_empty() => Jurisdiction::from_zip(state, zip),
+        _ => Jurisdiction::new(state),
+    };
+
     let engine = ComplianceEngine::new();
     let report = engine.check_compliance(&jurisdiction, &document, year_built);
 

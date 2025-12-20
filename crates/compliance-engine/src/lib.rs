@@ -89,10 +89,8 @@ impl ComplianceEngine {
         // Layer 2: State-specific
         violations.extend(states::check_state_compliance(jurisdiction.state, text));
 
-        // Layer 3: Local overrides (future)
-        // if let Some(ref locality) = jurisdiction.locality {
-        //     violations.extend(layers::local::check_local_compliance(locality, text));
-        // }
+        // Layer 3: Local overrides (municipality-specific ordinances)
+        violations.extend(layers::check_local_compliance(jurisdiction, text));
 
         violations
     }
@@ -234,9 +232,25 @@ mod tests {
         let engine = ComplianceEngine::new();
         let states = engine.supported_states();
 
+        // Tier 1: Big Five + Florida
         assert!(states.contains(&State::FL));
         assert!(states.contains(&State::TX));
-        assert_eq!(states.len(), 2);
+        assert!(states.contains(&State::CA));
+        assert!(states.contains(&State::NY));
+        assert!(states.contains(&State::GA));
+        assert!(states.contains(&State::IL));
+        // Tier 2: Growth Hubs
+        assert!(states.contains(&State::PA));
+        assert!(states.contains(&State::NJ));
+        assert!(states.contains(&State::VA));
+        assert!(states.contains(&State::MA));
+        assert!(states.contains(&State::OH));
+        assert!(states.contains(&State::MI));
+        assert!(states.contains(&State::WA));
+        assert!(states.contains(&State::AZ));
+        assert!(states.contains(&State::NC));
+        assert!(states.contains(&State::TN));
+        assert_eq!(states.len(), 16);
     }
 
     #[test]
@@ -275,5 +289,63 @@ mod tests {
         // Texas zip (no special locality)
         let tx = Jurisdiction::from_zip(State::TX, "75001");
         assert_eq!(tx.locality, None);
+    }
+
+    // ========================================================================
+    // Locality-based compliance tests
+    // These tests verify that locality detection from ZIP codes affects
+    // compliance checking, even when the lease text doesn't mention the city.
+    // ========================================================================
+
+    #[test]
+    fn test_chicago_rlto_applies_via_zip_not_text() {
+        // BUG TEST: When user provides Chicago ZIP but lease text doesn't mention Chicago,
+        // RLTO requirements should still apply based on the jurisdiction locality.
+        let engine = ComplianceEngine::new();
+
+        // Create jurisdiction from ZIP code (not from text)
+        let jurisdiction = Jurisdiction::from_zip(State::IL, "60601");
+        assert_eq!(jurisdiction.locality, Some(Locality::Chicago));
+
+        // Lease text does NOT mention Chicago or any Chicago ZIP
+        let text = "Monthly rent: $2,000. Security deposit: $2,000.";
+
+        let violations = engine.check_text_with_jurisdiction(&jurisdiction, text, None);
+
+        // RLTO Summary should be required for Chicago properties
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.statute.contains("5-12-170") && v.message.contains("RLTO")),
+            "Chicago RLTO requirements should apply when jurisdiction has Chicago locality, \
+             even if lease text doesn't mention Chicago. Got violations: {:?}",
+            violations.iter().map(|v| &v.statute).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_nyc_rent_rules_apply_via_zip_not_text() {
+        // BUG TEST: When user provides NYC ZIP but lease text doesn't mention NYC,
+        // NYC-specific rules should still apply.
+        let engine = ComplianceEngine::new();
+
+        // Create jurisdiction from ZIP code
+        let jurisdiction = Jurisdiction::from_zip(State::NY, "10001");
+        assert_eq!(jurisdiction.locality, Some(Locality::NewYorkCity));
+
+        // Lease text does NOT mention NYC but has EXCESSIVE deposit (> 1 month rent)
+        let text = "Monthly rent: $3,000. Security deposit: $4,500.";
+
+        let violations = engine.check_text_with_jurisdiction(&jurisdiction, text, None);
+
+        // Should detect excessive deposit (NYC only allows 1 month)
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.statute.contains("7-108") && v.severity == Severity::Critical),
+            "NYC security deposit limit should apply when jurisdiction has NYC locality, \
+             even if lease text doesn't mention NYC. Got violations: {:?}",
+            violations.iter().map(|v| &v.statute).collect::<Vec<_>>()
+        );
     }
 }

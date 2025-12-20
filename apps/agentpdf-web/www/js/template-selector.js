@@ -374,14 +374,27 @@ const TemplateSelector = {
  * Allows users to select which state's laws to use for compliance checking
  */
 const StateSelector = {
-    // Supported states with implementation status
+    // Supported states with implementation status (Tier 0 + Tier 1 + Tier 2 = 16 states)
     states: [
+        // Tier 0: Florida
         { code: 'FL', name: 'Florida', implemented: true, statutes: 'F.S. Chapter 83' },
+        // Tier 1: Big Five
         { code: 'TX', name: 'Texas', implemented: true, statutes: 'Tex. Prop. Code Ch. 92' },
-        { code: 'CA', name: 'California', implemented: false, statutes: 'CA Civil Code 1940-1954' },
-        { code: 'NY', name: 'New York', implemented: false, statutes: 'NY RPL Article 7' },
-        { code: 'GA', name: 'Georgia', implemented: false, statutes: 'GA Code Title 44 Ch. 7' },
-        { code: 'IL', name: 'Illinois', implemented: false, statutes: 'IL Landlord Tenant Act' }
+        { code: 'CA', name: 'California', implemented: true, statutes: 'CA Civil Code 1940-1954' },
+        { code: 'NY', name: 'New York', implemented: true, statutes: 'NY RPL Article 7' },
+        { code: 'GA', name: 'Georgia', implemented: true, statutes: 'GA Code Title 44 Ch. 7' },
+        { code: 'IL', name: 'Illinois', implemented: true, statutes: '765 ILCS + Chicago RLTO' },
+        // Tier 2: Growth Hubs
+        { code: 'PA', name: 'Pennsylvania', implemented: true, statutes: '68 P.S. § 250.501 et seq.' },
+        { code: 'NJ', name: 'New Jersey', implemented: true, statutes: 'N.J.S.A. 46:8 et seq.' },
+        { code: 'VA', name: 'Virginia', implemented: true, statutes: 'VA Code § 55.1-1200 et seq.' },
+        { code: 'MA', name: 'Massachusetts', implemented: true, statutes: 'M.G.L. c. 186' },
+        { code: 'OH', name: 'Ohio', implemented: true, statutes: 'O.R.C. Chapter 5321' },
+        { code: 'MI', name: 'Michigan', implemented: true, statutes: 'M.C.L. 554.601 et seq.' },
+        { code: 'WA', name: 'Washington', implemented: true, statutes: 'RCW 59.18' },
+        { code: 'AZ', name: 'Arizona', implemented: true, statutes: 'A.R.S. Title 33 Ch. 10' },
+        { code: 'NC', name: 'North Carolina', implemented: true, statutes: 'N.C.G.S. Chapter 42' },
+        { code: 'TN', name: 'Tennessee', implemented: true, statutes: 'T.C.A. Title 66 Ch. 28' }
     ],
 
     // Currently selected state
@@ -435,24 +448,34 @@ const StateSelector = {
         const implementedStates = this.states.filter(s => s.implemented);
         const comingSoon = this.states.filter(s => !s.implemented);
 
+        let optgroupsHTML = `
+            <optgroup label="Available (${implementedStates.length} states)">
+                ${implementedStates.map(s => `
+                    <option value="${s.code}" ${s.code === this.currentState ? 'selected' : ''}>
+                        ${s.name} (${s.statutes})
+                    </option>
+                `).join('')}
+            </optgroup>
+        `;
+
+        // Only show "Coming Soon" if there are states pending
+        if (comingSoon.length > 0) {
+            optgroupsHTML += `
+                <optgroup label="Coming Soon" disabled>
+                    ${comingSoon.map(s => `
+                        <option value="${s.code}" disabled>
+                            ${s.name} (${s.statutes})
+                        </option>
+                    `).join('')}
+                </optgroup>
+            `;
+        }
+
         return `
             <div class="state-selector">
                 <label for="state-select">Check compliance for:</label>
                 <select id="state-select" class="state-select">
-                    <optgroup label="Available">
-                        ${implementedStates.map(s => `
-                            <option value="${s.code}" ${s.code === this.currentState ? 'selected' : ''}>
-                                ${s.name} (${s.statutes})
-                            </option>
-                        `).join('')}
-                    </optgroup>
-                    <optgroup label="Coming Soon" disabled>
-                        ${comingSoon.map(s => `
-                            <option value="${s.code}" disabled>
-                                ${s.name} (${s.statutes})
-                            </option>
-                        `).join('')}
-                    </optgroup>
+                    ${optgroupsHTML}
                 </select>
                 <span class="state-badge" id="state-badge">${this.currentState}</span>
             </div>

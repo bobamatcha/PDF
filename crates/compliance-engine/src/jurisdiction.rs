@@ -176,7 +176,27 @@ impl State {
 
     /// Check if state has implementation
     pub fn is_implemented(&self) -> bool {
-        matches!(self, State::FL | State::TX)
+        matches!(
+            self,
+            // Tier 1: Big Five
+            State::FL
+                | State::TX
+                | State::CA
+                | State::NY
+                | State::GA
+                | State::IL
+                // Tier 2: Growth Hubs
+                | State::PA
+                | State::NJ
+                | State::VA
+                | State::MA
+                | State::OH
+                | State::MI
+                | State::WA
+                | State::AZ
+                | State::NC
+                | State::TN
+        )
     }
 
     /// Parse from state code or name (case-insensitive)
@@ -212,7 +232,26 @@ impl State {
 
     /// Get all implemented states
     pub fn implemented_states() -> Vec<Self> {
-        vec![State::FL, State::TX]
+        vec![
+            // Tier 1: Big Five
+            State::FL,
+            State::TX,
+            State::CA,
+            State::NY,
+            State::GA,
+            State::IL,
+            // Tier 2: Growth Hubs
+            State::PA,
+            State::NJ,
+            State::VA,
+            State::MA,
+            State::OH,
+            State::MI,
+            State::WA,
+            State::AZ,
+            State::NC,
+            State::TN,
+        ]
     }
 }
 

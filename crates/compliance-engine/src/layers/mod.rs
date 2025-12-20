@@ -7,5 +7,7 @@
 //! 4. Variable - user inputs (constrained by lower layers)
 
 pub mod federal;
+pub mod local;
 
 pub use federal::check_federal_compliance;
+pub use local::check_local_compliance;

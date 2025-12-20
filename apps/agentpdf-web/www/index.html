@@ -629,6 +629,149 @@
             margin-bottom: 1rem;
         }
 
+        /* Property Details */
+        .property-details {
+            background: var(--document-grey);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .property-details summary {
+            cursor: pointer;
+            font-weight: 500;
+            color: var(--text-secondary);
+            user-select: none;
+        }
+
+        .property-details summary:hover {
+            color: var(--gulf-stream-blue);
+        }
+
+        .property-fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 0.75rem;
+        }
+
+        .property-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .property-field label {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .property-field input {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+
+        .property-field input:focus {
+            outline: none;
+            border-color: var(--gulf-stream-blue);
+            box-shadow: 0 0 0 2px rgba(0, 81, 99, 0.1);
+        }
+
+        .field-hint {
+            font-size: 0.7rem;
+            color: var(--text-tertiary);
+        }
+
+        /* Sidebar Property Details */
+        .property-details-sidebar {
+            background: var(--document-grey);
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .property-details-sidebar summary {
+            cursor: pointer;
+            font-weight: 500;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+        }
+
+        .property-fields-inline {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+
+        .property-field-inline {
+            display: flex;
+            flex-direction: column;
+            gap: 0.125rem;
+            flex: 1;
+            min-width: 70px;
+        }
+
+        .property-field-inline label {
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--text-tertiary);
+        }
+
+        .property-field-inline input {
+            padding: 0.375rem 0.5rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            font-size: 0.8rem;
+            width: 100%;
+        }
+
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        .locality-detected {
+            margin-top: 0.5rem;
+            padding: 0.375rem 0.5rem;
+            background: #D1FAE5;
+            color: #065F46;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .locality-detected.hidden {
+            display: none;
+        }
+
+        /* Error Toast */
+        .error-toast {
+            position: fixed;
+            bottom: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #DC2626;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1001;
+            font-size: 0.875rem;
+            max-width: 90%;
+            text-align: center;
+        }
+
+        .error-toast.hidden {
+            display: none;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .right-sidebar {
@@ -643,6 +786,31 @@
             .right-sidebar.open {
                 right: 0;
             }
+
+            .property-fields {
+                grid-template-columns: 1fr;
+            }
+
+            .upload-area {
+                padding: 1.5rem;
+            }
+
+            .drop-zone {
+                padding: 2rem 1rem;
+            }
+
+            .header {
+                padding: 0.5rem 1rem;
+            }
+
+            .header-brand h1 {
+                font-size: 1rem;
+            }
+
+            .btn {
+                padding: 0.375rem 0.75rem;
+                font-size: 0.8rem;
+            }
         }
     </style>
 </head>
@@ -652,6 +820,9 @@
         <div class="spinner"></div>
         <p class="loading-text">Loading agentPDF...</p>
     </div>
+
+    <!-- Error Toast -->
+    <div id="error-toast" class="error-toast hidden"></div>
 
     <!-- Ghost field for placement -->
     <div id="ghost-field" class="ghost-field hidden"></div>
@@ -683,6 +854,23 @@
             <div class="upload-area">
                 <!-- State Selector for Upload Screen -->
                 <div id="upload-state-selector"></div>
+
+                <!-- Property Details (for Lead Paint & Locality) -->
+                <details id="property-details-upload" class="property-details">
+                    <summary>Property Details (optional)</summary>
+                    <div class="property-fields">
+                        <div class="property-field">
+                            <label for="year-built-upload">Year Built</label>
+                            <input type="number" id="year-built-upload" placeholder="e.g., 1975" min="1800" max="2030">
+                            <span class="field-hint">Required for lead paint disclosure (pre-1978)</span>
+                        </div>
+                        <div class="property-field">
+                            <label for="zip-code-upload">ZIP Code</label>
+                            <input type="text" id="zip-code-upload" placeholder="e.g., 60601" maxlength="5" pattern="[0-9]{5}">
+                            <span class="field-hint">Detects local ordinances (Chicago RLTO, NYC, etc.)</span>
+                        </div>
+                    </div>
+                </details>
 
                 <div id="drop-zone" class="drop-zone">
                     <div class="drop-zone-icon">📄</div>
@@ -739,7 +927,24 @@
                     <!-- Compliance Panel -->
                     <div id="panel-compliance" class="sidebar-panel active">
                         <!-- State Selector in Sidebar -->
-                        <div id="sidebar-state-selector" style="margin-bottom: 1rem;"></div>
+                        <div id="sidebar-state-selector" style="margin-bottom: 0.75rem;"></div>
+
+                        <!-- Property Details in Sidebar -->
+                        <details id="property-details-sidebar" class="property-details-sidebar">
+                            <summary>Property Details</summary>
+                            <div class="property-fields-inline">
+                                <div class="property-field-inline">
+                                    <label for="year-built-sidebar">Year Built</label>
+                                    <input type="number" id="year-built-sidebar" placeholder="1975" min="1800" max="2030">
+                                </div>
+                                <div class="property-field-inline">
+                                    <label for="zip-code-sidebar">ZIP Code</label>
+                                    <input type="text" id="zip-code-sidebar" placeholder="60601" maxlength="5">
+                                </div>
+                                <button id="btn-recheck" class="btn btn-secondary btn-sm">Re-check</button>
+                            </div>
+                            <div id="locality-detected" class="locality-detected hidden"></div>
+                        </details>
 
                         <div class="compliance-header">
                             <h3 id="compliance-title" style="font-size: 0.875rem; font-weight: 600;">Compliance Check</h3>
@@ -803,6 +1008,7 @@
         import init, {
             check_compliance_wasm,
             check_compliance_for_state_wasm,
+            check_compliance_with_zip_wasm,
             get_supported_states,
             extract_pdf_text,
             get_pdf_page_count
@@ -819,7 +1025,28 @@
             placedFields: [],
             violations: [],
             selectedState: 'FL',
-            yearBuilt: null
+            yearBuilt: null,
+            zipCode: null,
+            locality: null
+        };
+
+        // Locality detection mapping (matches compliance-engine/src/jurisdiction.rs)
+        const LOCALITY_MAP = {
+            IL: { // Chicago zips
+                ranges: [[60601, 60661], [60701, 60707]],
+                name: 'Chicago',
+                ordinance: 'Chicago RLTO applies'
+            },
+            NY: { // NYC zips
+                ranges: [[10001, 10292], [10301, 10314], [11001, 11697]],
+                name: 'New York City',
+                ordinance: 'NYC Rent Stabilization may apply'
+            },
+            CA: {
+                SF: { ranges: [[94102, 94188]], name: 'San Francisco', ordinance: 'SF Rent Ordinance may apply' },
+                SM: { ranges: [[90401, 90411]], name: 'Santa Monica', ordinance: 'SM Rent Control may apply' },
+                LA: { ranges: [[90001, 90189], [90201, 90899]], name: 'Los Angeles', ordinance: 'LA RSO may apply' }
+            }
         };
 
         // DOM Elements
@@ -841,6 +1068,81 @@
         const btnDownload = document.getElementById('btn-download');
         const btnSendSign = document.getElementById('btn-send-sign');
         const btnNew = document.getElementById('btn-new');
+        const errorToast = document.getElementById('error-toast');
+
+        // Property detail inputs
+        const yearBuiltUpload = document.getElementById('year-built-upload');
+        const zipCodeUpload = document.getElementById('zip-code-upload');
+        const yearBuiltSidebar = document.getElementById('year-built-sidebar');
+        const zipCodeSidebar = document.getElementById('zip-code-sidebar');
+        const localityDetected = document.getElementById('locality-detected');
+        const btnRecheck = document.getElementById('btn-recheck');
+
+        // Error handling
+        function showError(message, duration = 5000) {
+            errorToast.textContent = message;
+            errorToast.classList.remove('hidden');
+            setTimeout(() => errorToast.classList.add('hidden'), duration);
+        }
+
+        // Detect locality from zip code
+        function detectLocality(stateCode, zipCode) {
+            if (!zipCode || zipCode.length !== 5) return null;
+            const zip = parseInt(zipCode);
+            if (isNaN(zip)) return null;
+
+            const stateLocalities = LOCALITY_MAP[stateCode];
+            if (!stateLocalities) return null;
+
+            // Handle CA special case with multiple cities
+            if (stateCode === 'CA') {
+                for (const [city, data] of Object.entries(stateLocalities)) {
+                    for (const [min, max] of data.ranges) {
+                        if (zip >= min && zip <= max) {
+                            return { name: data.name, ordinance: data.ordinance };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            // Standard case
+            for (const [min, max] of stateLocalities.ranges) {
+                if (zip >= min && zip <= max) {
+                    return { name: stateLocalities.name, ordinance: stateLocalities.ordinance };
+                }
+            }
+            return null;
+        }
+
+        // Update locality display
+        function updateLocalityDisplay() {
+            const locality = detectLocality(state.selectedState, state.zipCode);
+            state.locality = locality;
+
+            if (locality) {
+                localityDetected.textContent = `📍 ${locality.name}: ${locality.ordinance}`;
+                localityDetected.classList.remove('hidden');
+            } else {
+                localityDetected.classList.add('hidden');
+            }
+        }
+
+        // Sync property inputs between upload and sidebar
+        function syncPropertyInputs(source) {
+            if (source === 'upload') {
+                state.yearBuilt = yearBuiltUpload.value ? parseInt(yearBuiltUpload.value) : null;
+                state.zipCode = zipCodeUpload.value || null;
+                if (yearBuiltSidebar) yearBuiltSidebar.value = yearBuiltUpload.value;
+                if (zipCodeSidebar) zipCodeSidebar.value = zipCodeUpload.value;
+            } else {
+                state.yearBuilt = yearBuiltSidebar.value ? parseInt(yearBuiltSidebar.value) : null;
+                state.zipCode = zipCodeSidebar.value || null;
+                if (yearBuiltUpload) yearBuiltUpload.value = yearBuiltSidebar.value;
+                if (zipCodeUpload) zipCodeUpload.value = zipCodeSidebar.value;
+            }
+            updateLocalityDisplay();
+        }
 
         // Initialize WASM
         async function initApp() {
@@ -856,12 +1158,48 @@
                     state.selectedState = e.detail.state;
                     updateStateBadge(e.detail.state);
                     updateComplianceTitle(e.detail.stateInfo);
+                    updateLocalityDisplay();
 
                     // Re-run compliance check if we have a document loaded
                     if (state.pdfBytes) {
                         runComplianceCheck();
                     }
                 });
+
+                // Property input listeners (upload screen)
+                if (yearBuiltUpload) {
+                    yearBuiltUpload.addEventListener('change', () => syncPropertyInputs('upload'));
+                }
+                if (zipCodeUpload) {
+                    zipCodeUpload.addEventListener('input', () => {
+                        syncPropertyInputs('upload');
+                    });
+                }
+
+                // Property input listeners (sidebar)
+                if (yearBuiltSidebar) {
+                    yearBuiltSidebar.addEventListener('change', () => {
+                        syncPropertyInputs('sidebar');
+                        if (state.pdfBytes) runComplianceCheck();
+                    });
+                }
+                if (zipCodeSidebar) {
+                    zipCodeSidebar.addEventListener('input', () => {
+                        syncPropertyInputs('sidebar');
+                    });
+                }
+
+                // Re-check button
+                if (btnRecheck) {
+                    btnRecheck.addEventListener('click', () => {
+                        syncPropertyInputs('sidebar');
+                        if (state.pdfBytes) {
+                            runComplianceCheck();
+                        } else {
+                            showError('Please upload a PDF first');
+                        }
+                    });
+                }
 
                 // Update header badge
                 updateStateBadge(state.selectedState);
@@ -870,6 +1208,7 @@
             } catch (err) {
                 console.error('Failed to initialize WASM:', err);
                 loadingOverlay.querySelector('.loading-text').textContent = 'Failed to load. Please refresh.';
+                showError('Failed to initialize compliance engine. Please refresh the page.');
             }
         }
 
@@ -930,6 +1269,9 @@
                 state.totalPages = state.pdfDoc.numPages;
                 state.currentPage = 1;
 
+                // Sync property inputs from upload screen
+                syncPropertyInputs('upload');
+
                 // Update UI
                 docName.textContent = file.name;
                 totalPagesSpan.textContent = state.totalPages;
@@ -951,6 +1293,7 @@
             } catch (err) {
                 console.error('Failed to load PDF:', err);
                 loadingOverlay.querySelector('.loading-text').textContent = 'Failed to load PDF.';
+                showError('Failed to load PDF. Please try a different file.');
                 setTimeout(() => loadingOverlay.classList.add('hidden'), 2000);
             }
         }
@@ -1000,6 +1343,18 @@
                 // Extract text from PDF using WASM
                 const text = await extract_pdf_text(state.pdfBytes);
 
+                if (!text || text.trim().length === 0) {
+                    complianceStatus.className = 'compliance-status';
+                    complianceStatus.innerHTML = '<span>⚠️</span> No text found';
+                    violationList.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📄</div>
+                            <p>Could not extract text from this PDF. It may be image-based.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
                 // Create document object for compliance check
                 const document = {
                     id: 'current-doc',
@@ -1009,11 +1364,13 @@
                     created_at: Date.now()
                 };
 
-                // Run compliance check with selected state
-                const resultJson = check_compliance_for_state_wasm(
+                // Run compliance check with selected state, year built, and ZIP code
+                // ZIP code enables Layer 3 local ordinance checks (Chicago RLTO, NYC rent laws, etc.)
+                const resultJson = check_compliance_with_zip_wasm(
                     JSON.stringify(document),
                     state.selectedState,
-                    state.yearBuilt
+                    state.yearBuilt,
+                    state.zipCode
                 );
                 const result = JSON.parse(resultJson);
 
@@ -1023,10 +1380,27 @@
                 // Update compliance title with current state info
                 const stateInfo = StateSelector.states.find(s => s.code === state.selectedState);
                 updateComplianceTitle(stateInfo);
+
+                // Show lead paint reminder if year built < 1978 and not provided
+                if (!state.yearBuilt) {
+                    const hasLeadPaintViolation = state.violations.some(v =>
+                        v.statute.includes('4852d') || v.message.toLowerCase().includes('lead paint')
+                    );
+                    if (hasLeadPaintViolation) {
+                        showError('Enter Year Built (pre-1978 requires lead paint disclosure)', 6000);
+                    }
+                }
             } catch (err) {
                 console.error('Compliance check failed:', err);
                 complianceStatus.className = 'compliance-status';
                 complianceStatus.innerHTML = '<span>⚠️</span> Check failed';
+                showError('Compliance check failed: ' + (err.message || 'Unknown error'));
+                violationList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">❌</div>
+                        <p>Failed to analyze document. Please try again.</p>
+                    </div>
+                `;
             }
         }
 

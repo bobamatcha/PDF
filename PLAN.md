@@ -49,7 +49,7 @@
 | **shared-types** | ✅ Tests Pass | 22 | Document, Violation, ComplianceReport types |
 | **shared-pdf** | ✅ Tests Pass | 30 | PDF parsing, coordinate transforms, signer |
 | **shared-crypto** | ✅ Tests Pass | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
-| **compliance-engine** | ✅ Tests Pass | 31 | 10 Florida Chapter 83 rules |
+| **compliance-engine** | ✅ Tests Pass | 218 | 16 states (FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN) |
 | **docsign-core** | ✅ Tests Pass | 2 | PAdES signing, audit chain |
 | **typst-engine** | ✅ Tests Pass | 42 | Document rendering, 3 templates, verifier |
 | **mcp-server** | ✅ Tests Pass | 29 | Claude Desktop MCP with HTTP transport, REST API, property tests |
@@ -93,13 +93,13 @@
 | **Template selector UI** | ✅ Complete | Modal UI for template selection + form filling |
 | **Deep link parsing** | ✅ Complete | Signing links + agentpdf integration |
 
-**Total Tests: 365 passing** (including property tests for REST API and session/magic link)
+**Total Tests: 446+ passing** (including property tests for REST API and session/magic link, plus 16-state compliance)
 
 ### ✅ Quality Checks
 
 | Check | Status |
 |-------|--------|
-| **cargo test --workspace --all-features** | ✅ 365 tests passing |
+| **cargo test --workspace --all-features** | ✅ 446+ tests passing |
 | **cargo clippy --workspace --all-features -- -D warnings** | ✅ Clean |
 | **cargo fmt --all -- --check** | ✅ Formatted |
 | **WASM Compilation (agentpdf-wasm)** | ✅ Compiles (wasm-opt disabled) |
@@ -161,13 +161,13 @@ Templates must support hierarchical compliance:
 
 ### Rollout Strategy: Volume/Complexity Matrix
 
-| Tier | States | Strategy |
-|------|--------|----------|
-| **Tier 0** | FL | ✅ Complete (10 rules in compliance-engine) |
-| **Tier 1: Big Five** | TX, CA, NY, GA, IL | High volume, prove platform capability |
-| **Tier 2: Growth** | PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN | Regional importance |
-| **Tier 3: URLTA Block** | AK, KS, KY, NE, NM, OR, RI + others | Clone master template |
-| **Tier 4: Long Tail** | Remaining states | Complete coverage |
+| Tier | States | Strategy | Status |
+|------|--------|----------|--------|
+| **Tier 0** | FL | ✅ Complete (10 rules in compliance-engine) | ✅ 31 tests |
+| **Tier 1: Big Five** | TX, CA, NY, GA, IL | High volume, prove platform capability | ✅ Complete (76 tests) |
+| **Tier 2: Growth** | PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN | Regional importance | ✅ Complete (111 tests) |
+| **Tier 3: URLTA Block** | AK, KS, KY, NE, NM, OR, RI + others | Clone master template | Pending |
+| **Tier 4: Long Tail** | Remaining states | Complete coverage | Pending |
 
 ### Contract Verifier Engine
 
@@ -206,22 +206,30 @@ pub struct JurisdictionRules {
 
 ### Phase 4 Implementation Plan
 
-**Short Term: Foundation**
-- [ ] Extend compliance-engine for multi-jurisdiction support
-- [ ] Implement Federal layer (lead paint, Fair Housing NLP)
-- [ ] Create Master URLTA template
-- [ ] Add Texas and Georgia rules
+**Short Term: Foundation** ✅ COMPLETE
+- [x] Extend compliance-engine for multi-jurisdiction support
+- [x] Implement Federal layer (lead paint, Fair Housing)
+- [x] Add Texas and Georgia rules (Tier 1)
+- [x] Add California (with AB 12 deposit cap, SB 611 junk fees)
+- [x] Add Illinois (with Chicago RLTO support)
+- [x] Add New York (with NYC rent stabilization, late fee caps)
 
-**Medium Term: Complexity Validation**
-- [ ] Add California (validate local override logic)
-- [ ] Add Illinois (validate Chicago/RLTO split)
-- [ ] Build zip code → municipality mapping
-- [ ] Add New York (dual-system NYC vs Upstate)
+**Medium Term: Growth Hubs** ✅ COMPLETE
+- [x] Add Pennsylvania (Plain Language Act, 2-month deposit cap)
+- [x] Add New Jersey (Truth in Renting, Anti-Eviction Act)
+- [x] Add Virginia (HB 2430 Fee Transparency, mold disclosure)
+- [x] Add Massachusetts (2025 Broker Fee Reform, 1-month deposit cap)
+- [x] Add Ohio (30-day deposit return, itemized deductions)
+- [x] Add Michigan (Source of Income Protection, inventory checklist)
+- [x] Add Washington (90-day rent increase notice, Just Cause cities)
+- [x] Add Arizona (Bed bug disclosure, pool safety, 1.5-month deposit cap)
+- [x] Add North Carolina (Pet Fee vs Pet Deposit distinction, trust account)
+- [x] Add Tennessee (URLTA county applicability based on population)
 
 **Long Term: Scale & Coverage**
-- [ ] Roll out URLTA block (10-15 states efficiently)
-- [ ] Add Tier 2 growth states
+- [ ] Roll out URLTA block (AK, KS, KY, NE, NM, OR, RI)
 - [ ] Complete 50-state coverage
+- [ ] Build zip code → municipality mapping for local ordinances
 - [ ] Real-time legislative monitoring
 
 ---
