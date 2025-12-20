@@ -30,9 +30,12 @@
 9. [Phase 1: Shared Foundation](#9-phase-1-shared-foundation)
 10. [Phase 2: Unified Compliance Engine](#10-phase-2-unified-compliance-engine)
 11. [Phase 3: Full Integration](#11-phase-3-full-integration)
-12. [Test Coverage Strategy](#12-test-coverage-strategy)
-13. [Demo Functionality Preservation](#13-demo-functionality-preservation)
-14. [Future Considerations](#14-future-considerations)
+12. [Phase 4: Nationwide Template Expansion](#phase-4-nationwide-template-expansion)
+13. [Phase 5: Tax Preparation Platform](#phase-5-tax-preparation-platform)
+14. [Phase 6: Estate Planning Platform](#phase-6-estate-planning-platform)
+15. [Test Coverage Strategy](#12-test-coverage-strategy)
+16. [Demo Functionality Preservation](#13-demo-functionality-preservation)
+17. [Future Considerations](#14-future-considerations)
 
 ---
 
@@ -120,9 +123,289 @@
 ### 📋 Next Steps (Post Phase 3)
 
 1. ✅ **Build WASM packages** - Both built with wasm-opt disabled
-2. **Deploy to production** - Push to agentpdf.org and getsignatures.org
+2. **Deploy to production** - Push to agentpdf.org and getsignatures.org (see [DEPLOY.md](./DEPLOY.md))
 3. **Fix corpus-core** - Add candle-core, candle-nn, tokenizers, hf-hub dependencies
-4. **Add more templates** - Expand Florida legal document library
+4. **Template Expansion** - See Phase 4 below
+
+---
+
+## Phase 4: Nationwide Template Expansion
+
+> **Full Research**: See [LEASE_RESEARCH.md](./LEASE_RESEARCH.md) for comprehensive legal analysis.
+
+### Strategic Template Use Cases
+
+| Use Case | Description | Priority | Research |
+|----------|-------------|----------|----------|
+| **Residential Lease** | 50-state lease automation with compliance | High | [LEASE_RESEARCH.md](./LEASE_RESEARCH.md) |
+| **Tax Preparation** | TurboTax competitor with IRS-compliant forms | High | [TAX_RESEARCH.md](./TAX_RESEARCH.md) |
+| **Estate Planning** | Wills, trusts, POA with UPL-safe statutory forms | High | [ESTATE_RESEARCH.md](./ESTATE_RESEARCH.md) |
+| **Commercial Lease** | Office, retail, industrial leases | Medium | - |
+| **Property Management** | Notices, addendums, disclosures | Medium | - |
+
+### The "Layer Cake" Architecture
+
+Templates must support hierarchical compliance:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  VARIABLE LAYER - User inputs (rent, dates, parties)       │
+├─────────────────────────────────────────────────────────────┤
+│  LOCAL LAYER - City ordinances (Chicago RLTO, SF rent ctrl) │
+├─────────────────────────────────────────────────────────────┤
+│  STATE LAYER - Statutory requirements (deposits, notices)   │
+├─────────────────────────────────────────────────────────────┤
+│  FEDERAL LAYER - Lead paint, Fair Housing (baseline)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Rollout Strategy: Volume/Complexity Matrix
+
+| Tier | States | Strategy |
+|------|--------|----------|
+| **Tier 0** | FL | ✅ Complete (10 rules in compliance-engine) |
+| **Tier 1: Big Five** | TX, CA, NY, GA, IL | High volume, prove platform capability |
+| **Tier 2: Growth** | PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN | Regional importance |
+| **Tier 3: URLTA Block** | AK, KS, KY, NE, NM, OR, RI + others | Clone master template |
+| **Tier 4: Long Tail** | Remaining states | Complete coverage |
+
+### Contract Verifier Engine
+
+The `compliance-engine` crate will be extended for multi-state support:
+
+```rust
+// Current: Florida-specific rules
+pub enum FloridaRule { SecurityDeposit, Notice3Day, ... }
+
+// Future: Jurisdiction-based rules
+pub struct JurisdictionRules {
+    federal: Vec<FederalRule>,      // Lead paint, Fair Housing
+    state: Vec<StateRule>,          // Statutory caps, notices
+    local: Option<Vec<LocalRule>>,  // City ordinances
+}
+```
+
+### Key Verifier Logic (Examples)
+
+| State | Rule | Implementation |
+|-------|------|----------------|
+| **CA** | Deposit ≤ 1 month (AB 12) | `if deposit > rent { ERROR }` |
+| **NY** | Late fee ≤ min($50, 5%) | `late_fee = min(50, rent * 0.05)` |
+| **TX** | Lockout clause must be bold | PDF formatting check |
+| **IL-Chicago** | RLTO Summary required | Zip code → attachment logic |
+| **GA** | No "as-is" clauses (HB 404) | Regex scan for void terms |
+
+### Legislative Compliance Notes
+
+| Jurisdiction | Active Requirements |
+|--------------|---------------------|
+| Illinois | Landlord Retaliation Act, no e-payment mandate |
+| California | SB 611 Junk Fee transparency, AB 12 deposit cap |
+| Virginia | HB 2430 Fee disclosure on Page 1 |
+| Massachusetts | Broker fee reform (landlord pays own broker) |
+
+### Phase 4 Implementation Plan
+
+**Short Term: Foundation**
+- [ ] Extend compliance-engine for multi-jurisdiction support
+- [ ] Implement Federal layer (lead paint, Fair Housing NLP)
+- [ ] Create Master URLTA template
+- [ ] Add Texas and Georgia rules
+
+**Medium Term: Complexity Validation**
+- [ ] Add California (validate local override logic)
+- [ ] Add Illinois (validate Chicago/RLTO split)
+- [ ] Build zip code → municipality mapping
+- [ ] Add New York (dual-system NYC vs Upstate)
+
+**Long Term: Scale & Coverage**
+- [ ] Roll out URLTA block (10-15 states efficiently)
+- [ ] Add Tier 2 growth states
+- [ ] Complete 50-state coverage
+- [ ] Real-time legislative monitoring
+
+---
+
+## Phase 5: Tax Preparation Platform
+
+> **Full Research**: See [TAX_RESEARCH.md](./TAX_RESEARCH.md) for comprehensive IRS compliance analysis.
+
+### Tax Form Architecture
+
+The tax product uses a hierarchical form structure similar to the Layer Cake:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  FORM 1040 - Master Return (anchors all schedules)          │
+├─────────────────────────────────────────────────────────────┤
+│  NUMBERED SCHEDULES (1, 2, 3) - Aggregate categories        │
+├─────────────────────────────────────────────────────────────┤
+│  LETTERED SCHEDULES (A-SE) - Specific tax situations        │
+├─────────────────────────────────────────────────────────────┤
+│  WORKSHEETS - Intermediate calculations (not filed)         │
+├─────────────────────────────────────────────────────────────┤
+│  SOURCE DOCUMENTS - W-2, 1099s (import/display)             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### IRS Compliance Requirements
+
+| Publication | Purpose | Implementation |
+|-------------|---------|----------------|
+| **Pub 1167** | Substitute Forms Standards | PDF tolerances, font requirements |
+| **Pub 1179** | Information Returns (1099s) | Copy B formatting for recipients |
+| **MeF Schema** | XML e-file transmission | Schema validation, error codes |
+
+### Form Priority Matrix
+
+| Priority | Forms | Rationale |
+|----------|-------|-----------|
+| **P0: Core** | 1040, 1040-SR | Required for all returns |
+| **P1: Income** | W-2, 1099-NEC, 1099-MISC | Gig economy, self-employed |
+| **P2: Deductions** | Schedule C, SE | Sole proprietor focus |
+| **P3: Itemized** | Schedule A, B, D | Investment income, itemizers |
+| **P4: Complex** | Schedule E, K-1 | Rental, partnerships |
+
+### State Tax Integration
+
+| State | Forms | Complexity |
+|-------|-------|------------|
+| **California (FTB)** | 540, 540NR | Residency rules, AB5 worker classification |
+| **New York** | IT-201, IT-203 | 2D barcode mandate, NYC resident credit |
+| **Texas** | Franchise Tax (0.75%) | No personal income tax |
+| **Florida** | None | No personal income tax |
+
+### Phase 5 Implementation Plan
+
+**Short Term: Foundation**
+- [ ] Implement Form 1040 / 1040-SR PDF generation (IRS Pub 1167 compliant)
+- [ ] Build Schedule C engine for self-employed/gig workers
+- [ ] Create W-2 and 1099-NEC import and display
+- [ ] Build calculation engine for basic tax math
+- [ ] Add interview-based data collection flow
+
+**Medium Term: Expansion**
+- [ ] Add Schedule SE (self-employment tax)
+- [ ] Add Schedules A, B, D for itemizers and investors
+- [ ] Implement California FTB 540 integration
+- [ ] Build state-aware routing logic
+- [ ] Add MeF XML generation for e-file
+
+**Long Term: Full Platform**
+- [ ] Add Schedule E (rental income)
+- [ ] Add K-1 passthrough support
+- [ ] Complete 1099 family (INT, DIV, B, R, G)
+- [ ] Add New York IT-201 with 2D barcode
+- [ ] Implement IRS e-file transmission
+- [ ] Add tax planning and projection features
+
+---
+
+## Phase 6: Estate Planning Platform
+
+> **Full Research**: See [ESTATE_RESEARCH.md](./ESTATE_RESEARCH.md) for comprehensive UPL analysis and statutory form research.
+
+### Market Context: The Great Wealth Transfer
+
+The US is undergoing an unprecedented wealth transfer of **$16-84 trillion** from Baby Boomers to Gen X/Millennials. Traditional legal services fail the middle class due to prohibitive costs.
+
+**Opportunity**: Statutory-compliant PDF builder operating in "safe harbor" of validity.
+
+### The UPL Firewall
+
+**Critical Risk**: Unauthorized Practice of Law (UPL) is a crime in most states.
+
+| Requirement | Implementation |
+|-------------|----------------|
+| **Verbatim Input** | Software populates forms exactly as entered, no interpretation |
+| **Statutory Forms** | Use state-promulgated forms, not proprietary instruments |
+| **Scrivener Logic** | Present options for selection, never recommend |
+| **Explicit Disclaimers** | Clear notice: not a lawyer, no legal advice |
+
+**The Scrivener Doctrine**:
+```
+PROHIBITED (Advisory): "Based on your $5M assets, we recommend a Credit Shelter Trust"
+PERMITTED (Scrivener): "Do you want a Credit Shelter Trust? [Tooltip: defined as...]"
+```
+
+### Tier 1 Markets (Big Four)
+
+| State | Wealth Index | Primary Need | Statutory Forms Available |
+|-------|-------------|--------------|---------------------------|
+| **California** | 2.71 | Revocable Living Trusts (probate avoidance) | Probate Code § 6240, § 4701 |
+| **New York** | 1.95 | Updated POA (2021 overhaul) | GOL § 5-1513 |
+| **Texas** | 0.62 | Independent Administration Wills | Supreme Court approved forms |
+| **Florida** | 0.33 | Advance Directives | F.S. Chapter 765 |
+
+### Document Suite by State
+
+#### California
+
+| Document | Authority | Link |
+|----------|-----------|------|
+| Statutory Will | Probate Code § 6240 | [saclaw.org/.../6240-Statutory-will-form.pdf](https://saclaw.org/wp-content/uploads/2023/04/6240-Statutory-will-form.pdf) |
+| Advance Health Care Directive | Probate Code § 4701 | [trinitycounty.ca.gov/.../251](https://www.trinitycounty.ca.gov/DocumentCenter/View/251) |
+| Revocable Living Trust | CA Bar standards | Sample at SDSU Academy |
+| Trust Certification | Probate Code § 18100.5 | Auto-generate with trust |
+
+#### Texas
+
+| Document | Authority | Link |
+|----------|-----------|------|
+| Supreme Court Wills (4 variants) | Misc. Docket No. 23-9037 | [txcourts.gov/forms/](https://www.txcourts.gov/forms/) |
+| Statutory Durable POA | Estates Code Ch. 752 | [texaslawhelp.org/.../dba-104](https://texaslawhelp.org/sites/default/files/dba-104-statutory_durable_power_of_attorney.pdf) |
+| Medical POA | Health & Safety § 166.164 | [hhs.texas.gov/.../mpoa](https://www.hhs.texas.gov/regulations/forms/advance-directives/medical-power-attorney-designation-health-care-agent-mpoa) |
+
+#### New York
+
+| Document | Authority | Notes |
+|----------|-----------|-------|
+| Statutory Short Form POA | GOL § 5-1513 | **2021 version required** - old forms invalid |
+| Health Care Proxy | Public Health Law § 2981 | Agent designation only |
+| Living Will | Case law (*In re Westchester*) | No statutory form - use AG template |
+
+#### Florida
+
+| Document | Authority | Link |
+|----------|-----------|------|
+| Health Care Surrogate | F.S. Chapter 765 | [fhcp.com/.../Designation-of-Health-Care-Surrogate.pdf](https://www.fhcp.com/documents/forms/Advanced-Directives-Designation-of-Health-Care-Surrogate.pdf) |
+| Living Will | F.S. § 765.303 | [myfloridalegal.com/.../LivingWill.pdf](https://www.myfloridalegal.com/files/pdf/page/B18C541B29F7A7F885256FEF0044C13A/LivingWill.pdf) |
+
+### Execution Requirements (The Last Mile)
+
+| State | Requirements | Self-Proving Affidavit |
+|-------|--------------|------------------------|
+| **Florida** | Sign at end; 2 witnesses in presence of each other | Highly recommended |
+| **New York** | "Publication" declaration; witnesses sign within 30 days | Required for efficiency |
+| **Texas** | Standard execution | **Always include** - removes court testimony need |
+| **California** | 2 disinterested witnesses | Available |
+
+### Phase 6 Implementation Plan
+
+**Short Term: Foundation**
+- [ ] Implement California Statutory Will (Probate Code § 6240)
+- [ ] Implement Texas Supreme Court approved wills (all 4 variants)
+- [ ] Build California Advance Health Care Directive
+- [ ] Build Texas Statutory Durable POA
+- [ ] Create state-specific Signing Instruction Sheet generator
+- [ ] Implement UPL-compliant Terms of Service
+- [ ] Add scrivener-style tooltips (factual, not advisory)
+
+**Medium Term: Full Big Four Coverage**
+- [ ] Add New York Statutory Short Form POA (2021 version)
+- [ ] Add New York Health Care Proxy and Living Will
+- [ ] Add Florida Health Care Surrogate and Living Will
+- [ ] Build California Revocable Living Trust engine
+- [ ] Implement Trust Certification generator (CA § 18100.5)
+- [ ] Integrate Remote Online Notarization APIs for TX/FL
+
+**Long Term: Platform Expansion**
+- [ ] Add secondary markets (MA, WA - high home values)
+- [ ] Build Attorney Assist network (Tier 3 upsell)
+- [ ] Implement e-Will support (NV, IN, FL)
+- [ ] Add audit trail infrastructure for electronic signatures
+- [ ] Build B2B2C partner portal for financial advisors
+- [ ] Complete document suite with Self-Proving Affidavits
 
 ### Build Commands
 
