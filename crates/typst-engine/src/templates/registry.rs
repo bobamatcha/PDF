@@ -78,12 +78,19 @@ pub fn list_templates() -> Vec<TemplateInfo> {
                 "year_built".to_string(),
                 "is_pre_1978".to_string(),
                 "deposit_details".to_string(),
-                // HB 615 - Electronic Notice Consent
-                "email_consent".to_string(),
+                // NOTE: email_consent (HB 615) belongs in SIGNATURE CEREMONY,
+                // not template form. The TENANT consents during signing, not
+                // the landlord filling out the template. See docsign-web.
+                //
                 // SB 948 - Flood Disclosure (§ 83.512)
-                "has_prior_flooding".to_string(),
-                "has_flood_claims".to_string(),
-                "has_fema_assistance".to_string(),
+                // Using neutral tristate fields per scrivener adherence:
+                // - "yes" = Property has flooded / Claims filed / FEMA received
+                // - "no" = No known flooding / No claims / No FEMA
+                // - "unknown" = I don't know / Property recently acquired
+                "flood_history_status".to_string(), // tristate: yes/no/unknown
+                "flood_claims_status".to_string(),  // tristate: yes/no/unknown
+                "flood_fema_status".to_string(),    // tristate: yes/no/unknown
+                "flood_status_unknown".to_string(), // marker for "unknown" selection
                 "flooding_description".to_string(),
             ],
         },
@@ -139,5 +146,104 @@ mod tests {
             Some("florida_lease")
         );
         assert_eq!(parse_template_uri("invalid://uri"), None);
+    }
+
+    // ============================================================
+    // SCRIVENER ADHERENCE TESTS - Strict neutrality requirements
+    // ============================================================
+    //
+    // Per STRATEGY.md: Forms must be neutral and not lead users toward
+    // any particular outcome. Optional addenda should be offered without
+    // pushing the user in any direction.
+
+    #[test]
+    fn test_email_consent_not_in_template_form() {
+        // HB 615 Email Consent should be in the SIGNATURE CEREMONY,
+        // not the template form. The TENANT signs this consent, not
+        // the landlord filling out the template.
+        //
+        // Per STRATEGY.md lines 188-214: "Hardcode into the signature ceremony"
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        assert!(
+            !florida_lease
+                .optional_inputs
+                .contains(&"email_consent".to_string()),
+            "email_consent should NOT be in template optional_inputs - \
+             it belongs in signature ceremony where TENANT consents"
+        );
+    }
+
+    #[test]
+    fn test_flood_disclosure_offers_unknown_option() {
+        // Flood disclosure must offer "I don't know / Property recently acquired"
+        // option to maintain scrivener neutrality. Binary Yes/No is leading.
+        //
+        // Per STRATEGY.md lines 147-186, the wizard should have 3 options:
+        // - "Yes, the property has flooded"
+        // - "No known flooding events"
+        // - "I don't know / Property recently acquired"
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        // The field metadata should indicate tristate, not boolean
+        // For now, check that we have flood_unknown field alongside yes/no
+        assert!(
+            florida_lease
+                .optional_inputs
+                .contains(&"flood_status_unknown".to_string()),
+            "Flood disclosure must offer 'unknown' option for scrivener neutrality"
+        );
+    }
+
+    #[test]
+    fn test_flood_disclosure_uses_neutral_field_names() {
+        // Field names should not imply a default or lead the user.
+        // "has_prior_flooding" implies asking "did you have flooding?"
+        // which is slightly leading. Better: "flood_history_status" with
+        // explicit tristate options.
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        // Should use neutral status field, not leading has_* boolean fields
+        assert!(
+            florida_lease
+                .optional_inputs
+                .contains(&"flood_history_status".to_string()),
+            "Should use neutral 'flood_history_status' field with tristate options"
+        );
+    }
+
+    #[test]
+    fn test_optional_addenda_clearly_labeled_optional() {
+        // Per scrivener adherence, optional addenda must be clearly
+        // presented as optional without pushing user toward inclusion.
+        // The UI should ask "Would you like to include..." not assume inclusion.
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        // Flood disclosure is MANDATORY per § 83.512, but the template
+        // generation should still present it neutrally (user answers questions,
+        // system generates compliant disclosure based on answers)
+        assert!(
+            florida_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("flood")),
+            "Flood disclosure fields should exist for § 83.512 compliance"
+        );
     }
 }

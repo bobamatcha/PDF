@@ -1139,24 +1139,23 @@ By signing below, Tenant acknowledges receipt of this Security Deposit Disclosur
 
 #v(1em)
 
+// NOTE: Email consent is signed by TENANT during signature ceremony,
+// not pre-filled by landlord. Per HB 615, tenant must actively consent.
+// Both checkboxes left unchecked - tenant checks one during signing.
+
 #text(size: 12pt, weight: "bold")[TENANT'S ELECTION]
 #v(0.5em)
 
-#let email_consent = get_bool("email_consent")
-
-#if email_consent [
-  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] *I CONSENT* to receive all legally required notices via electronic mail.
-
-  #v(0.5em)
-
-  #box(width: 12pt, height: 12pt, stroke: 1pt)[] I DECLINE and require notices via personal delivery or certified mail.
-] else [
-  #box(width: 12pt, height: 12pt, stroke: 1pt)[] I CONSENT to receive all legally required notices via electronic mail.
-
-  #v(0.5em)
-
-  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] *I DECLINE* and require notices via personal delivery or certified mail.
+#text(style: "italic", size: 10pt)[
+  (Tenant: Please check ONE option below during signing)
 ]
+#v(0.5em)
+
+#box(width: 12pt, height: 12pt, stroke: 1pt)[] *I CONSENT* to receive all legally required notices via electronic mail.
+
+#v(0.5em)
+
+#box(width: 12pt, height: 12pt, stroke: 1pt)[] *I DECLINE* and require notices via personal delivery or certified mail.
 
 #v(1em)
 
@@ -1243,74 +1242,111 @@ By signing below, both parties acknowledge and agree to the electronic notice pr
 #text(size: 12pt, weight: "bold")[LANDLORD'S DISCLOSURE]
 #v(0.5em)
 
+// Flood History Status - Tristate: "yes", "no", "unknown"
+// Per scrivener adherence, must offer neutral "unknown" option
+#let flood_history = get("flood_history_status", default: "unknown")
+
 #text(weight: "bold")[1. KNOWLEDGE OF PRIOR FLOODING]
 
-#let has_prior_flooding = get_bool("has_prior_flooding")
+#v(0.5em)
 
-#if has_prior_flooding [
+#if flood_history == "yes" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord HAS knowledge of prior flooding at this property.
-
-  #v(0.5em)
-
-  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord has NO knowledge of prior flooding at this property.
-
-  #v(0.5em)
-
-  Description of flooding: #get("flooding_description", default: "[Describe flooding events]")
 ] else [
   #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord HAS knowledge of prior flooding at this property.
+]
 
-  #v(0.5em)
+#v(0.3em)
 
+#if flood_history == "no" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord has NO knowledge of prior flooding at this property.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord has NO knowledge of prior flooding at this property.
+]
+
+#v(0.3em)
+
+#if flood_history == "unknown" [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord does not know / Property recently acquired.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord does not know / Property recently acquired.
+]
+
+#if flood_history == "yes" [
+  #v(0.5em)
+  Description of flooding: #get("flooding_description", default: "[Describe flooding events]")
 ]
 
 #v(1em)
+
+// Flood Claims Status - Tristate: "yes", "no", "unknown"
+#let flood_claims = get("flood_claims_status", default: "unknown")
 
 #text(weight: "bold")[2. FLOOD INSURANCE CLAIMS]
 
-#let has_flood_claims = get_bool("has_flood_claims")
+#v(0.5em)
 
-#if has_flood_claims [
+#if flood_claims == "yes" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Flood insurance claims HAVE been filed for this property.
-
-  #v(0.5em)
-
-  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No flood insurance claims have been filed for this property.
-
-  #v(0.5em)
-
-  Details: #get("flood_claims_details", default: "[Describe claims]")
 ] else [
   #box(width: 12pt, height: 12pt, stroke: 1pt)[] Flood insurance claims HAVE been filed for this property.
+]
 
-  #v(0.5em)
+#v(0.3em)
 
+#if flood_claims == "no" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] No flood insurance claims have been filed for this property.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No flood insurance claims have been filed for this property.
+]
+
+#v(0.3em)
+
+#if flood_claims == "unknown" [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord does not know / Property recently acquired.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord does not know / Property recently acquired.
+]
+
+#if flood_claims == "yes" [
+  #v(0.5em)
+  Details: #get("flood_claims_details", default: "[Describe claims]")
 ]
 
 #v(1em)
 
+// Flood FEMA Status - Tristate: "yes", "no", "unknown"
+#let flood_fema = get("flood_fema_status", default: "unknown")
+
 #text(weight: "bold")[3. FEDERAL FLOOD ASSISTANCE (FEMA)]
 
-#let has_fema_assistance = get_bool("has_fema_assistance")
+#v(0.5em)
 
-#if has_fema_assistance [
+#if flood_fema == "yes" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Federal flood assistance (FEMA) HAS been received for this property.
-
-  #v(0.5em)
-
-  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No federal flood assistance has been received for this property.
-
-  #v(0.5em)
-
-  Details: #get("fema_details", default: "[Describe assistance received]")
 ] else [
   #box(width: 12pt, height: 12pt, stroke: 1pt)[] Federal flood assistance (FEMA) HAS been received for this property.
+]
 
-  #v(0.5em)
+#v(0.3em)
 
+#if flood_fema == "no" [
   #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] No federal flood assistance has been received for this property.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] No federal flood assistance has been received for this property.
+]
+
+#v(0.3em)
+
+#if flood_fema == "unknown" [
+  #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord does not know / Property recently acquired.
+] else [
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Landlord does not know / Property recently acquired.
+]
+
+#if flood_fema == "yes" [
+  #v(0.5em)
+  Details: #get("fema_details", default: "[Describe assistance received]")
 ]
 
 #v(1em)

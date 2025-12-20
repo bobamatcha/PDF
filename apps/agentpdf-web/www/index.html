@@ -6,7 +6,8 @@
     <meta name="description" content="agentPDF - Multi-State Lease Compliance Platform">
     <title>agentPDF.org - Lease Compliance</title>
     <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
-    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" />
+    <!-- Note: wasm-opt disabled due to bulk memory compatibility issues -->
+    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-no-wasm-opt="true" />
     <!-- Trunk: Copy static JS files -->
     <link data-trunk rel="copy-dir" href="js" />
     <!-- Trunk: Copy styles -->
