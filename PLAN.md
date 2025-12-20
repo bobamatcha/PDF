@@ -33,33 +33,53 @@
 | **Tampa Demo Script** | Marketing | SHORT-TERM | ✅ COMPLETE |
 | **30-Day Termination Notice** | § 83.57 | SHORT-TERM | ⚠️ Template needs update |
 
-### § 83.512 Flood Disclosure (MEDIUM-TERM PRIORITY)
+### § 83.512 Flood Disclosure (MEDIUM-TERM PRIORITY) - ✅ COMPLETE
 
 **Risk**: Landlords who fail to provide this disclosure can face:
 - Tenant can terminate lease immediately
 - Tenant can demand full rent refund
 - Creates "voidability risk" for every lease that lacks this addendum
 
-**Implementation**: Interview-based wizard that generates compliant form:
+**Implementation**: Neutral tristate wizard that generates compliant form:
 
 ```
-Step 1: "Has this property experienced flooding during your ownership?"
-Step 2: "Have you filed any flood-related insurance claims?"
-Step 3: "Has this property received FEMA or federal flood assistance?"
-         ↓
-[Generate § 83.512 Compliant Disclosure Form]
+Step 1: "Property flooding history"          → [Yes] [No] [I don't know]
+Step 2: "Flood insurance claims"             → [Yes] [No] [I don't know]
+Step 3: "Federal flood assistance (FEMA)"    → [Yes] [No] [I don't know]
+                                               ↓
+                    [Generate § 83.512 Compliant Disclosure Form]
 ```
 
-### HB 615 Email Consent (SHORT-TERM PRIORITY)
+**Scrivener Adherence**: Per strict neutrality requirements, the wizard:
+- Offers 3 options including "I don't know / Property recently acquired"
+- Defaults to "I don't know" (doesn't lead user either way)
+- Uses neutral phrasing without implying a "correct" answer
+- Complies with form generation best practices for legal documents
+
+### HB 615 Email Consent (SHORT-TERM PRIORITY) - ✅ COMPLETE
 
 **Value Prop**: "Stop paying for Certified Mail. Get the free form to make Email Legal in Florida."
 
-**Implementation**: Checkbox during signature ceremony + addendum attachment:
+**Implementation**: The TENANT signs consent during signature ceremony (not pre-filled by landlord):
 
 ```
-☑ I agree to receive all legally required notices via email at: [tenant@email.com]
-  This consent is provided pursuant to Florida Statute § 83.56 as amended by HB 615.
+Template generates:
+┌────────────────────────────────────────────────────────────────┐
+│  TENANT'S ELECTION (HB 615)                                    │
+│  (Tenant: Please check ONE option below during signing)        │
+│                                                                │
+│  ☐ I CONSENT to receive notices via email                      │
+│  ☐ I DECLINE and require postal mail                           │
+│                                                                │
+│  Email: [tenant@email.com]                                     │
+│  Signature: ________________________                           │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+**Scrivener Adherence**:
+- Both options unchecked by default (tenant must actively choose)
+- Tenant signs during getsignatures.org ceremony
+- Not pre-filled by landlord in template form
 
 ---
 
@@ -333,6 +353,13 @@ Migrated from Python `http.server` to **Trunk** for local development:
 2. Show "Flood Disclosure" card → "Generate Form"
 3. Fill quick form → Download PDF in seconds
 4. "Works offline - perfect for showings"
+
+**Demo Enhancement Ideas** (for smoother Tampa REIA demos):
+| Feature | Description | Impact | Status |
+|---------|-------------|--------|--------|
+| **Address Autofill** | Type Tampa address → auto-fill property info (year built, flood zone, etc.) | Makes demo faster, "wow" factor | 🔮 Future |
+| **QR Code Export** | Generate QR code linking to pre-filled form | Easy sharing at events | 🔮 Future |
+| **Kiosk Mode** | Full-screen demo mode without URL bar | Professional presentation | 🔮 Future |
 
 ---
 
