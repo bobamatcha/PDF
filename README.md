@@ -76,6 +76,17 @@ apps/                       # Deployable applications
 - **Tools**: `render_document`, `validate_syntax`, `list_fonts`, `list_templates`
 - **Resources**: Template discovery via `typst://templates/*` URIs
 
+### REST API (Web Clients)
+- **GET /api/templates**: List available document templates with metadata
+- **POST /api/render**: Render templates to PDF/SVG/PNG with custom inputs
+- **CORS Enabled**: Cross-origin requests supported for web clients
+- **Base64 Output**: PDF data returned as base64 for browser consumption
+
+### Cross-Site Integration
+- **agentPDF → DocSign Handoff**: Transfer documents via sessionStorage
+- **Template Selector UI**: Modal interface for template selection and form filling
+- **Automatic Document Loading**: DocSign detects incoming documents from agentPDF
+
 ## Development
 
 ### Build WASM Packages
@@ -100,6 +111,19 @@ python3 -m http.server 8080
 # getsignatures.org (port 8081)
 cd apps/docsign-web/www
 python3 -m http.server 8081
+```
+
+### Run MCP Server (HTTP Mode)
+
+```bash
+# Start MCP server with HTTP transport for template API
+cargo run -p mcp-server --features http -- --transport http --http-addr 0.0.0.0:3000
+
+# Test the API
+curl http://localhost:3000/api/templates
+curl -X POST http://localhost:3000/api/render \
+  -H "Content-Type: application/json" \
+  -d '{"template":"letter","is_template":true,"inputs":{"sender_name":"John","recipient_name":"Jane","body":"Hello!"}}'
 ```
 
 ### Run Tests
@@ -282,6 +306,75 @@ The GitHub Actions workflow runs on every push and PR:
 
 See `.github/workflows/ci.yml` for details.
 
+## Deployment
+
+### Prerequisites
+
+1. **Cloudflare Account** with Pages and Workers enabled
+2. **GitHub Secrets** configured:
+   - `CF_API_TOKEN` - Cloudflare API token with Pages/Workers permissions
+   - `CF_ACCOUNT_ID` - Your Cloudflare account ID
+3. **Cloudflare Pages Projects** created:
+   - `agentpdf-org` for agentPDF.org
+   - `getsignatures-org` for getsignatures.org
+
+### Automated Deployment (GitHub Actions)
+
+Push to `main` triggers deployment of both sites:
+
+```bash
+git push origin main
+```
+
+Or manually deploy a specific site via GitHub Actions:
+1. Go to Actions → Deploy
+2. Click "Run workflow"
+3. Select site: `agentpdf`, `docsign`, or `both`
+
+### Manual Deployment
+
+```bash
+# Deploy agentPDF.org
+./scripts/deploy-agentpdf.sh
+
+# Deploy getsignatures.org (static + worker)
+./scripts/deploy-docsign.sh
+```
+
+### Worker Configuration
+
+After deploying the docsign worker, set secrets:
+
+```bash
+cd apps/docsign-web/worker
+
+# Required: Resend API key for email sending
+wrangler secret put RESEND_API_KEY
+
+# Optional: API key for endpoint protection
+# Leave unset for open access (rate limiting still applies)
+wrangler secret put DOCSIGN_API_KEY
+
+# Create KV namespaces (first time only)
+wrangler kv:namespace create "SESSIONS"
+wrangler kv:namespace create "RATE_LIMITS"
+# Then update wrangler.toml with the returned IDs
+```
+
+### Magic Link / Email Flow
+
+The signing flow uses end-to-end encryption:
+
+1. **Sender** encrypts PDF with AES-256-GCM key
+2. **Worker** stores encrypted document in KV (7-day TTL)
+3. **Magic link** format: `#sign={sessionId}:{recipientId}:{keyBase64}`
+4. **Signer** receives email with link, decrypts locally
+5. **Signature** captured and re-encrypted for storage
+
+Rate limits (free tier):
+- 100 emails/day
+- 3,000 emails/month
+
 ## Current Status
 
 See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
@@ -293,39 +386,43 @@ See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
 | **Phase 0** | ✅ Complete | ASAP Deployment - all crates compile, tests pass |
 | **Phase 1** | ✅ Complete | Shared Foundation - shared-types, shared-pdf, shared-crypto |
 | **Phase 2** | ✅ Complete | Unified Compliance Engine - 10 Florida rules |
-| **Phase 3** | 🔄 In Progress | Full Integration - templates, cross-site handoff |
+| **Phase 3** | ✅ Complete | Full Integration - templates, REST API, cross-site handoff |
 
 ### Quality Status
 
 | Check | Status |
 |-------|--------|
-| **Tests** | ✅ 307 passing |
-| **Clippy** | ✅ Clean (no warnings) |
+| **Tests** | ✅ 365 passing (including property tests) |
+| **Clippy** | ✅ Clean (`-D warnings`) |
 | **Format** | ✅ Formatted |
-| **WASM** | ✅ Both apps compile |
-| **Demos** | ✅ Both verified |
+| **WASM** | ✅ Both apps compile (wasm-opt disabled) |
+| **Worker** | ✅ docsign-worker compiles (worker 0.7) |
+| **Demos** | ✅ Both verified with Puppeteer |
 
-### Test Results: 307 Tests Passing
+### Test Results: 365 Tests Passing
 
 | Crate | Tests | Description |
 |-------|-------|-------------|
-| shared-types | 82 | Document, Violation, ComplianceReport types |
-| shared-pdf | 30 | PDF parsing, coordinate transforms, PAdES signer |
+| agentpdf-wasm | 82 | WASM bindings + compliance integration |
+| docsign-wasm | 63 | WASM bindings + signing workflow |
+| typst-engine | 42 | Document rendering, 3 templates, verifier |
 | shared-crypto | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
-| compliance-engine | 31 | Florida Chapter 83 rules |
-| typst-engine | 107 | Document rendering, templates, verifier |
-| mcp-server | 23 | MCP protocol, HTTP transport |
+| compliance-engine | 31 | Florida Chapter 83 rules (10 rules) |
+| shared-pdf | 30 | PDF parsing, coordinate transforms, signer |
+| mcp-server | 29 | MCP protocol, HTTP transport, REST API property tests |
+| shared-types | 22 | Document, Violation, ComplianceReport types |
+| docsign-worker | 31 | Cloudflare Worker + session/magic link property tests |
 | docsign-core | 2 | PAdES signing, audit chain |
-| **Total** | **307** | All tests passing |
+| **Total** | **365** | All tests passing |
 
 ### All Components Compiling
 
 - **Shared Crates**: shared-types, shared-pdf, shared-crypto, compliance-engine, docsign-core, typst-engine
-- **WASM Apps**: agentpdf-wasm, docsign-wasm (both targets: wasm32-unknown-unknown)
+- **WASM Apps**: agentpdf-wasm, docsign-wasm (wasm-opt disabled for bulk memory compatibility)
 - **MCP Server**: stdio + HTTP transport (with `http` feature flag)
+- **Cloudflare Worker**: docsign-worker (upgraded to worker crate 0.7)
 
 ### Deferred
 
-- corpus-core (fastembed/ort_sys compatibility)
-- corpus-api (depends on corpus-core)
-- docsign-web/worker (worker-sys needs update)
+- **corpus-core**: Blocked due to version conflicts between candle-core 0.8.x, rand 0.9.x, and half 2.7.x. Options: wait for candle 0.9 stable, rewrite with fastembed, or use remote embedding API.
+- **corpus-api**: Blocked, depends on corpus-core

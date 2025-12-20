@@ -1,0 +1,52 @@
+name = "docsign-worker"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+# Account ID - set via environment or wrangler login
+# account_id = "YOUR_ACCOUNT_ID"
+
+# Routes for getsignatures.org
+# Uncomment and configure for production:
+# routes = [
+#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
+# ]
+
+# For development, use workers.dev subdomain
+workers_dev = true
+
+# Build configuration for Rust WASM worker
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+# KV Namespace bindings
+# Create these in Cloudflare dashboard first, then add IDs:
+# wrangler kv:namespace create "SESSIONS"
+# wrangler kv:namespace create "RATE_LIMITS"
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = ""  # Add after creating: wrangler kv:namespace create "SESSIONS"
+
+[[kv_namespaces]]
+binding = "RATE_LIMITS"
+id = ""  # Add after creating: wrangler kv:namespace create "RATE_LIMITS"
+
+# Environment variables (non-secret)
+[vars]
+DAILY_LIMIT = "100"
+MONTHLY_LIMIT = "3000"
+
+# Secrets (set via wrangler secret put):
+# wrangler secret put RESEND_API_KEY
+# wrangler secret put DOCSIGN_API_KEY
+
+# Development environment
+[env.dev]
+workers_dev = true
+vars = { DAILY_LIMIT = "10", MONTHLY_LIMIT = "100" }
+
+# Production environment
+[env.production]
+workers_dev = false
+# routes = [
+#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
+# ]

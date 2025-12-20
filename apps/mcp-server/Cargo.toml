@@ -38,3 +38,7 @@ futures = { version = "0.3", optional = true }
 base64 = "0.21"
 regex = { workspace = true }
 async-trait = "0.1"
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio-test = "0.4"

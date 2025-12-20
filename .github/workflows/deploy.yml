@@ -1,0 +1,123 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Site to deploy'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - agentpdf
+          - docsign
+          - both
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Run tests before deployment
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --all-features --workspace
+
+  # Build and deploy agentPDF.org
+  deploy-agentpdf:
+    needs: test
+    if: github.event.inputs.site != 'docsign'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          cd apps/agentpdf-web/wasm
+          wasm-pack build --target web --release --out-dir ../www/pkg
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          projectName: agentpdf-org
+          directory: apps/agentpdf-web/www
+          wranglerVersion: '3'
+
+  # Build and deploy getsignatures.org
+  deploy-docsign:
+    needs: test
+    if: github.event.inputs.site != 'agentpdf'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM
+        run: |
+          cd apps/docsign-web/wasm
+          wasm-pack build --target web --release --out-dir ../www/pkg
+
+      - name: Deploy static site to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          projectName: getsignatures-org
+          directory: apps/docsign-web/www
+          wranglerVersion: '3'
+
+  # Deploy Cloudflare Worker for getsignatures.org API
+  deploy-worker:
+    needs: deploy-docsign
+    if: github.event.inputs.site != 'agentpdf'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install worker-build
+        run: cargo install worker-build
+
+      - name: Build Worker
+        run: |
+          cd apps/docsign-web/worker
+          worker-build --release
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          workingDirectory: apps/docsign-web/worker
+          command: deploy --env production

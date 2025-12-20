@@ -7,15 +7,15 @@ members = [
     "crates/shared-pdf",
     "crates/shared-crypto",
     "crates/compliance-engine",
-    # "crates/corpus-core",  # TODO: Fix fastembed/ort_sys size_t issue
+    # "crates/corpus-core",      # Blocked: candle/rand/half version conflicts
     "crates/docsign-core",
     "crates/typst-engine",
 
     # Apps
     "apps/agentpdf-web/wasm",
     "apps/docsign-web/wasm",
-    # "apps/docsign-web/worker", # TODO: Fix worker-sys
-    # "apps/corpus-api",         # TODO: Depends on corpus-core
+    "apps/docsign-web/worker",
+    # "apps/corpus-api",         # Blocked: depends on corpus-core
     "apps/mcp-server",
 ]
 
@@ -100,8 +100,11 @@ wasm-bindgen-futures = "0.4"
 # Search
 tantivy = "0.22"
 
-# Embeddings (for corpus)
-fastembed = "4"
+# Embeddings (for corpus - using Candle for local inference)
+candle-core = "0.8"
+candle-nn = "0.8"
+tokenizers = "0.20"
+hf-hub = "0.3"
 
 # MCP protocol
 rmcp = { version = "0.1", features = ["server"] }

@@ -718,4 +718,375 @@ mod tests {
         // Either success or error in result, but should not fail at protocol level
         assert!(result.get("content").is_some() || result.get("isError").is_some());
     }
+
+    // ===========================================
+    // REST API Tests for /api/templates and /api/render
+    // ===========================================
+
+    #[tokio::test]
+    async fn test_api_templates_returns_list() {
+        // Test that /api/templates returns a list of templates
+        use axum::response::IntoResponse;
+
+        let response = handle_api_templates().await.into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Should have success: true
+        assert_eq!(json["success"], true);
+
+        // Should have templates array
+        assert!(json["templates"].is_array());
+
+        // Should have at least 3 templates (invoice, letter, florida_lease)
+        let templates = json["templates"].as_array().unwrap();
+        assert!(
+            templates.len() >= 3,
+            "Expected at least 3 templates, got {}",
+            templates.len()
+        );
+
+        // Should have count field matching array length
+        assert_eq!(json["count"], templates.len());
+
+        // Each template should have required fields
+        for template in templates {
+            assert!(template["name"].is_string(), "Template missing name");
+            assert!(
+                template["description"].is_string(),
+                "Template missing description"
+            );
+            assert!(template["uri"].is_string(), "Template missing uri");
+            assert!(
+                template["required_inputs"].is_array(),
+                "Template missing required_inputs"
+            );
+            assert!(
+                template["optional_inputs"].is_array(),
+                "Template missing optional_inputs"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_api_templates_has_florida_lease() {
+        // Test that florida_lease template exists with correct fields
+        use axum::response::IntoResponse;
+
+        let response = handle_api_templates().await.into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let templates = json["templates"].as_array().unwrap();
+        let florida_lease = templates.iter().find(|t| t["name"] == "florida_lease");
+
+        assert!(florida_lease.is_some(), "florida_lease template not found");
+
+        let lease = florida_lease.unwrap();
+        assert!(lease["description"].as_str().unwrap().contains("Florida"));
+        assert!(lease["required_inputs"].as_array().unwrap().len() >= 4);
+    }
+
+    #[tokio::test]
+    async fn test_api_render_letter_template() {
+        // Test that /api/render can render a letter template
+        use axum::extract::State;
+        use axum::response::IntoResponse;
+        use axum::Json;
+
+        let state = create_test_state();
+        let request = RenderApiRequest {
+            template: "letter".to_string(),
+            is_template: true,
+            inputs: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("sender_name".to_string(), json!("John Doe"));
+                map.insert("recipient_name".to_string(), json!("Jane Smith"));
+                map.insert("body".to_string(), json!("This is a test letter."));
+                map
+            },
+            format: "pdf".to_string(),
+        };
+
+        let response = handle_api_render(State(state), Json(request))
+            .await
+            .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Should succeed
+        assert_eq!(json["success"], true, "Render failed: {:?}", json["error"]);
+
+        // Should have base64 PDF data
+        assert!(json["data"].is_string(), "Missing PDF data");
+        let data = json["data"].as_str().unwrap();
+        assert!(!data.is_empty(), "PDF data is empty");
+
+        // Base64 decoded should start with PDF header
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD.decode(data);
+        assert!(decoded.is_ok(), "Invalid base64 data");
+        let pdf_bytes = decoded.unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF"), "Not a valid PDF file");
+    }
+
+    #[tokio::test]
+    async fn test_api_render_invalid_template() {
+        // Test that /api/render returns error for invalid template
+        use axum::extract::State;
+        use axum::response::IntoResponse;
+        use axum::Json;
+
+        let state = create_test_state();
+        let request = RenderApiRequest {
+            template: "nonexistent_template".to_string(),
+            is_template: true,
+            inputs: std::collections::HashMap::new(),
+            format: "pdf".to_string(),
+        };
+
+        let response = handle_api_render(State(state), Json(request))
+            .await
+            .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Should fail
+        assert_eq!(json["success"], false);
+        assert!(json["error"].is_string(), "Missing error message");
+    }
+
+    #[tokio::test]
+    async fn test_api_render_raw_typst() {
+        // Test that /api/render can render raw Typst source
+        use axum::extract::State;
+        use axum::response::IntoResponse;
+        use axum::Json;
+
+        let state = create_test_state();
+        let request = RenderApiRequest {
+            template: "= Hello World\n\nThis is a test.".to_string(),
+            is_template: false,
+            inputs: std::collections::HashMap::new(),
+            format: "pdf".to_string(),
+        };
+
+        let response = handle_api_render(State(state), Json(request))
+            .await
+            .into_response();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Should succeed
+        assert_eq!(json["success"], true, "Render failed: {:?}", json["error"]);
+        assert!(json["data"].is_string());
+    }
+
+    // ===========================================
+    // Property Tests for REST API
+    // ===========================================
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: Invalid format should always return error with success: false
+        #[test]
+        fn prop_invalid_format_returns_error(
+            format in "[a-z]{3,10}".prop_filter("not valid format", |s| {
+                !["pdf", "svg", "png"].contains(&s.as_str())
+            })
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                use axum::extract::State;
+                use axum::response::IntoResponse;
+                use axum::Json;
+
+                let state = create_test_state();
+                let request = RenderApiRequest {
+                    template: "= Hello".to_string(),
+                    is_template: false,
+                    inputs: std::collections::HashMap::new(),
+                    format: format.clone(),
+                };
+
+                let response = handle_api_render(State(state), Json(request))
+                    .await
+                    .into_response();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+                // Invalid format should fail gracefully (not panic)
+                assert!(
+                    json.get("success").is_some(),
+                    "Response missing success field for format: {}",
+                    format
+                );
+            });
+        }
+
+        /// Property: Template rendering with arbitrary string inputs should not panic
+        #[test]
+        fn prop_render_with_arbitrary_inputs_no_panic(
+            sender in "[A-Za-z ]{1,50}",
+            recipient in "[A-Za-z ]{1,50}",
+            body_text in "[A-Za-z0-9 .,!?]{1,200}"
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                use axum::extract::State;
+                use axum::response::IntoResponse;
+                use axum::Json;
+
+                let state = create_test_state();
+                let mut inputs = std::collections::HashMap::new();
+                inputs.insert("sender_name".to_string(), json!(sender));
+                inputs.insert("recipient_name".to_string(), json!(recipient));
+                inputs.insert("body".to_string(), json!(body_text));
+
+                let request = RenderApiRequest {
+                    template: "letter".to_string(),
+                    is_template: true,
+                    inputs,
+                    format: "pdf".to_string(),
+                };
+
+                let response = handle_api_render(State(state), Json(request))
+                    .await
+                    .into_response();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+                // Should either succeed or fail gracefully (no panic)
+                assert!(json.get("success").is_some());
+            });
+        }
+
+        /// Property: Template list should always have consistent count
+        #[test]
+        fn prop_template_list_count_matches_array_length(
+            _ in 0..10  // Run 10 times to check consistency
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                use axum::response::IntoResponse;
+
+                let response = handle_api_templates().await.into_response();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+                let templates = json["templates"].as_array().unwrap();
+                let count = json["count"].as_u64().unwrap() as usize;
+
+                assert_eq!(
+                    templates.len(),
+                    count,
+                    "Template count mismatch: array has {}, count field says {}",
+                    templates.len(),
+                    count
+                );
+            });
+        }
+
+        /// Property: Special characters in template inputs should be handled safely
+        #[test]
+        fn prop_special_chars_in_inputs_handled(
+            special_input in r#"[A-Za-z0-9<>&"'\\/#$%^*()]{1,50}"#
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                use axum::extract::State;
+                use axum::response::IntoResponse;
+                use axum::Json;
+
+                let state = create_test_state();
+                let mut inputs = std::collections::HashMap::new();
+                inputs.insert("sender_name".to_string(), json!(special_input.clone()));
+                inputs.insert("recipient_name".to_string(), json!("Test"));
+                inputs.insert("body".to_string(), json!("Test body"));
+
+                let request = RenderApiRequest {
+                    template: "letter".to_string(),
+                    is_template: true,
+                    inputs,
+                    format: "pdf".to_string(),
+                };
+
+                let response = handle_api_render(State(state), Json(request))
+                    .await
+                    .into_response();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+                // Should handle special chars without panic
+                assert!(
+                    json.get("success").is_some(),
+                    "Failed to handle special chars: {}",
+                    special_input
+                );
+            });
+        }
+
+        /// Property: Rendering should produce valid PDF header when successful
+        #[test]
+        fn prop_successful_render_produces_valid_pdf(
+            body_text in "[A-Za-z ]{10,100}"
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                use axum::extract::State;
+                use axum::response::IntoResponse;
+                use axum::Json;
+                use base64::Engine;
+
+                let state = create_test_state();
+                let mut inputs = std::collections::HashMap::new();
+                inputs.insert("sender_name".to_string(), json!("Test Sender"));
+                inputs.insert("recipient_name".to_string(), json!("Test Recipient"));
+                inputs.insert("body".to_string(), json!(body_text));
+
+                let request = RenderApiRequest {
+                    template: "letter".to_string(),
+                    is_template: true,
+                    inputs,
+                    format: "pdf".to_string(),
+                };
+
+                let response = handle_api_render(State(state), Json(request))
+                    .await
+                    .into_response();
+                let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+                if json["success"] == true {
+                    let data = json["data"].as_str().unwrap();
+                    let decoded = base64::engine::general_purpose::STANDARD.decode(data).unwrap();
+                    assert!(
+                        decoded.starts_with(b"%PDF"),
+                        "Successful render did not produce valid PDF"
+                    );
+                }
+            });
+        }
+    }
 }

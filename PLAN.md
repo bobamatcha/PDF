@@ -43,15 +43,16 @@
 | Component | Status | Tests | Notes |
 |-----------|--------|-------|-------|
 | **Workspace Structure** | ✅ Complete | - | Cargo.toml with all crates and shared dependencies |
-| **shared-types** | ✅ Tests Pass | 82 | Document, Violation, ComplianceReport types |
+| **shared-types** | ✅ Tests Pass | 22 | Document, Violation, ComplianceReport types |
 | **shared-pdf** | ✅ Tests Pass | 30 | PDF parsing, coordinate transforms, signer |
 | **shared-crypto** | ✅ Tests Pass | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
 | **compliance-engine** | ✅ Tests Pass | 31 | 10 Florida Chapter 83 rules |
 | **docsign-core** | ✅ Tests Pass | 2 | PAdES signing, audit chain |
-| **typst-engine** | ✅ Tests Pass | 107 | Document rendering, 3 templates, verifier |
-| **mcp-server** | ✅ Compiles | 23 | Claude Desktop MCP with HTTP transport |
-| **agentpdf-wasm** | ✅ Compiles | - | WASM bindings for agentPDF.org |
-| **docsign-wasm** | ✅ Compiles | - | WASM bindings for getsignatures.org |
+| **typst-engine** | ✅ Tests Pass | 42 | Document rendering, 3 templates, verifier |
+| **mcp-server** | ✅ Tests Pass | 29 | Claude Desktop MCP with HTTP transport, REST API, property tests |
+| **agentpdf-wasm** | ✅ Tests Pass | 82 | WASM bindings + compliance integration |
+| **docsign-wasm** | ✅ Tests Pass | 63 | WASM bindings + signing workflow |
+| **docsign-worker** | ✅ Tests Pass | 31 | Cloudflare Worker + session property tests |
 | **CI/CD** | ✅ Set up | - | GitHub Actions for fmt, clippy, tests, WASM |
 | **Pre-commit Hook** | ✅ Installed | - | Runs fmt, clippy, tests before commit |
 | **Demo Verification** | ✅ Complete | - | Both demos verified with Puppeteer |
@@ -89,32 +90,38 @@
 | **Template selector UI** | ✅ Complete | Modal UI for template selection + form filling |
 | **Deep link parsing** | ✅ Complete | Signing links + agentpdf integration |
 
-**Total Tests: 307 passing**
+**Total Tests: 365 passing** (including property tests for REST API and session/magic link)
 
 ### ✅ Quality Checks
 
 | Check | Status |
 |-------|--------|
-| **cargo test --workspace --all-features** | ✅ 307 tests passing |
+| **cargo test --workspace --all-features** | ✅ 365 tests passing |
 | **cargo clippy --workspace --all-features -- -D warnings** | ✅ Clean |
 | **cargo fmt --all -- --check** | ✅ Formatted |
-| **WASM Compilation (agentpdf-wasm)** | ✅ Compiles |
-| **WASM Compilation (docsign-wasm)** | ✅ Compiles |
+| **WASM Compilation (agentpdf-wasm)** | ✅ Compiles (wasm-opt disabled) |
+| **WASM Compilation (docsign-wasm)** | ✅ Compiles (wasm-opt disabled) |
+| **docsign-worker** | ✅ Compiles | Upgraded to worker 0.7 |
 | **Demo Verification (Puppeteer)** | ✅ Both apps working |
 
 ### ⏸️ Blocked/Deferred
 
 | Component | Status | Reason |
 |-----------|--------|--------|
-| **corpus-core** | ⏸️ Excluded | fastembed/ort_sys size_t compatibility issue |
-| **corpus-api** | ⏸️ Depends on corpus-core | Waiting for corpus-core fix |
-| **docsign-web/worker** | ⏸️ Excluded | worker-sys crate needs update |
+| **corpus-core** | ⏸️ Blocked | Version conflicts between candle-core, rand, and half crates |
+| **corpus-api** | ⏸️ Blocked | Depends on corpus-core |
+
+**corpus-core Details:**
+- Code uses `candle-core`, `candle-nn`, `tokenizers`, `hf-hub` for BGE-M3 embeddings
+- Candle 0.8.x has compatibility issues with rand 0.9.x and half 2.7.x
+- Options: (1) Wait for candle 0.9 stable release, (2) Rewrite with fastembed, (3) Use remote embedding API
+- Not critical for MVP - semantic search is an advanced feature
 
 ### 📋 Next Steps (Post Phase 3)
 
-1. **Build WASM packages** - `wasm-pack build` for agentpdf-wasm and docsign-wasm
+1. ✅ **Build WASM packages** - Both built with wasm-opt disabled
 2. **Deploy to production** - Push to agentpdf.org and getsignatures.org
-3. **Fix corpus-core** - Resolve fastembed/ort_sys size_t compatibility issue
+3. **Fix corpus-core** - Add candle-core, candle-nn, tokenizers, hf-hub dependencies
 4. **Add more templates** - Expand Florida legal document library
 
 ### Build Commands
