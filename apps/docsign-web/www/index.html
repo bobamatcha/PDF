@@ -2099,15 +2099,30 @@
                     // Keep loading overlay while loading remote session
                     await checkForSigningLink();
                 } else {
+                    // Check for incoming document from agentPDF
+                    const incomingDoc = checkForAgentPdfDocument();
+                    if (incomingDoc) {
+                        console.log('Loading document from agentPDF:', incomingDoc.filename);
+                        try {
+                            await loadPdfFromBytes(incomingDoc.pdfBytes, incomingDoc.filename, incomingDoc.fields);
+                            showToast('Document loaded from agentPDF', 'success');
+                        } catch (loadErr) {
+                            console.error('Failed to load agentPDF document:', loadErr);
+                            showToast('Failed to load document: ' + loadErr.message);
+                        }
+                    }
+
                     elements.loadingOverlay.classList.add('hidden');
                     updateStepUI();
                     setupFieldPlacement();
 
-                    // Check for saved drafts
-                    try {
-                        await timeout(checkForDrafts(), 3000, 'Draft check');
-                    } catch (draftErr) {
-                        console.warn('Draft check failed (non-fatal):', draftErr.message);
+                    // Check for saved drafts (only if no incoming document)
+                    if (!incomingDoc) {
+                        try {
+                            await timeout(checkForDrafts(), 3000, 'Draft check');
+                        } catch (draftErr) {
+                            console.warn('Draft check failed (non-fatal):', draftErr.message);
+                        }
                     }
                 }
             } catch (err) {
@@ -2271,6 +2286,131 @@
             // Show generate links button on step 4, but not for remote signers
             elements.btnGenerateLinks.classList.toggle('hidden', state.currentStep !== 4 || state.remoteSession.isRemoteSigner);
             elements.btnDownload.classList.add('hidden');
+        }
+
+        // Check for incoming document from agentPDF via sessionStorage
+        function checkForAgentPdfDocument() {
+            const keys = {
+                document: 'agentpdf_document',
+                filename: 'agentpdf_filename',
+                fields: 'agentpdf_fields',
+                source: 'agentpdf_source',
+                timestamp: 'agentpdf_timestamp'
+            };
+
+            const base64 = sessionStorage.getItem(keys.document);
+            if (!base64) {
+                return null;
+            }
+
+            // Check timestamp (expire after 5 minutes)
+            const timestamp = parseInt(sessionStorage.getItem(keys.timestamp) || '0');
+            const age = Date.now() - timestamp;
+            if (age > 5 * 60 * 1000) {
+                console.warn('Incoming document expired, clearing');
+                Object.values(keys).forEach(key => sessionStorage.removeItem(key));
+                return null;
+            }
+
+            try {
+                // Decode base64 to Uint8Array
+                const binary = atob(base64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }
+
+                const filename = sessionStorage.getItem(keys.filename) || 'document.pdf';
+                const fieldsJson = sessionStorage.getItem(keys.fields);
+                const fields = fieldsJson ? JSON.parse(fieldsJson) : [];
+
+                // Clear sessionStorage after reading
+                Object.values(keys).forEach(key => sessionStorage.removeItem(key));
+
+                return { pdfBytes, filename, fields };
+            } catch (err) {
+                console.error('Failed to parse incoming document:', err);
+                Object.values(keys).forEach(key => sessionStorage.removeItem(key));
+                return null;
+            }
+        }
+
+        // Load PDF from raw bytes (used for agentPDF handoff)
+        async function loadPdfFromBytes(pdfBytes, filename, preplacedFields = []) {
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+
+                state.pdfBytes = pdfBytes;
+                state.pdfBytesForWorker = pdfBytes.slice();
+                state.fileName = filename;
+
+                // Create DocSign instance
+                state.docSign = new DocSign();
+                const loadResult = state.docSign.load_pdf(state.pdfBytes);
+                if (loadResult && loadResult.error) {
+                    throw new Error(loadResult.error);
+                }
+                state.docSign.log_view();
+
+                // Update certificate indicator
+                updateCertificateIndicator();
+
+                // Load with PDF.js
+                const loadingTask = pdfjsLib.getDocument({ data: state.pdfBytes });
+                state.pdfDoc = await loadingTask.promise;
+                state.totalPages = state.pdfDoc.numPages;
+
+                // Cache page dimensions
+                for (let i = 1; i <= state.totalPages; i++) {
+                    try {
+                        const page = await state.pdfDoc.getPage(i);
+                        const viewport = page.getViewport({ scale: 1.0 });
+                        state.cachedDimensions[i] = { width: viewport.width, height: viewport.height };
+                    } catch (e) {
+                        console.warn(`Failed to cache page ${i} dimensions:`, e);
+                    }
+                }
+
+                // Render first page
+                state.currentPage = 1;
+                await renderPage(state.currentPage);
+
+                // Update UI
+                elements.docName.textContent = filename;
+                elements.uploadScreen.classList.add('hidden');
+                elements.editorScreen.classList.remove('hidden');
+                state.currentStep = 2;
+                updateStepUI();
+
+                // Import pre-placed fields from agentPDF if any
+                if (preplacedFields && preplacedFields.length > 0) {
+                    console.log('Importing', preplacedFields.length, 'fields from agentPDF');
+                    // Convert agentPDF field format to DocSign format
+                    preplacedFields.forEach((field, idx) => {
+                        const docSignField = {
+                            id: 'imported-' + idx,
+                            type: field.type || 'signature',
+                            page: field.page || 1,
+                            x: field.x || 100,
+                            y: field.y || 100,
+                            width: field.width || 200,
+                            height: field.height || 50,
+                            recipientId: null, // Will need to be assigned
+                            required: true,
+                            value: null
+                        };
+                        state.fields.push(docSignField);
+                    });
+                    // Re-render to show imported fields
+                    await renderPage(state.currentPage);
+                }
+
+                elements.loadingOverlay.classList.add('hidden');
+            } catch (err) {
+                console.error('Failed to load PDF from bytes:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                throw err;
+            }
         }
 
         // File Upload

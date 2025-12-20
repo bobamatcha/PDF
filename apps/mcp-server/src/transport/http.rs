@@ -18,8 +18,42 @@ use tokio::sync::broadcast;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::compiler::errors::ServerError;
+use crate::compiler::{compile_document, RenderRequest};
 use crate::mcp::protocol::*;
 use crate::mcp::{prompts, resources, tools, TypstMcpServer};
+use crate::templates;
+
+/// REST API request for template rendering
+#[derive(Debug, serde::Deserialize)]
+pub struct RenderApiRequest {
+    /// Template name (e.g., "florida_lease") or raw Typst source
+    pub template: String,
+    /// Whether `template` is a template name (true) or raw source (false)
+    #[serde(default)]
+    pub is_template: bool,
+    /// Variables for the template
+    #[serde(default)]
+    pub inputs: std::collections::HashMap<String, serde_json::Value>,
+    /// Output format: pdf, svg, png
+    #[serde(default = "default_format")]
+    pub format: String,
+}
+
+fn default_format() -> String {
+    "pdf".to_string()
+}
+
+/// REST API response for template rendering
+#[derive(Debug, serde::Serialize)]
+pub struct RenderApiResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
+}
 
 /// Shared state for the HTTP server
 #[derive(Clone)]
@@ -56,6 +90,9 @@ pub async fn run_http_server(addr: &str, timeout_ms: u64) -> Result<(), ServerEr
         .route("/mcp", post(handle_mcp_request))
         // SSE endpoint for streaming notifications
         .route("/sse", get(handle_sse))
+        // REST API endpoints for web clients
+        .route("/api/templates", get(handle_api_templates))
+        .route("/api/render", post(handle_api_render))
         // Health check
         .route("/health", get(handle_health))
         // Server info
@@ -125,6 +162,85 @@ async fn handle_sse(
     Sse::new(stream)
 }
 
+// ============================================================================
+// REST API Endpoints (for web clients)
+// ============================================================================
+
+/// GET /api/templates - List available templates
+async fn handle_api_templates() -> impl IntoResponse {
+    let templates = templates::list_templates();
+    Json(json!({
+        "success": true,
+        "templates": templates,
+        "count": templates.len()
+    }))
+}
+
+/// POST /api/render - Render a template to PDF/SVG/PNG
+async fn handle_api_render(
+    State(state): State<HttpServerState>,
+    Json(request): Json<RenderApiRequest>,
+) -> impl IntoResponse {
+    // Build the source - either template URI or raw source
+    let source = if request.is_template {
+        format!("typst://templates/{}", request.template)
+    } else {
+        request.template
+    };
+
+    // Build render request
+    let render_request = RenderRequest {
+        source,
+        inputs: request.inputs,
+        assets: std::collections::HashMap::new(),
+        format: match request.format.as_str() {
+            "svg" => crate::compiler::OutputFormat::Svg,
+            "png" => crate::compiler::OutputFormat::Png,
+            _ => crate::compiler::OutputFormat::Pdf,
+        },
+        ppi: Some(144),
+    };
+
+    // Compile document
+    match compile_document(render_request, state.timeout_ms).await {
+        Ok(response) => {
+            if let Some(artifact) = response.artifact {
+                let warnings: Vec<String> = response
+                    .warnings
+                    .iter()
+                    .map(|w| w.message.clone())
+                    .collect();
+
+                Json(RenderApiResponse {
+                    success: true,
+                    data: Some(artifact.data_base64),
+                    error: None,
+                    warnings: if warnings.is_empty() {
+                        None
+                    } else {
+                        Some(warnings)
+                    },
+                })
+            } else {
+                let errors: Vec<String> =
+                    response.errors.iter().map(|e| e.message.clone()).collect();
+                Json(RenderApiResponse {
+                    success: false,
+                    data: None,
+                    error: Some(errors.join("; ")),
+                    warnings: None,
+                })
+            }
+        }
+        Err(e) => Json(RenderApiResponse {
+            success: false,
+            data: None,
+            error: Some(e.to_string()),
+            warnings: None,
+        }),
+    }
+}
+
 /// Health check endpoint
 async fn handle_health() -> impl IntoResponse {
     Json(json!({
@@ -142,6 +258,8 @@ async fn handle_info(State(state): State<HttpServerState>) -> impl IntoResponse 
         "endpoints": {
             "mcp": "/mcp",
             "sse": "/sse",
+            "api_templates": "/api/templates",
+            "api_render": "/api/render",
             "health": "/health"
         }
     }))

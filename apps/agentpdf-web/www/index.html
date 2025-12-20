@@ -203,6 +203,25 @@
             font-size: 0.875rem;
         }
 
+        .upload-divider {
+            display: flex;
+            align-items: center;
+            margin: 1.5rem 0;
+            color: var(--text-tertiary);
+        }
+
+        .upload-divider::before,
+        .upload-divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .upload-divider span {
+            padding: 0 1rem;
+            font-size: 0.875rem;
+        }
+
         /* Editor Screen */
         .editor-screen {
             flex: 1;
@@ -668,6 +687,15 @@
                     <div class="drop-zone-subtext">or click to browse files</div>
                     <input type="file" id="file-input" accept=".pdf" style="display: none;">
                 </div>
+
+                <div class="upload-divider">
+                    <span>or</span>
+                </div>
+
+                <button id="use-template-btn" class="btn btn-secondary" onclick="openTemplateSelector()">
+                    Use a Template
+                </button>
+
                 <p style="margin-top: 1.5rem; color: var(--text-tertiary); font-size: 0.875rem;">
                     Your document stays on your device. We check compliance with Florida Statute Chapter 83.
                 </p>
@@ -763,6 +791,8 @@
     </div>
 
     <!-- JavaScript -->
+    <script src="js/docsign-handoff.js"></script>
+    <script src="js/template-selector.js"></script>
     <script type="module">
         import init, {
             check_compliance_wasm,
@@ -1146,28 +1176,49 @@
         btnSendSign.addEventListener('click', openInDocSign);
         document.getElementById('btn-open-docsign').addEventListener('click', openInDocSign);
 
-        function openInDocSign() {
+        // Open template selector modal
+        async function openTemplateSelector() {
+            TemplateSelector.showModal(async (base64Data, templateName) => {
+                try {
+                    // Convert base64 to Uint8Array
+                    const binary = atob(base64Data);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {
+                        bytes[i] = binary.charCodeAt(i);
+                    }
+
+                    // Create a File-like object
+                    const blob = new Blob([bytes], { type: 'application/pdf' });
+                    const file = new File([blob], `${templateName}.pdf`, { type: 'application/pdf' });
+
+                    // Load the generated PDF
+                    await loadPDF(file);
+                } catch (err) {
+                    console.error('Failed to load generated template:', err);
+                    alert('Failed to load generated template: ' + err.message);
+                }
+            });
+        }
+
+        // Make it globally accessible for onclick
+        window.openTemplateSelector = openTemplateSelector;
+
+        async function openInDocSign() {
             if (!state.pdfBytes) {
                 alert('Please upload a PDF first.');
                 return;
             }
 
-            // Encode PDF as base64 and open DocSign
-            // For local development, we use a relative path
-            // In production, this would be the DocSign URL
-            const docsignPath = '../../docsign/www/index.html';
-
-            // Store in sessionStorage for cross-page transfer
             try {
-                const base64 = btoa(String.fromCharCode.apply(null, state.pdfBytes));
-                sessionStorage.setItem('agentpdf_document', base64);
-                sessionStorage.setItem('agentpdf_filename', docName.textContent);
-                sessionStorage.setItem('agentpdf_fields', JSON.stringify(state.placedFields));
-
-                window.open(docsignPath, '_blank');
+                // Use the DocsignHandoff module for robust transfer
+                await DocsignHandoff.transferDocument(
+                    state.pdfBytes,
+                    docName.textContent,
+                    state.placedFields
+                );
             } catch (err) {
                 console.error('Failed to transfer document:', err);
-                alert('Document too large to transfer directly. Please download and upload to DocSign.');
+                alert('Failed to transfer document: ' + err.message);
             }
         }
 
