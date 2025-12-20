@@ -1,4 +1,4 @@
-use compliance_engine::{ComplianceEngine, Jurisdiction, State};
+use compliance_engine::{ComplianceEngine, DocumentType, Jurisdiction, State};
 use shared_types::LeaseDocument;
 use wasm_bindgen::prelude::*;
 
@@ -98,6 +98,104 @@ pub fn get_supported_states() -> Result<String, JsValue> {
 
     serde_json::to_string(&states)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize states: {}", e)))
+}
+
+// ============================================================================
+// Real Estate Document Compliance (Purchase Contracts, Listings, Escalation)
+// ============================================================================
+
+/// WASM entry point for real estate compliance checking
+///
+/// # Arguments
+/// * `document_json` - JSON string of LeaseDocument (reused for any document type)
+/// * `state_code` - Two-letter state code (e.g., "FL")
+/// * `doc_type` - Document type: "purchase", "listing", "escalation", or "auto"
+/// * `year_built` - Optional year the property was built (for lead paint)
+///
+/// # Returns
+/// JSON string of ComplianceReport
+#[wasm_bindgen]
+pub fn check_realestate_compliance_wasm(
+    document_json: &str,
+    state_code: &str,
+    doc_type: &str,
+    year_built: Option<u32>,
+) -> Result<String, JsValue> {
+    let document: LeaseDocument = serde_json::from_str(document_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse document: {}", e)))?;
+
+    let state = State::parse_code(state_code)
+        .ok_or_else(|| JsValue::from_str(&format!("Unsupported state: {}", state_code)))?;
+
+    let jurisdiction = Jurisdiction::new(state);
+    let engine = ComplianceEngine::new();
+
+    // Parse document type
+    let document_type = match doc_type.to_lowercase().as_str() {
+        "purchase" | "purchase_contract" | "realestate" => DocumentType::RealEstatePurchase,
+        "listing" | "listing_agreement" => DocumentType::ListingAgreement,
+        "escalation" | "escalation_addendum" => DocumentType::EscalationAddendum,
+        "lease" => DocumentType::Lease,
+        _ => {
+            // Auto-detect document type (includes "auto" and any unrecognized type)
+            let full_text = document.text_content.join("\n");
+            engine.detect_document_type(&full_text)
+        }
+    };
+
+    let report = match document_type {
+        DocumentType::Lease => engine.check_compliance(&jurisdiction, &document, year_built),
+        _ => {
+            engine.check_realestate_compliance(&jurisdiction, &document, document_type, year_built)
+        }
+    };
+
+    serde_json::to_string(&report)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize report: {}", e)))
+}
+
+/// Auto-detect document type and check appropriate compliance
+///
+/// This function automatically determines if the document is a lease,
+/// purchase contract, listing agreement, or escalation addendum.
+#[wasm_bindgen]
+pub fn check_compliance_auto_detect_wasm(
+    document_json: &str,
+    state_code: &str,
+    year_built: Option<u32>,
+) -> Result<String, JsValue> {
+    check_realestate_compliance_wasm(document_json, state_code, "auto", year_built)
+}
+
+/// Detect the type of real estate document
+///
+/// Returns one of: "lease", "purchase", "listing", "escalation"
+#[wasm_bindgen]
+pub fn detect_document_type_wasm(text: &str) -> String {
+    let engine = ComplianceEngine::new();
+    let doc_type = engine.detect_document_type(text);
+
+    match doc_type {
+        DocumentType::Lease => "lease".to_string(),
+        DocumentType::RealEstatePurchase => "purchase".to_string(),
+        DocumentType::ListingAgreement => "listing".to_string(),
+        DocumentType::EscalationAddendum => "escalation".to_string(),
+    }
+}
+
+/// Get covered statutes for real estate transactions in a state
+#[wasm_bindgen]
+pub fn get_realestate_statutes(state_code: &str) -> Result<String, JsValue> {
+    let state = State::parse_code(state_code)
+        .ok_or_else(|| JsValue::from_str(&format!("Unsupported state: {}", state_code)))?;
+
+    let statutes = match state {
+        State::FL => compliance_engine::covered_realestate_statutes(),
+        _ => vec![], // Other states not yet implemented for real estate
+    };
+
+    serde_json::to_string(&statutes)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize statutes: {}", e)))
 }
 
 // ============================================================================

@@ -35,8 +35,25 @@ pub mod rules;
 pub mod states;
 
 pub use jurisdiction::{Jurisdiction, Locality, State, Tier};
+pub use states::florida_realestate::{
+    check_florida_realestate_compliance, covered_realestate_statutes, RealEstateDocumentType,
+};
 
 use shared_types::{ComplianceReport, LeaseDocument, Violation};
+
+/// Document type for compliance checking
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DocumentType {
+    /// Residential lease agreement
+    #[default]
+    Lease,
+    /// Real estate purchase contract
+    RealEstatePurchase,
+    /// Escalation addendum
+    EscalationAddendum,
+    /// Listing agreement
+    ListingAgreement,
+}
 
 /// Multi-jurisdiction compliance engine
 ///
@@ -120,6 +137,122 @@ impl ComplianceEngine {
     /// Get covered statutes for a state
     pub fn covered_statutes(&self, state: State) -> Vec<&'static str> {
         states::covered_statutes(state)
+    }
+
+    // ========================================================================
+    // Real Estate Document Compliance
+    // ========================================================================
+
+    /// Check compliance for a real estate document (purchase contract, listing, etc.)
+    ///
+    /// # Arguments
+    /// * `jurisdiction` - The state and optional locality
+    /// * `document` - The document to check
+    /// * `doc_type` - Type of real estate document
+    /// * `year_built` - Optional year the property was built (for lead paint)
+    ///
+    /// # Returns
+    /// ComplianceReport with all violations found
+    pub fn check_realestate_compliance(
+        &self,
+        jurisdiction: &Jurisdiction,
+        document: &LeaseDocument,
+        doc_type: DocumentType,
+        year_built: Option<u32>,
+    ) -> ComplianceReport {
+        let full_text = document.text_content.join("\n");
+        let violations = self.check_realestate_text_with_jurisdiction(
+            jurisdiction,
+            &full_text,
+            doc_type,
+            year_built,
+        );
+
+        ComplianceReport {
+            document_id: document.id.clone(),
+            violations,
+            checked_at: chrono::Utc::now().timestamp() as u64,
+        }
+    }
+
+    /// Check real estate compliance on raw text for a specific jurisdiction
+    pub fn check_realestate_text_with_jurisdiction(
+        &self,
+        jurisdiction: &Jurisdiction,
+        text: &str,
+        doc_type: DocumentType,
+        year_built: Option<u32>,
+    ) -> Vec<Violation> {
+        let mut violations = Vec::new();
+
+        // Layer 1: Federal (lead paint for pre-1978)
+        violations.extend(layers::check_federal_compliance(text, year_built));
+
+        // Layer 2: State-specific real estate rules
+        if jurisdiction.state == State::FL {
+            let re_doc_type = match doc_type {
+                DocumentType::RealEstatePurchase => RealEstateDocumentType::PurchaseContract,
+                DocumentType::EscalationAddendum => RealEstateDocumentType::EscalationAddendum,
+                DocumentType::ListingAgreement => RealEstateDocumentType::ListingAgreement,
+                DocumentType::Lease => RealEstateDocumentType::Unknown,
+            };
+            violations.extend(states::florida_realestate::check_document_type(
+                text,
+                re_doc_type,
+            ));
+        }
+        // Other states can be added here as they get real estate implementations
+
+        violations
+    }
+
+    /// Auto-detect document type and check appropriate compliance rules
+    pub fn check_auto_detect(
+        &self,
+        jurisdiction: &Jurisdiction,
+        document: &LeaseDocument,
+        year_built: Option<u32>,
+    ) -> ComplianceReport {
+        let full_text = document.text_content.join("\n");
+        let doc_type = self.detect_document_type(&full_text);
+
+        match doc_type {
+            DocumentType::Lease => self.check_compliance(jurisdiction, document, year_built),
+            _ => self.check_realestate_compliance(jurisdiction, document, doc_type, year_built),
+        }
+    }
+
+    /// Detect document type from text content
+    pub fn detect_document_type(&self, text: &str) -> DocumentType {
+        let text_lower = text.to_lowercase();
+
+        // Check for escalation addendum first (most specific)
+        if text_lower.contains("escalation")
+            && (text_lower.contains("addendum") || text_lower.contains("clause"))
+            && text_lower.contains("maximum")
+        {
+            return DocumentType::EscalationAddendum;
+        }
+
+        // Check for listing agreement
+        if (text_lower.contains("listing agreement") || text_lower.contains("exclusive listing"))
+            && text_lower.contains("broker")
+            && text_lower.contains("commission")
+        {
+            return DocumentType::ListingAgreement;
+        }
+
+        // Check for purchase contract
+        if (text_lower.contains("purchase") && text_lower.contains("contract"))
+            || (text_lower.contains("sale") && text_lower.contains("agreement"))
+                && (text_lower.contains("buyer") || text_lower.contains("seller"))
+                && text_lower.contains("property")
+        {
+            return DocumentType::RealEstatePurchase;
+        }
+
+        // Default to lease
+        DocumentType::Lease
     }
 }
 
