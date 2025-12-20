@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="agentPDF - Florida Lease Compliance Platform">
-    <title>agentPDF.org - Florida Lease Compliance</title>
+    <meta name="description" content="agentPDF - Multi-State Lease Compliance Platform">
+    <title>agentPDF.org - Lease Compliance</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -660,7 +660,7 @@
     <header class="header">
         <div class="header-brand">
             <h1>agentPDF</h1>
-            <span class="badge">Florida</span>
+            <span id="state-badge-header" class="badge">FL</span>
         </div>
         <span id="doc-name" class="header-doc-name"></span>
         <div class="header-actions">
@@ -681,9 +681,12 @@
         <!-- Upload Screen -->
         <div id="upload-screen" class="upload-screen">
             <div class="upload-area">
+                <!-- State Selector for Upload Screen -->
+                <div id="upload-state-selector"></div>
+
                 <div id="drop-zone" class="drop-zone">
                     <div class="drop-zone-icon">📄</div>
-                    <div class="drop-zone-text">Drag and drop your Florida lease PDF here</div>
+                    <div class="drop-zone-text">Drag and drop your lease PDF here</div>
                     <div class="drop-zone-subtext">or click to browse files</div>
                     <input type="file" id="file-input" accept=".pdf" style="display: none;">
                 </div>
@@ -697,7 +700,7 @@
                 </button>
 
                 <p style="margin-top: 1.5rem; color: var(--text-tertiary); font-size: 0.875rem;">
-                    Your document stays on your device. We check compliance with Florida Statute Chapter 83.
+                    Your document stays on your device. We check compliance with state-specific landlord-tenant laws.
                 </p>
             </div>
         </div>
@@ -735,8 +738,11 @@
                 <div class="sidebar-content">
                     <!-- Compliance Panel -->
                     <div id="panel-compliance" class="sidebar-panel active">
+                        <!-- State Selector in Sidebar -->
+                        <div id="sidebar-state-selector" style="margin-bottom: 1rem;"></div>
+
                         <div class="compliance-header">
-                            <h3 style="font-size: 0.875rem; font-weight: 600;">Chapter 83 Check</h3>
+                            <h3 id="compliance-title" style="font-size: 0.875rem; font-weight: 600;">Compliance Check</h3>
                             <div id="compliance-status" class="compliance-status checking">
                                 <span>⏳</span> Analyzing...
                             </div>
@@ -796,6 +802,8 @@
     <script type="module">
         import init, {
             check_compliance_wasm,
+            check_compliance_for_state_wasm,
+            get_supported_states,
             extract_pdf_text,
             get_pdf_page_count
         } from '/pkg/agentpdf_wasm.js';
@@ -809,7 +817,9 @@
             scale: 1.0,
             selectedFieldType: null,
             placedFields: [],
-            violations: []
+            violations: [],
+            selectedState: 'FL',
+            yearBuilt: null
         };
 
         // DOM Elements
@@ -837,10 +847,45 @@
             try {
                 await init();
                 console.log('WASM initialized');
+
+                // Initialize State Selector on upload screen
+                StateSelector.init('upload-state-selector');
+
+                // Listen for state changes
+                document.addEventListener('statechange', (e) => {
+                    state.selectedState = e.detail.state;
+                    updateStateBadge(e.detail.state);
+                    updateComplianceTitle(e.detail.stateInfo);
+
+                    // Re-run compliance check if we have a document loaded
+                    if (state.pdfBytes) {
+                        runComplianceCheck();
+                    }
+                });
+
+                // Update header badge
+                updateStateBadge(state.selectedState);
+
                 loadingOverlay.classList.add('hidden');
             } catch (err) {
                 console.error('Failed to initialize WASM:', err);
                 loadingOverlay.querySelector('.loading-text').textContent = 'Failed to load. Please refresh.';
+            }
+        }
+
+        // Update header badge with current state
+        function updateStateBadge(stateCode) {
+            const headerBadge = document.getElementById('state-badge-header');
+            if (headerBadge) {
+                headerBadge.textContent = stateCode;
+            }
+        }
+
+        // Update compliance title based on state
+        function updateComplianceTitle(stateInfo) {
+            const title = document.getElementById('compliance-title');
+            if (title && stateInfo) {
+                title.textContent = `${stateInfo.statutes} Check`;
             }
         }
 
@@ -957,16 +1002,27 @@
 
                 // Create document object for compliance check
                 const document = {
-                    text: text,
-                    pages: state.totalPages
+                    id: 'current-doc',
+                    filename: docName.textContent || 'document.pdf',
+                    pages: state.totalPages,
+                    text_content: [text],
+                    created_at: Date.now()
                 };
 
-                // Run compliance check
-                const resultJson = check_compliance_wasm(JSON.stringify(document));
+                // Run compliance check with selected state
+                const resultJson = check_compliance_for_state_wasm(
+                    JSON.stringify(document),
+                    state.selectedState,
+                    state.yearBuilt
+                );
                 const result = JSON.parse(resultJson);
 
                 state.violations = result.violations || [];
                 renderViolations();
+
+                // Update compliance title with current state info
+                const stateInfo = StateSelector.states.find(s => s.code === state.selectedState);
+                updateComplianceTitle(stateInfo);
             } catch (err) {
                 console.error('Compliance check failed:', err);
                 complianceStatus.className = 'compliance-status';

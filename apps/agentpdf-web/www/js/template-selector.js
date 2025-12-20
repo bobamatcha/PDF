@@ -338,9 +338,18 @@ const TemplateSelector = {
             {
                 name: 'Florida Lease',
                 id: 'florida_lease',
+                state: 'FL',
                 description: 'Florida residential lease agreement (F.S. Chapter 83 compliant)',
                 required_fields: ['landlord_name', 'tenant_name', 'property_address', 'monthly_rent', 'lease_start', 'lease_end'],
-                optional_fields: ['landlord_phone', 'landlord_email', 'security_deposit', 'pet_deposit', 'late_fee', 'grace_period_days']
+                optional_fields: ['landlord_phone', 'landlord_email', 'security_deposit', 'pet_deposit', 'late_fee', 'grace_period_days', 'year_built']
+            },
+            {
+                name: 'Texas Lease',
+                id: 'texas_lease',
+                state: 'TX',
+                description: 'Texas residential lease agreement (Tex. Prop. Code Ch. 92 compliant)',
+                required_fields: ['landlord_name', 'tenant_name', 'property_address', 'monthly_rent', 'lease_start', 'lease_end'],
+                optional_fields: ['landlord_phone', 'landlord_email', 'security_deposit', 'late_fee', 'application_fee', 'year_built']
             },
             {
                 name: 'Invoice',
@@ -359,6 +368,182 @@ const TemplateSelector = {
         ];
     }
 };
+
+/**
+ * State Selector for Compliance Checking
+ * Allows users to select which state's laws to use for compliance checking
+ */
+const StateSelector = {
+    // Supported states with implementation status
+    states: [
+        { code: 'FL', name: 'Florida', implemented: true, statutes: 'F.S. Chapter 83' },
+        { code: 'TX', name: 'Texas', implemented: true, statutes: 'Tex. Prop. Code Ch. 92' },
+        { code: 'CA', name: 'California', implemented: false, statutes: 'CA Civil Code 1940-1954' },
+        { code: 'NY', name: 'New York', implemented: false, statutes: 'NY RPL Article 7' },
+        { code: 'GA', name: 'Georgia', implemented: false, statutes: 'GA Code Title 44 Ch. 7' },
+        { code: 'IL', name: 'Illinois', implemented: false, statutes: 'IL Landlord Tenant Act' }
+    ],
+
+    // Currently selected state
+    currentState: 'FL',
+
+    /**
+     * Get the currently selected state
+     * @returns {string} State code
+     */
+    getState() {
+        return this.currentState;
+    },
+
+    /**
+     * Set the current state
+     * @param {string} stateCode - Two-letter state code
+     */
+    setState(stateCode) {
+        const state = this.states.find(s => s.code === stateCode);
+        if (state) {
+            this.currentState = stateCode;
+            this._updateUI();
+            this._dispatchChange();
+        }
+    },
+
+    /**
+     * Create and inject the state selector UI
+     * @param {string} containerId - ID of the container element
+     */
+    init(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) {
+            console.warn('StateSelector: Container not found:', containerId);
+            return;
+        }
+
+        container.innerHTML = this._createSelectorHTML();
+        this._attachEventListeners(container);
+    },
+
+    /**
+     * Get list of implemented states
+     * @returns {Array} List of implemented state objects
+     */
+    getImplementedStates() {
+        return this.states.filter(s => s.implemented);
+    },
+
+    _createSelectorHTML() {
+        const implementedStates = this.states.filter(s => s.implemented);
+        const comingSoon = this.states.filter(s => !s.implemented);
+
+        return `
+            <div class="state-selector">
+                <label for="state-select">Check compliance for:</label>
+                <select id="state-select" class="state-select">
+                    <optgroup label="Available">
+                        ${implementedStates.map(s => `
+                            <option value="${s.code}" ${s.code === this.currentState ? 'selected' : ''}>
+                                ${s.name} (${s.statutes})
+                            </option>
+                        `).join('')}
+                    </optgroup>
+                    <optgroup label="Coming Soon" disabled>
+                        ${comingSoon.map(s => `
+                            <option value="${s.code}" disabled>
+                                ${s.name} (${s.statutes})
+                            </option>
+                        `).join('')}
+                    </optgroup>
+                </select>
+                <span class="state-badge" id="state-badge">${this.currentState}</span>
+            </div>
+        `;
+    },
+
+    _attachEventListeners(container) {
+        const select = container.querySelector('#state-select');
+        if (select) {
+            select.addEventListener('change', (e) => {
+                this.setState(e.target.value);
+            });
+        }
+    },
+
+    _updateUI() {
+        const badge = document.getElementById('state-badge');
+        if (badge) {
+            badge.textContent = this.currentState;
+        }
+
+        const select = document.getElementById('state-select');
+        if (select) {
+            select.value = this.currentState;
+        }
+    },
+
+    _dispatchChange() {
+        const event = new CustomEvent('statechange', {
+            detail: {
+                state: this.currentState,
+                stateInfo: this.states.find(s => s.code === this.currentState)
+            }
+        });
+        document.dispatchEvent(event);
+    }
+};
+
+// Add CSS styles for state selector
+(function() {
+    const style = document.createElement('style');
+    style.textContent += `
+        .state-selector {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            margin-bottom: 16px;
+        }
+        .state-selector label {
+            font-weight: 500;
+            color: #495057;
+        }
+        .state-select {
+            padding: 6px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        .state-select:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+        .state-badge {
+            background: #007bff;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        /* Dark mode */
+        .dark-mode .state-selector {
+            background: #2d2d2d;
+        }
+        .dark-mode .state-selector label {
+            color: #adb5bd;
+        }
+        .dark-mode .state-select {
+            background: #1e1e1e;
+            border-color: #444;
+            color: #fff;
+        }
+    `;
+    document.head.appendChild(style);
+})();
 
 // Add CSS styles for the modal
 (function() {
