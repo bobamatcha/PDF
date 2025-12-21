@@ -668,3 +668,103 @@ async fn test_agentpdf_template_generation_no_stack_overflow() {
         generate_result
     );
 }
+
+// ============================================================================
+// Configuration Parity Tests (no browser needed)
+// ============================================================================
+// These tests ensure both apps have consistent configurations to prevent
+// regressions like the wasm-opt bulk-memory fix being applied to one app
+// but not the other.
+
+/// Test that both apps have the same wasm-opt configuration in their HTML
+/// This catches the Rust 1.82+ bulk-memory regression where one app might
+/// have the fix but not the other.
+#[test]
+fn test_wasm_opt_config_parity() {
+    let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).parent().unwrap().parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let agentpdf_html = workspace_root.join("apps/agentpdf-web/www/index.html");
+    let docsign_html = workspace_root.join("apps/docsign-web/www/index.html");
+
+    let agentpdf_content = std::fs::read_to_string(&agentpdf_html)
+        .expect(&format!("Should read agentpdf index.html at {:?}", agentpdf_html));
+    let docsign_content = std::fs::read_to_string(&docsign_html)
+        .expect(&format!("Should read docsign index.html at {:?}", docsign_html));
+
+    // Extract wasm-opt params from both files
+    let extract_wasm_opt_params = |content: &str| -> Option<String> {
+        // Look for data-wasm-opt-params="..."
+        let pattern = r#"data-wasm-opt-params="([^"]*)""#;
+        let re = regex::Regex::new(pattern).unwrap();
+        re.captures(content).map(|c| c.get(1).unwrap().as_str().to_string())
+    };
+
+    let agentpdf_params = extract_wasm_opt_params(&agentpdf_content);
+    let docsign_params = extract_wasm_opt_params(&docsign_content);
+
+    // Both should have wasm-opt params configured
+    assert!(
+        agentpdf_params.is_some(),
+        "agentpdf-web should have data-wasm-opt-params configured for Rust 1.82+ compatibility"
+    );
+    assert!(
+        docsign_params.is_some(),
+        "docsign-web should have data-wasm-opt-params configured for Rust 1.82+ compatibility"
+    );
+
+    // Both should have the same params
+    assert_eq!(
+        agentpdf_params, docsign_params,
+        "Both apps should have identical wasm-opt-params. agentpdf: {:?}, docsign: {:?}",
+        agentpdf_params, docsign_params
+    );
+
+    // Verify required flags are present
+    let params = agentpdf_params.unwrap();
+    assert!(
+        params.contains("--enable-bulk-memory"),
+        "wasm-opt-params must include --enable-bulk-memory for Rust 1.82+"
+    );
+    assert!(
+        params.contains("--enable-nontrapping-float-to-int"),
+        "wasm-opt-params should include --enable-nontrapping-float-to-int"
+    );
+
+    eprintln!("✓ Both apps have matching wasm-opt config: {}", params);
+}
+
+/// Test that both apps have the same wasm-opt optimization level
+#[test]
+fn test_wasm_opt_level_parity() {
+    let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).parent().unwrap().parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let agentpdf_html = workspace_root.join("apps/agentpdf-web/www/index.html");
+    let docsign_html = workspace_root.join("apps/docsign-web/www/index.html");
+
+    let agentpdf_content = std::fs::read_to_string(&agentpdf_html)
+        .expect("Should read agentpdf index.html");
+    let docsign_content = std::fs::read_to_string(&docsign_html)
+        .expect("Should read docsign index.html");
+
+    // Extract wasm-opt level from both files
+    let extract_wasm_opt_level = |content: &str| -> Option<String> {
+        let pattern = r#"data-wasm-opt="([^"]*)""#;
+        let re = regex::Regex::new(pattern).unwrap();
+        re.captures(content).map(|c| c.get(1).unwrap().as_str().to_string())
+    };
+
+    let agentpdf_level = extract_wasm_opt_level(&agentpdf_content);
+    let docsign_level = extract_wasm_opt_level(&docsign_content);
+
+    assert_eq!(
+        agentpdf_level, docsign_level,
+        "Both apps should have same wasm-opt level. agentpdf: {:?}, docsign: {:?}",
+        agentpdf_level, docsign_level
+    );
+
+    eprintln!("✓ Both apps have matching wasm-opt level: {:?}", agentpdf_level);
+}

@@ -336,6 +336,7 @@ dependencies = [
  "chrono",
  "futures",
  "proptest",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
