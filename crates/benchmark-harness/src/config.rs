@@ -52,7 +52,7 @@ impl Config {
         let path = path.as_ref();
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
-        Self::from_str(&content)
+        Self::parse(&content)
     }
 
     /// Parse configuration from a TOML string
@@ -80,11 +80,11 @@ impl Config {
     ///     name = "Homepage"
     ///     steps = []
     /// "#;
-    /// let config = Config::from_str(toml)?;
+    /// let config = Config::parse(toml)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_str(s: &str) -> anyhow::Result<Self> {
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
         toml::from_str(s).context("Failed to parse TOML configuration")
     }
 }
@@ -307,7 +307,7 @@ mod tests {
             steps = []
         "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.benchmark.name, "Test Suite");
         assert_eq!(config.benchmark.base_url, "https://example.com");
         assert_eq!(config.benchmark.iterations, 30);
@@ -348,7 +348,7 @@ mod tests {
             ]
         "##;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.benchmark.iterations, 50);
         assert_eq!(config.benchmark.warmup, 5);
         assert_eq!(config.benchmark.parallel_contexts, 8);
@@ -390,7 +390,7 @@ mod tests {
             ]
         "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         match &config.scenarios[0].steps[0] {
             BenchmarkStep::Wait {
                 condition: WaitCondition::Timeout { duration },
@@ -415,7 +415,7 @@ mod tests {
             ]
         "##;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         match &config.scenarios[0].steps[0] {
             BenchmarkStep::Upload {
                 selector,
@@ -440,7 +440,7 @@ mod tests {
             steps = []
         "#;
 
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.throttling.network_profile, NetworkProfile::None);
         assert_eq!(config.throttling.cpu_slowdown, 1.0);
         assert_eq!(config.thresholds.lcp_p95, None);

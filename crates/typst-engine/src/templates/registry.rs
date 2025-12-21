@@ -92,6 +92,24 @@ pub fn list_templates() -> Vec<TemplateInfo> {
                 "flood_fema_status".to_string(),    // tristate: yes/no/unknown
                 "flood_status_unknown".to_string(), // marker for "unknown" selection
                 "flooding_description".to_string(),
+                // HOA/Condo Association Addendum (FL_LEASE.md §3.1)
+                "has_hoa".to_string(),           // boolean: enables HOA addendum
+                "hoa_name".to_string(),          // Association name
+                "hoa_management".to_string(),    // Management company name
+                "hoa_contact".to_string(),       // Contact phone/email
+                "hoa_approval_required".to_string(), // boolean: requires tenant approval
+                "hoa_monthly_fee".to_string(),   // Monthly HOA/maintenance fees
+                "hoa_rules_url".to_string(),     // URL to governing documents
+                // CDD Disclosure (§ 190.048)
+                "in_cdd".to_string(),            // boolean: property is in CDD
+                "cdd_name".to_string(),          // CDD name
+                "cdd_contact".to_string(),       // CDD contact info
+                "cdd_assessment".to_string(),    // Annual CDD assessment amount
+                // Liquidated Damages / Early Termination (§ 83.595)
+                "early_termination_fee".to_string(), // boolean: enables addendum
+                "early_termination_amount".to_string(), // fee amount (max 2 months rent)
+                // Mold Prevention Addendum
+                "mold_addendum".to_string(), // boolean: enables mold prevention addendum
             ],
         },
         // Florida Real Estate Purchase Contract
@@ -282,6 +300,300 @@ pub fn list_templates() -> Vec<TemplateInfo> {
                 "agreement_date".to_string(),
             ],
         },
+        // Texas Residential Lease
+        TemplateInfo {
+            name: "texas_lease".to_string(),
+            description: "Texas residential lease with Ch. 92 compliance (§ 92.0081 lockout, § 92.104 deposit return, § 92.3515 screening)".to_string(),
+            uri: "typst://templates/texas_lease".to_string(),
+            required_inputs: vec![
+                "landlord_name".to_string(),
+                "tenant_name".to_string(),
+                "property_address".to_string(),
+                "property_city".to_string(),
+                "property_zip".to_string(),
+                "monthly_rent".to_string(),
+                "security_deposit".to_string(),
+                "lease_start".to_string(),
+                "lease_end".to_string(),
+            ],
+            optional_inputs: vec![
+                // Landlord info
+                "landlord_address".to_string(),
+                "landlord_phone".to_string(),
+                "landlord_email".to_string(),
+                // Tenant info
+                "tenant_phone".to_string(),
+                "tenant_email".to_string(),
+                "additional_tenant_name".to_string(),
+                // Property details
+                "property_county".to_string(),
+                "property_type".to_string(),
+                "bedrooms".to_string(),
+                "bathrooms".to_string(),
+                "year_built".to_string(),
+                // Rent and fees
+                "rent_due_day".to_string(),
+                "payment_method".to_string(),
+                "late_fee_percent".to_string(),
+                "grace_period_days".to_string(),
+                // Security deposit (§ 92.103-109)
+                "deposit_holder".to_string(),
+                "deposit_bank_name".to_string(),
+                // Lockout policy (§ 92.0081)
+                "lockout_policy_acknowledged".to_string(),
+                // Landlord disclosure (§ 92.201)
+                "owner_name".to_string(),
+                "owner_address".to_string(),
+                "manager_name".to_string(),
+                "manager_address".to_string(),
+                "emergency_phone".to_string(),
+                // Repair procedures (§ 92.056)
+                "repair_contact".to_string(),
+                "repair_email".to_string(),
+                "repair_address".to_string(),
+                // Parking (§ 92.0131)
+                "parking_included".to_string(),
+                "parking_spaces".to_string(),
+                "towing_company".to_string(),
+                "towing_phone".to_string(),
+                "towing_address".to_string(),
+                // Lead paint (pre-1978)
+                "lead_paint_known".to_string(),
+                "lead_paint_details".to_string(),
+                "lead_reports_available".to_string(),
+                "lead_inspection_waived".to_string(),
+                // Flood disclosure
+                "flood_history_status".to_string(),
+                "flooding_description".to_string(),
+                "flood_claims_status".to_string(),
+                "flood_claims_details".to_string(),
+                "flood_zone".to_string(),
+                "flood_insurance_required".to_string(),
+                // Utilities
+                "landlord_pays_electric".to_string(),
+                "landlord_pays_gas".to_string(),
+                "landlord_pays_water".to_string(),
+                "landlord_pays_trash".to_string(),
+                "landlord_pays_internet".to_string(),
+                // Pets
+                "pets_allowed".to_string(),
+                "pet_types".to_string(),
+                "pet_deposit".to_string(),
+                "pet_rent".to_string(),
+                // Other
+                "smoking_allowed".to_string(),
+            ],
+        },
+        // Florida Flood Disclosure (Standalone - SB 948 / HB 1015 - § 83.512)
+        TemplateInfo {
+            name: "florida_flood_disclosure".to_string(),
+            description:
+                "Standalone Florida flood disclosure form (§ 83.512) - quick-generate for Oct 2025 compliance"
+                    .to_string(),
+            uri: "typst://templates/florida_flood_disclosure".to_string(),
+            required_inputs: vec![
+                "property_address".to_string(),
+                "landlord_name".to_string(),
+            ],
+            optional_inputs: vec![
+                // Property details
+                "property_city".to_string(),
+                "property_zip".to_string(),
+                // Landlord info
+                "landlord_address".to_string(),
+                // Tenant info
+                "tenant_name".to_string(),
+                "additional_tenant_name".to_string(),
+                // Flood disclosure - tristate fields (yes/no/unknown)
+                "flood_history_status".to_string(),
+                "flooding_description".to_string(),
+                "flood_claims_status".to_string(),
+                "flood_claims_details".to_string(),
+                "flood_fema_status".to_string(),
+                "fema_details".to_string(),
+            ],
+        },
+        // Florida Purchase As-Is Contract - FAR/BAR "As-Is" with sole discretion inspection
+        TemplateInfo {
+            name: "florida_purchase_as_is".to_string(),
+            description:
+                "Florida 'As-Is' Residential Purchase Contract - sole discretion inspection period"
+                    .to_string(),
+            uri: "typst://templates/florida_purchase_as_is".to_string(),
+            required_inputs: vec![
+                "property_address".to_string(),
+                "buyer_name".to_string(),
+                "seller_name".to_string(),
+                "purchase_price".to_string(),
+            ],
+            optional_inputs: vec![
+                // Property details
+                "property_city".to_string(),
+                "property_county".to_string(),
+                "property_zip".to_string(),
+                "parcel_id".to_string(),
+                "legal_description".to_string(),
+                "property_year_built".to_string(),
+                // Parties
+                "buyer_address".to_string(),
+                "buyer_phone".to_string(),
+                "buyer_email".to_string(),
+                "seller_address".to_string(),
+                "seller_phone".to_string(),
+                "seller_email".to_string(),
+                "additional_buyer_name".to_string(),
+                "additional_seller_name".to_string(),
+                // Deposits and escrow
+                "initial_deposit".to_string(),
+                "additional_deposit".to_string(),
+                "escrow_agent".to_string(),
+                "escrow_address".to_string(),
+                "escrow_phone".to_string(),
+                // Financing
+                "financing_type".to_string(),
+                "loan_amount".to_string(),
+                "max_interest_rate".to_string(),
+                "loan_term".to_string(),
+                "financing_application_days".to_string(),
+                "financing_approval_days".to_string(),
+                "has_appraisal_contingency".to_string(),
+                "has_appraisal_gap".to_string(),
+                "appraisal_gap_amount".to_string(),
+                // Inspection period (key As-Is feature)
+                "inspection_period_days".to_string(),
+                "inspection_end_date".to_string(),
+                // Title
+                "title_commitment_days".to_string(),
+                "title_objection_days".to_string(),
+                "title_cure_days".to_string(),
+                "title_company".to_string(),
+                "survey_required".to_string(),
+                "survey_paid_by".to_string(),
+                // Closing
+                "closing_date".to_string(),
+                "closing_location".to_string(),
+                // Disclosures
+                "current_taxes".to_string(),
+                "has_homestead".to_string(),
+                "flood_zone".to_string(),
+                "fema_flood_zone".to_string(),
+                "flood_history".to_string(),
+                "flood_history_details".to_string(),
+                "lead_paint_known".to_string(),
+                "has_hoa".to_string(),
+                "hoa_name".to_string(),
+                "hoa_management".to_string(),
+                "hoa_contact".to_string(),
+                "hoa_monthly_fee".to_string(),
+                "hoa_special_assessment".to_string(),
+                // Additional terms
+                "additional_terms".to_string(),
+                "contract_date".to_string(),
+            ],
+        },
+        // Florida Commercial Lease - Chapter 83 Part I (Non-Residential)
+        TemplateInfo {
+            name: "florida_commercial_lease".to_string(),
+            description:
+                "Florida Commercial Lease - Chapter 83 Part I (no habitability requirements)"
+                    .to_string(),
+            uri: "typst://templates/florida_commercial_lease".to_string(),
+            required_inputs: vec![
+                "property_address".to_string(),
+                "landlord_name".to_string(),
+                "tenant_name".to_string(),
+                "monthly_rent".to_string(),
+            ],
+            optional_inputs: vec![
+                // Property details
+                "property_city".to_string(),
+                "property_zip".to_string(),
+                "suite_number".to_string(),
+                "square_feet".to_string(),
+                // Parties
+                "landlord_address".to_string(),
+                "landlord_phone".to_string(),
+                "landlord_email".to_string(),
+                "tenant_address".to_string(),
+                "tenant_phone".to_string(),
+                "tenant_email".to_string(),
+                "tenant_entity_type".to_string(),
+                "tenant_state".to_string(),
+                // Lease terms
+                "lease_start".to_string(),
+                "lease_end".to_string(),
+                "lease_term_months".to_string(),
+                "permitted_use".to_string(),
+                // Rent
+                "annual_rent".to_string(),
+                "rent_per_sf".to_string(),
+                "rent_payee".to_string(),
+                "rent_address".to_string(),
+                "has_rent_escalation".to_string(),
+                "escalation_type".to_string(),
+                "escalation_percent".to_string(),
+                "late_fee_grace_period".to_string(),
+                "late_fee_percent".to_string(),
+                // Lease type and CAM
+                "lease_type".to_string(),
+                "pro_rata_share".to_string(),
+                "building_total_sf".to_string(),
+                "management_fee_cap".to_string(),
+                "estimated_monthly_cam".to_string(),
+                // Security
+                "security_deposit".to_string(),
+                "deposit_return_days".to_string(),
+                // Utilities
+                "tenant_pays_electric".to_string(),
+                "tenant_pays_gas".to_string(),
+                "tenant_pays_water".to_string(),
+                "tenant_pays_trash".to_string(),
+                "tenant_pays_internet".to_string(),
+                "tenant_pays_janitorial".to_string(),
+                // Maintenance
+                "tenant_pays_roof".to_string(),
+                // Insurance
+                "liability_coverage".to_string(),
+                // Default
+                "rent_default_days".to_string(),
+                "other_default_days".to_string(),
+                // Termination
+                "termination_notice_days".to_string(),
+                "holdover_notice_days".to_string(),
+                "has_early_termination".to_string(),
+                "early_termination_fee".to_string(),
+                "early_termination_notice".to_string(),
+                "early_termination_lockout".to_string(),
+                // Renewal
+                "has_renewal_option".to_string(),
+                "renewal_terms".to_string(),
+                "renewal_period".to_string(),
+                "renewal_notice_days".to_string(),
+                "renewal_rent_terms".to_string(),
+                // Early possession
+                "early_possession".to_string(),
+                "early_possession_date".to_string(),
+                "early_possession_purpose".to_string(),
+                // Assignment
+                "assignment_unrestricted".to_string(),
+                // Signage
+                "signage_allowed".to_string(),
+                "signage_description".to_string(),
+                // Agricultural (§ 83.08)
+                "is_agricultural".to_string(),
+                // Guaranty
+                "requires_guaranty".to_string(),
+                "guarantor_name".to_string(),
+                "guarantor_address".to_string(),
+                // Exclusivity
+                "has_exclusivity".to_string(),
+                "exclusivity_description".to_string(),
+                "exclusivity_threshold".to_string(),
+                "exclusivity_abatement".to_string(),
+                // Additional terms
+                "additional_terms".to_string(),
+            ],
+        },
     ]
 }
 
@@ -436,6 +748,84 @@ mod tests {
     }
 
     // ============================================================
+    // HOA/CONDO ASSOCIATION ADDENDUM TESTS (P0 Gap)
+    // Per FL_LEASE.md §3.1
+    // ============================================================
+
+    #[test]
+    fn test_florida_lease_has_hoa_fields() {
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        // Must have HOA-related optional inputs
+        assert!(
+            florida_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("hoa") || f.contains("association")),
+            "Florida lease should have HOA/Association optional inputs"
+        );
+    }
+
+    #[test]
+    fn test_florida_lease_has_hoa_name_field() {
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        assert!(
+            florida_lease
+                .optional_inputs
+                .contains(&"hoa_name".to_string()),
+            "Florida lease should have hoa_name optional input"
+        );
+    }
+
+    // ============================================================
+    // CDD DISCLOSURE TESTS (§ 190.048) (P0 Gap)
+    // Per FL_LEASE.md: Boldfaced text required, assessment amounts
+    // ============================================================
+
+    #[test]
+    fn test_florida_lease_has_cdd_fields() {
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        // Must have CDD-related optional inputs
+        assert!(
+            florida_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("cdd")),
+            "Florida lease should have CDD optional inputs for § 190.048"
+        );
+    }
+
+    #[test]
+    fn test_florida_lease_has_cdd_assessment_field() {
+        let templates = list_templates();
+        let florida_lease = templates
+            .iter()
+            .find(|t| t.name == "florida_lease")
+            .unwrap();
+
+        assert!(
+            florida_lease
+                .optional_inputs
+                .contains(&"cdd_assessment".to_string()),
+            "Florida lease should have cdd_assessment optional input"
+        );
+    }
+
+    // ============================================================
     // NEW FLORIDA REAL ESTATE TEMPLATES TESTS
     // ============================================================
 
@@ -455,7 +845,9 @@ mod tests {
 
         // Required inputs for purchase contract
         assert!(
-            template.required_inputs.contains(&"seller_name".to_string()),
+            template
+                .required_inputs
+                .contains(&"seller_name".to_string()),
             "Purchase contract should require seller_name"
         );
         assert!(
@@ -463,17 +855,23 @@ mod tests {
             "Purchase contract should require buyer_name"
         );
         assert!(
-            template.required_inputs.contains(&"purchase_price".to_string()),
+            template
+                .required_inputs
+                .contains(&"purchase_price".to_string()),
             "Purchase contract should require purchase_price"
         );
         assert!(
-            template.required_inputs.contains(&"closing_date".to_string()),
+            template
+                .required_inputs
+                .contains(&"closing_date".to_string()),
             "Purchase contract should require closing_date"
         );
 
         // Flood disclosure fields (§ 689.302)
         assert!(
-            template.optional_inputs.contains(&"has_prior_flooding".to_string()),
+            template
+                .optional_inputs
+                .contains(&"has_prior_flooding".to_string()),
             "Purchase contract should have flood disclosure fields for § 689.302"
         );
 
@@ -500,21 +898,29 @@ mod tests {
 
         // Critical escalation fields - these must all be required
         assert!(
-            template.required_inputs.contains(&"base_purchase_price".to_string()),
+            template
+                .required_inputs
+                .contains(&"base_purchase_price".to_string()),
             "Escalation addendum should require base_purchase_price"
         );
         assert!(
-            template.required_inputs.contains(&"escalation_increment".to_string()),
+            template
+                .required_inputs
+                .contains(&"escalation_increment".to_string()),
             "Escalation addendum should require escalation_increment"
         );
         assert!(
-            template.required_inputs.contains(&"maximum_purchase_price".to_string()),
+            template
+                .required_inputs
+                .contains(&"maximum_purchase_price".to_string()),
             "Escalation addendum MUST require maximum_purchase_price (critical for compliance)"
         );
 
         // Appraisal gap fields
         assert!(
-            template.optional_inputs.contains(&"appraisal_gap_coverage".to_string()),
+            template
+                .optional_inputs
+                .contains(&"appraisal_gap_coverage".to_string()),
             "Escalation should have appraisal gap coverage option"
         );
     }
@@ -535,25 +941,33 @@ mod tests {
 
         // § 475.25 requires definite expiration date
         assert!(
-            template.required_inputs.contains(&"listing_expiration_date".to_string()),
+            template
+                .required_inputs
+                .contains(&"listing_expiration_date".to_string()),
             "Listing agreement MUST require expiration date (§ 475.25 compliance)"
         );
 
         // § 475.278 brokerage relationship
         assert!(
-            template.optional_inputs.contains(&"brokerage_relationship".to_string()),
+            template
+                .optional_inputs
+                .contains(&"brokerage_relationship".to_string()),
             "Listing should have brokerage relationship field for § 475.278"
         );
 
         // License requirement
         assert!(
-            template.required_inputs.contains(&"broker_license".to_string()),
+            template
+                .required_inputs
+                .contains(&"broker_license".to_string()),
             "Listing agreement should require broker license"
         );
 
         // Commission structure
         assert!(
-            template.required_inputs.contains(&"commission_rate".to_string()),
+            template
+                .required_inputs
+                .contains(&"commission_rate".to_string()),
             "Listing agreement should require commission rate"
         );
     }
@@ -612,12 +1026,13 @@ mod tests {
     fn test_template_count_includes_new_florida_templates() {
         let templates = list_templates();
 
-        // Should have at least 6 templates now:
+        // Should have at least 10 templates now:
         // invoice, letter, florida_lease, florida_purchase_contract,
-        // florida_escalation_addendum, florida_listing_agreement
+        // florida_escalation_addendum, florida_listing_agreement, texas_lease,
+        // florida_flood_disclosure, florida_purchase_as_is, florida_commercial_lease
         assert!(
-            templates.len() >= 6,
-            "Should have at least 6 templates including new Florida real estate templates. Got: {}",
+            templates.len() >= 10,
+            "Should have at least 10 templates including new real estate templates. Got: {}",
             templates.len()
         );
 
@@ -628,9 +1043,221 @@ mod tests {
             .count();
 
         assert!(
-            florida_count >= 4,
-            "Should have at least 4 Florida templates. Got: {}",
+            florida_count >= 7,
+            "Should have at least 7 Florida templates. Got: {}",
             florida_count
+        );
+    }
+
+    // ============================================================
+    // TEXAS LEASE TEMPLATE TESTS
+    // ============================================================
+
+    #[test]
+    fn test_texas_lease_template_exists() {
+        let templates = list_templates();
+        let texas_lease = templates.iter().find(|t| t.name == "texas_lease");
+
+        assert!(texas_lease.is_some(), "texas_lease template should exist");
+
+        let template = texas_lease.unwrap();
+
+        // Required inputs for Texas lease
+        assert!(
+            template
+                .required_inputs
+                .contains(&"landlord_name".to_string()),
+            "Texas lease should require landlord_name"
+        );
+        assert!(
+            template
+                .required_inputs
+                .contains(&"tenant_name".to_string()),
+            "Texas lease should require tenant_name"
+        );
+        assert!(
+            template
+                .required_inputs
+                .contains(&"property_address".to_string()),
+            "Texas lease should require property_address"
+        );
+        assert!(
+            template
+                .required_inputs
+                .contains(&"monthly_rent".to_string()),
+            "Texas lease should require monthly_rent"
+        );
+        assert!(
+            template
+                .required_inputs
+                .contains(&"security_deposit".to_string()),
+            "Texas lease should require security_deposit"
+        );
+    }
+
+    #[test]
+    fn test_texas_lease_ch92_compliance_fields() {
+        let templates = list_templates();
+        let texas_lease = templates.iter().find(|t| t.name == "texas_lease").unwrap();
+
+        // § 92.0081 lockout policy fields
+        assert!(
+            texas_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("lockout")),
+            "Texas lease should have lockout policy fields for § 92.0081 compliance"
+        );
+
+        // § 92.103-109 security deposit fields
+        assert!(
+            texas_lease
+                .optional_inputs
+                .contains(&"deposit_bank_name".to_string())
+                || texas_lease
+                    .required_inputs
+                    .contains(&"security_deposit".to_string()),
+            "Texas lease should have security deposit fields for § 92.103-109"
+        );
+
+        // § 92.201 landlord disclosure fields
+        assert!(
+            texas_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("owner") || f.contains("agent")),
+            "Texas lease should have landlord disclosure fields for § 92.201"
+        );
+
+        // § 92.0131 parking/towing fields
+        assert!(
+            texas_lease
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("parking")),
+            "Texas lease should have parking fields for § 92.0131 compliance"
+        );
+    }
+
+    #[test]
+    fn test_texas_lease_has_source() {
+        let source = get_template_source("texas_lease");
+        assert!(
+            source.is_ok(),
+            "texas_lease template should have source code available. Error: {:?}",
+            source.err()
+        );
+
+        let source_code = source.unwrap();
+        assert!(
+            !source_code.is_empty(),
+            "texas_lease source should not be empty"
+        );
+
+        // Verify key Texas Property Code references
+        assert!(
+            source_code.contains("92.103") || source_code.contains("Security Deposit"),
+            "Texas lease should reference § 92.103 (security deposit)"
+        );
+        assert!(
+            source_code.contains("92.0081") || source_code.contains("Lockout"),
+            "Texas lease should reference § 92.0081 (lockout policy)"
+        );
+    }
+
+    #[test]
+    fn test_texas_lease_uri_format() {
+        let templates = list_templates();
+        let texas_lease = templates.iter().find(|t| t.name == "texas_lease").unwrap();
+
+        assert!(
+            texas_lease.uri.starts_with("typst://templates/"),
+            "Texas lease should have proper URI format. Got: {}",
+            texas_lease.uri
+        );
+
+        assert_eq!(
+            texas_lease.uri, "typst://templates/texas_lease",
+            "Texas lease URI should match expected format"
+        );
+    }
+
+    // ============================================================
+    // STANDALONE FLOOD DISCLOSURE TEMPLATE TESTS (§ 83.512)
+    // SB 948 / HB 1015 compliance - effective Oct 1, 2025
+    // ============================================================
+
+    #[test]
+    fn test_florida_flood_disclosure_template_exists() {
+        let templates = list_templates();
+        let flood_disclosure = templates
+            .iter()
+            .find(|t| t.name == "florida_flood_disclosure");
+
+        assert!(
+            flood_disclosure.is_some(),
+            "florida_flood_disclosure standalone template should exist"
+        );
+    }
+
+    #[test]
+    fn test_florida_flood_disclosure_required_inputs() {
+        let templates = list_templates();
+        let template = templates
+            .iter()
+            .find(|t| t.name == "florida_flood_disclosure")
+            .expect("florida_flood_disclosure template should exist");
+
+        // Property address is required to identify the property
+        assert!(
+            template
+                .required_inputs
+                .contains(&"property_address".to_string()),
+            "Flood disclosure should require property_address"
+        );
+
+        // Landlord name required for disclosure
+        assert!(
+            template
+                .required_inputs
+                .contains(&"landlord_name".to_string()),
+            "Flood disclosure should require landlord_name"
+        );
+    }
+
+    #[test]
+    fn test_florida_flood_disclosure_has_tristate_fields() {
+        let templates = list_templates();
+        let template = templates
+            .iter()
+            .find(|t| t.name == "florida_flood_disclosure")
+            .expect("florida_flood_disclosure template should exist");
+
+        // Should have tristate flood history field
+        assert!(
+            template
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("flood_history")),
+            "Flood disclosure should have flood_history field"
+        );
+
+        // Should have tristate flood claims field
+        assert!(
+            template
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("flood_claims")),
+            "Flood disclosure should have flood_claims field"
+        );
+
+        // Should have tristate FEMA field
+        assert!(
+            template
+                .optional_inputs
+                .iter()
+                .any(|f| f.contains("flood_fema") || f.contains("fema")),
+            "Flood disclosure should have FEMA assistance field"
         );
     }
 }

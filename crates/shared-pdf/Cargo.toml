@@ -13,7 +13,6 @@ chrono = { workspace = true }
 
 # PDF parsing
 lopdf = { workspace = true }
-pdf-extract = "0.7"
 
 # Crypto
 sha2 = { workspace = true }

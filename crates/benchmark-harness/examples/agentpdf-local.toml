@@ -1,0 +1,33 @@
+# Benchmark config for agentpdf-web (local)
+
+[benchmark]
+name = "AgentPDF Local Performance"
+base_url = "http://127.0.0.1:8080"
+iterations = 10
+warmup = 2
+parallel_contexts = 2
+
+[throttling]
+network_profile = "None"
+cpu_slowdown = 1.0
+
+[thresholds]
+lcp_p95 = 5000.0
+inp_p95 = 200.0
+cls_p95 = 0.1
+
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "homepage" }
+]
+
+[[scenarios]]
+name = "WASM Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#drop-zone" },
+    { type = "measure", label = "wasm-ready" }
+]

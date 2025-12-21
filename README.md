@@ -61,16 +61,18 @@ apps/                       # Deployable applications
 - **State-specific Rules** - Security deposits, notice periods, prohibited provisions, disclosures
 
 ### Document Templates
-- **6 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`, `florida_purchase_contract`, `florida_escalation_addendum`, `florida_listing_agreement`
+- **7 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`, `florida_purchase_contract`, `florida_escalation_addendum`, `florida_listing_agreement`, `texas_lease`
 - **florida_lease.typ**: Comprehensive Florida residential lease (F.S. Chapter 83 compliant)
 - **florida_purchase_contract.typ**: Full residential purchase contract with all mandatory disclosures
 - **florida_escalation_addendum.typ**: Competitive offer escalation with max price cap
 - **florida_listing_agreement.typ**: Exclusive listing with § 475.278 brokerage disclosure
+- **texas_lease.typ**: Texas residential lease with Ch. 92 compliance (lockout, deposit, repair, parking)
 - **Dynamic Field Population**: 60+ customizable fields via JSON inputs
 - **HB 615 Email Consent**: Addendum G - Electronic notice consent per § 83.56
 - **SB 948 Flood Disclosure**: Addendum H - Mandatory flood history disclosure per § 83.512
+- **HB 1417 (2023)**: 30-day month-to-month termination notice (updated from 15 days)
 
-### Florida Real Estate Compliance (NEW)
+### Florida Real Estate Compliance
 - **§ 404.056** - Radon Gas Disclosure
 - **§ 689.261** - Property Tax Disclosure
 - **§ 689.302** - Flood Disclosure (SB 948, October 2025)
@@ -80,6 +82,16 @@ apps/                       # Deployable applications
 - **§ 475.25** - Definite Expiration Date (Listing Agreements)
 - **42 U.S.C. § 4852d** - Lead Paint Disclosure (pre-1978)
 - **Johnson v. Davis (1985)** - Material Defect Disclosure
+- **HB 1417 (2023)** - 30-day month-to-month termination (updated from 15 days)
+
+### Texas Property Code Compliance (NEW)
+- **§ 92.0081** - Lockout policy (no self-help lockout without court order)
+- **§ 92.103-109** - Security deposit rules (30-day return, itemization)
+- **§ 92.201** - Landlord disclosure requirements (owner/agent identity)
+- **§ 92.056** - Repair procedures (tenant request, landlord response)
+- **§ 92.0131** - Parking addendum with towing disclosure
+- **§ 92.3515** - Tenant screening fee limits
+- **42 U.S.C. § 4852d** - Lead Paint Disclosure (pre-1978)
 
 ### Digital Signatures
 - **PAdES-B Signatures**: PDF Advanced Electronic Signatures
@@ -324,6 +336,7 @@ The MCP server provides Claude Desktop integration for document generation and c
 | `typst://templates/invoice` | Invoice template |
 | `typst://templates/letter` | Business letter template |
 | `typst://templates/florida_lease` | Florida residential lease |
+| `typst://templates/texas_lease` | Texas residential lease (Ch. 92 compliant) |
 | `typst://fonts` | Available fonts list |
 
 ### Run MCP Server

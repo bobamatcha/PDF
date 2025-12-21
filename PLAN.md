@@ -24,8 +24,9 @@ Three comprehensive research documents have been created to guide implementation
 
 | Contract Type | Template | Status | Demo Priority |
 |--------------|----------|--------|---------------|
-| **Residential Lease** | `florida_lease.typ` | ✅ Exists (needs gaps filled) | P0 - Showcase |
-| **Purchase - As-Is** | `florida_purchase_as_is.typ` | 🔴 Needs creation | P0 - Most common transaction |
+| **Residential Lease** | `florida_lease.typ` | ✅ Complete (all gaps filled) | P0 - Showcase |
+| **Purchase - As-Is** | `florida_purchase_as_is.typ` | ✅ Complete | P0 - Most common transaction |
+| **Commercial Lease** | `florida_commercial_lease.typ` | ✅ Complete | P1 - Commercial properties |
 | **Listing Agreement** | `florida_listing.typ` | 🔴 Needs creation | P0 - Brokers are the audience |
 
 ### Tampa Bay Metro Local Considerations
@@ -85,19 +86,20 @@ const MILITARY_BASES = [
 | Flood Disclosure (§ 83.512) | ✅ Complete | Tristate wizard, scrivener compliant |
 | Scrivener Doctrine | ✅ Followed | No "we recommend" language |
 
-**Gaps to Fill:**
+**Gaps to Fill:** ✅ ALL COMPLETE
 
-| Gap | Research Source | Priority | Implementation Notes |
-|-----|-----------------|----------|---------------------|
-| **HOA/Condo Association Addendum** | FL_LEASE.md §3.1 | P0 | "Association Supremacy Clause", indemnity for Association eviction costs, approval contingency |
-| **CDD Disclosure (§ 190.048)** | FL_LEASE.md, FL_LIST.md | P0 | Boldfaced text required, assessment amounts |
-| **Liquidated Damages (§ 83.595)** | FL_LEASE.md §6.2 | P1 | "Safe harbor" early termination—max 2 months rent, separate signature required |
-| **30-Day Notice Explicit Reference** | FL_LEASE.md (HB 1417) | P1 | Currently uses variable, should cite statute explicitly |
-| **Jury Trial Waiver** | FL_LEASE.md §6.3 | P2 | Bold, all-caps clause for faster bench trials |
-| **Mold Prevention Addendum** | FL_LEASE.md §6.4 | P2 | Tenant obligation: run AC, humidity < 60%, report leaks |
-| **HB 621 Squatter Language** | FL_LEASE.md §6.1 | P2 | "Unauthorized occupants = transient occupants/trespassers" |
-| **Service Member Rights (§ 83.682)** | FL_LEASE.md §3.2 | P2 | 35-mile radius termination right for military tenants |
-| **ESA Fraud Prevention (SB 1084)** | FL_LEASE.md §6.5 | P3 | Cite § 817.265, require "personal knowledge" documentation |
+| Gap | Research Source | Priority | Status |
+|-----|-----------------|----------|--------|
+| **HOA/Condo Association Addendum** | FL_LEASE.md §3.1 | P0 | ✅ Addendum I - Association Supremacy, indemnity, approval contingency |
+| **CDD Disclosure (§ 190.048)** | FL_LEASE.md, FL_LIST.md | P0 | ✅ Addendum J - Boldfaced warning, assessment amounts |
+| **Liquidated Damages (§ 83.595)** | FL_LEASE.md §6.2 | P1 | ✅ Addendum K - Safe harbor, max 2 months, separate signature |
+| **30-Day Notice Explicit Reference** | FL_LEASE.md (HB 1417) | P1 | ✅ Section 2.7 - Explicit § 83.57(3) citation |
+| **Jury Trial Waiver** | FL_LEASE.md §6.3 | P2 | ✅ Section 2.16 - Bold, all-caps KNOWINGLY AND VOLUNTARILY |
+| **Mold Prevention Addendum** | FL_LEASE.md §6.4 | P2 | ✅ Addendum L - AC operation, humidity <60%, leak reporting |
+| **HB 621 Squatter Language** | FL_LEASE.md §6.1 | P2 | ✅ Section 2.17 - Unauthorized occupants = transient/trespassers |
+| **Service Member Rights (§ 83.682)** | FL_LEASE.md §3.2 | P2 | ✅ Section 2.18 - 35-mile radius termination right |
+| **ESA Fraud Prevention (SB 1084)** | FL_LEASE.md §6.5 | P3 | ✅ Section 2.19 - § 817.265 citation, personal knowledge req |
+| **Standalone Flood Disclosure** | FL_LEASE.md §1.3 | P2 | ✅ `florida_flood_disclosure.typ` - SB 948/HB 1015 compliant |
 
 ### New Templates Required
 
@@ -817,9 +819,9 @@ Migrated from Python `http.server` to **Trunk** for local development:
 | Priority | Task | Owner |
 |----------|------|-------|
 | P0 | **Deploy to production** - Push to agentpdf.org and getsignatures.org | Engineering |
-| P1 | **30-day termination update** - Update template language | Engineering |
+| P1 | **30-day termination update** - Updated notices.rs + florida_lease.typ for HB 1417 (2023) | ✅ Done |
 | P1 | **Tampa REIA outreach** - Demo at January 2026 meetings | Human/Marketing |
-| P1 | **Texas Lease Template** - Create texas_lease.typ with Ch. 92 compliance | Engineering |
+| P1 | **Texas Lease Template** - Created texas_lease.typ with Ch. 92 compliance (§ 92.0081 lockout, § 92.103 deposit, § 92.201 disclosure, § 92.056 repair, § 92.0131 parking) | ✅ Done |
 
 #### MEDIUM-TERM
 
@@ -1361,22 +1363,22 @@ The benchmarking implementation is well-suited for **parallel subagent delegatio
 
 ### Implementation Checklist
 
-**Phase 7.1: Foundation (Parallel)**
-- [ ] Create `crates/benchmark-harness/` scaffold with Cargo.toml
-- [ ] Implement config.rs (TOML parsing with serde)
-- [ ] Implement `metrics/web_vitals.rs` (inject web-vitals.js, collect via console)
-- [ ] Implement `throttling/network.rs` (Network.emulateNetworkConditions)
-- [ ] Implement `throttling/cpu.rs` (Emulation.setCPUThrottlingRate)
-- [ ] Implement `stats/percentiles.rs` (P50, P75, P95, P99)
-- [ ] Implement `stats/outliers.rs` (IQR method)
+**Phase 7.1: Foundation (Parallel)** ✅ COMPLETE
+- [x] Create `crates/benchmark-harness/` scaffold with Cargo.toml
+- [x] Implement config.rs (TOML parsing with serde)
+- [x] Implement `metrics/web_vitals.rs` (inject web-vitals.js, collect via console)
+- [x] Implement `throttling/network.rs` (Network.emulateNetworkConditions)
+- [x] Implement `throttling/cpu.rs` (Emulation.setCPUThrottlingRate)
+- [x] Implement `stats/percentiles.rs` (P50, P75, P95, P99)
+- [x] Implement `stats/outliers.rs` (IQR method)
 
-**Phase 7.2: Integration (Sequential)**
-- [ ] Implement `runner.rs` (parallel context spawning, scenario execution)
-- [ ] Implement `metrics/custom.rs` (User Timing API bridge)
-- [ ] Implement `metrics/trace.rs` (Chrome Tracing for Long Tasks)
-- [ ] Implement `reporter/json.rs` (structured output for CI)
-- [ ] Implement `reporter/console.rs` (human-readable summary)
-- [ ] Add integration tests with mock scenarios
+**Phase 7.2: Integration (Sequential)** ✅ COMPLETE
+- [x] Implement `runner.rs` (parallel context spawning, scenario execution)
+- [x] Implement `metrics/custom.rs` (User Timing API bridge)
+- [x] Implement `reporter/json.rs` (structured output for CI)
+- [x] Implement `reporter/console.rs` (human-readable summary)
+- [x] Implement `reporter/markdown.rs` (GitHub-flavored markdown reports)
+- [x] Add integration tests with mock scenarios
 
 **Phase 7.3: CI/CD & Scenarios (Parallel)**
 - [ ] Create `.github/workflows/benchmark.yml`

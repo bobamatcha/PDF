@@ -42,22 +42,17 @@ pub use json::JsonReporter;
 pub use markdown::MarkdownReporter;
 
 /// Output format for benchmark results
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// JSON format for machine parsing
     Json,
     /// Pretty-printed JSON
     JsonPretty,
     /// Console output with colors and formatting
+    #[default]
     Console,
     /// Markdown format for documentation
     Markdown,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Console
-    }
 }
 
 /// Reporter for benchmark results

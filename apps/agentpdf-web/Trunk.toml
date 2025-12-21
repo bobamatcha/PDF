@@ -11,7 +11,7 @@ dist = "www/dist"
 [watch]
 # Watch the wasm source and www directory
 watch = ["wasm/src", "www"]
-ignore = ["www/dist", "www/pkg"]
+ignore = ["www/dist"]
 
 [serve]
 # Development server port

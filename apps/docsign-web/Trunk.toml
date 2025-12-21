@@ -2,15 +2,15 @@
 # Run: trunk serve (dev) or trunk build --release (prod)
 
 [build]
-# Target directory for build output
-target = "www/dist"
-# Path to the WASM crate
+# Path to the input HTML file
+target = "www/index.html"
+# Output directory for build artifacts
 dist = "www/dist"
 
 [watch]
 # Watch the wasm source and www directory
 watch = ["wasm/src", "www"]
-ignore = ["www/dist", "www/pkg"]
+ignore = ["www/dist"]
 
 [serve]
 # Development server port

@@ -30,7 +30,7 @@ impl JsonReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner::{ConfigSummary, MetricSummary, ScenarioResult};
+    use crate::runner::ConfigSummary;
 
     fn create_test_results() -> BenchmarkResults {
         BenchmarkResults {

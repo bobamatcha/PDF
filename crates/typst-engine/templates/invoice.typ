@@ -53,8 +53,21 @@
 #v(1.5em)
 
 // Items Table
-#let items = data.at("items", default: ())
-#let total = items.fold(0, (acc, item) => acc + item.at("qty", default: 1) * item.at("price", default: 0))
+// Handle both string items (from simple form) and array items (structured data)
+#let raw_items = data.at("items", default: ())
+#let items = if type(raw_items) == str {
+  // Simple string input - treat as single line item description
+  ((description: raw_items, qty: 1, price: data.at("amount", default: 0)),)
+} else if type(raw_items) == array {
+  raw_items
+} else {
+  ()
+}
+#let total = if items.len() > 0 {
+  items.fold(0, (acc, item) => acc + item.at("qty", default: 1) * item.at("price", default: 0))
+} else {
+  data.at("amount", default: 0)
+}
 
 #table(
   columns: (auto, 1fr, auto, auto, auto),

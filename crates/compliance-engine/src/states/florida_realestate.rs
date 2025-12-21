@@ -526,7 +526,9 @@ pub fn check_lead_paint_disclosure(text: &str, year_built: Option<u32>) -> Vec<V
         && (text_lower.contains("pre-1978")
             || text_lower.contains("before 1978")
             || text_lower.contains("prior to 1978")
-            || (text_lower.contains("built") && text_lower.contains("before") && text_lower.contains("1978")));
+            || (text_lower.contains("built")
+                && text_lower.contains("before")
+                && text_lower.contains("1978")));
 
     // If post-1978 or unknown (with no pre-1978 mentions), skip
     if !is_pre_1978 && !mentions_pre_1978 {

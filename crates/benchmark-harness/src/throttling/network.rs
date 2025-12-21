@@ -3,6 +3,8 @@
 //! Applies network throttling to simulate different network conditions
 //! using the Network.emulateNetworkConditions CDP command.
 
+#![allow(deprecated)] // EmulateNetworkConditionsParams is deprecated but still functional
+
 use anyhow::Result;
 use chromiumoxide::cdp::browser_protocol::network::{
     ConnectionType, EmulateNetworkConditionsParams,

@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn test_compute_summary_with_outliers() {
         let mut samples = vec![1.0, 2.0, 3.0, 4.0, 5.0, 100.0];
-        let (summary, outliers) = BenchmarkRunner::compute_summary_with_outliers(&mut samples);
+        let (_summary, outliers) = BenchmarkRunner::compute_summary_with_outliers(&mut samples);
 
         assert!(outliers > 0); // 100.0 should be detected as outlier
         assert_eq!(samples.len(), 5); // Outlier removed

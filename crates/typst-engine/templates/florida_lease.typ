@@ -149,12 +149,16 @@
 #v(0.3em)
 #toc_item("A.", "Pet Addendum (if applicable)")
 #toc_item("B.", "Parking Addendum (if applicable)")
-#toc_item("G.", "Electronic Notice Consent (HB 615)")
-#toc_item("H.", "Flood Disclosure (§ 83.512)")
 #toc_item("C.", "Rules and Regulations (if applicable)")
 #toc_item("D.", "Lead-Based Paint Disclosure (pre-1978 properties)")
 #toc_item("E.", "Radon Gas Notification (Required)")
 #toc_item("F.", "Security Deposit Disclosure (Required)")
+#toc_item("G.", "Electronic Notice Consent (HB 615)")
+#toc_item("H.", "Flood Disclosure (§ 83.512)")
+#toc_item("I.", "HOA/Condo Association Addendum (if applicable)")
+#toc_item("J.", "CDD Disclosure (§ 190.048, if applicable)")
+#toc_item("K.", "Liquidated Damages / Early Termination (§ 83.595, optional)")
+#toc_item("L.", "Mold Prevention Addendum (optional)")
 
 #pagebreak()
 
@@ -207,7 +211,9 @@ Bedrooms: #get("bedrooms", default: "N/A") #h(2em) Bathrooms: #get("bathrooms", 
 
 The lease term begins on *#get("lease_start", default: "[Start Date]")* and ends on *#get("lease_end", default: "[End Date]")*.
 
-This is a fixed-term lease. Upon expiration, the lease will convert to a month-to-month tenancy unless either party provides written notice of non-renewal at least #get("notice_days", default: "30") days before the lease end date.
+This is a fixed-term lease. Upon expiration, the lease will convert to a month-to-month tenancy unless either party provides written notice of non-renewal at least *30 days* before the lease end date, as required by Florida Statutes § 83.57 (amended by HB 1417, 2023).
+
+*Month-to-Month Termination:* Either party may terminate a month-to-month tenancy by providing at least *30 days* written notice prior to the next rent due date, per § 83.57.
 
 #v(1em)
 
@@ -523,6 +529,166 @@ This lease shall be governed by the laws of the State of Florida, specifically F
 #v(0.5em)
 
 #get("additional_provisions", default: "None.")
+
+#v(1em)
+
+// 2.16 Jury Trial Waiver
+#text(size: 12pt, weight: "bold")[2.16 JURY TRIAL WAIVER]
+#v(0.5em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 2pt + black,
+  fill: rgb("#fff3cd"),
+  radius: 4pt,
+)[
+  #text(weight: "bold", size: 11pt)[
+    LANDLORD AND TENANT HEREBY KNOWINGLY AND VOLUNTARILY WAIVE THE RIGHT TO A JURY TRIAL FOR ANY ACTION, PROCEEDING, OR COUNTERCLAIM ARISING OUT OF THIS LEASE OR THE RELATIONSHIP BETWEEN THE PARTIES HERETO.
+  ]
+
+  #v(0.5em)
+
+  #text(size: 9pt)[
+    Both parties acknowledge that this waiver is made voluntarily and with full understanding of its implications. This waiver applies to all disputes, including but not limited to: claims for unpaid rent, security deposit disputes, property damage claims, eviction proceedings, and any other matters arising under this lease.
+  ]
+]
+
+#v(1em)
+
+// 2.17 Unauthorized Occupants (HB 621)
+#text(size: 12pt, weight: "bold")[2.17 UNAUTHORIZED OCCUPANTS (HB 621)]
+#v(0.5em)
+
+Only the individuals named in this lease as Tenant(s) are authorized to occupy the premises. No other person may reside at the property without prior written consent from Landlord.
+
+#v(0.5em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 2pt + rgb("#dc2626"),
+  fill: rgb("#fef2f2"),
+  radius: 4pt,
+)[
+  #text(weight: "bold")[NOTICE PURSUANT TO HB 621 (2024)]
+
+  #v(0.3em)
+
+  Any person occupying the premises without Landlord's prior written consent is hereby declared a *transient occupant* and/or *trespasser* under Florida law (HB 621). Such unauthorized occupants are subject to immediate removal by law enforcement without the need for formal eviction proceedings.
+
+  #v(0.3em)
+
+  Tenant agrees to immediately notify Landlord of any unauthorized persons residing at or frequently staying at the premises. Failure to report unauthorized occupants constitutes a material breach of this lease.
+]
+
+#v(1em)
+
+// 2.18 Service Member Rights (§ 83.682)
+#text(size: 12pt, weight: "bold")[2.18 SERVICE MEMBER RIGHTS (§ 83.682)]
+#v(0.5em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 1pt + rgb("#1e40af"),
+  fill: rgb("#eff6ff"),
+  radius: 4pt,
+)[
+  #text(weight: "bold")[DISCLOSURE FOR MILITARY TENANTS]
+
+  #v(0.3em)
+
+  Pursuant to Florida Statutes § 83.682, if Tenant is a service member (as defined in § 250.01) and receives orders requiring a permanent change of station to a location more than *35 miles* from the premises, or orders to deploy with a military unit for a period of at least 90 days, Tenant may terminate this lease upon providing:
+
+  #v(0.3em)
+
+  1. Written notice of termination to Landlord;
+  2. A copy of the official military orders; and
+  3. Payment of rent for 30 days following the next rent due date after notice is delivered.
+
+  #v(0.3em)
+
+  Upon proper termination, Tenant shall not be liable for rent beyond the termination date, and Landlord shall return the security deposit in accordance with § 83.49.
+
+  #v(0.3em)
+
+  #text(size: 9pt, style: "italic")[
+    This disclosure is provided for informational purposes as required by Florida law. Service members should consult the full text of § 83.682 and may also have additional rights under the federal Servicemembers Civil Relief Act (SCRA).
+  ]
+]
+
+#v(1em)
+
+// 2.19 Emotional Support Animal / Assistance Animal Policy (SB 1084)
+#text(size: 12pt, weight: "bold")[2.19 EMOTIONAL SUPPORT ANIMAL (ESA) POLICY (SB 1084)]
+#v(0.5em)
+
+Florida law (SB 1084, codified at Florida Statute § 817.265) provides protections for both housing providers and individuals with disabilities regarding emotional support animals and assistance animals.
+
+#v(0.5em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 2pt + rgb("#7c3aed"),
+  fill: rgb("#f5f3ff"),
+  radius: 4pt,
+)[
+  #text(weight: "bold")[DOCUMENTATION REQUIREMENTS]
+
+  #v(0.3em)
+
+  If Tenant requests a reasonable accommodation for an emotional support animal (ESA) or other assistance animal, Landlord may require documentation from a licensed healthcare provider who has *personal knowledge* of the Tenant's disability-related need for the animal.
+
+  #v(0.3em)
+
+  Acceptable documentation must:
+
+  1. Be from a healthcare provider licensed in Florida (or the state where the provider practices);
+  2. Be from a provider who has an established therapeutic relationship with the Tenant;
+  3. Confirm the provider has *personal knowledge* of the Tenant's disability; and
+  4. Verify the disability-related need for the specific animal.
+
+  #v(0.3em)
+
+  #text(size: 9pt, style: "italic")[
+    Documentation from online-only services that do not establish an ongoing therapeutic relationship may not satisfy these requirements.
+  ]
+]
+
+#v(0.5em)
+
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 2pt + rgb("#dc2626"),
+  fill: rgb("#fef2f2"),
+  radius: 4pt,
+)[
+  #text(weight: "bold")[WARNING: FLORIDA STATUTE § 817.265 - FRAUD PENALTIES]
+
+  #v(0.3em)
+
+  Under Florida Statute § 817.265, it is a *second-degree misdemeanor* to:
+
+  - Knowingly provide false information or documentation for the purpose of obtaining an emotional support animal accommodation;
+  - Falsely represent that an animal is an emotional support animal or assistance animal;
+  - Knowingly provide fraudulent documentation regarding an emotional support animal.
+
+  #v(0.3em)
+
+  Violations may result in:
+  - Criminal penalties including fines and potential jail time
+  - Mandatory community service hours
+  - Liability for damages caused by the animal
+]
+
+#v(0.5em)
+
+#text(size: 10pt)[
+  *Tenant Acknowledgment:* By signing this lease, Tenant acknowledges understanding of Florida's ESA fraud prevention laws and agrees to provide truthful documentation if requesting an ESA accommodation.
+]
 
 #pagebreak()
 
@@ -1405,3 +1571,734 @@ By signing below, both parties certify that this Flood Disclosure has been provi
     Date: #box(width: 100pt, repeat[\_])
   ]
 )
+
+// ============================================================================
+// ADDENDUM I: HOA/CONDO ASSOCIATION ADDENDUM (Optional - Properties in HOA/Condo)
+// Per FL_LEASE.md §3.1: "Association Supremacy Clause", indemnity, approval contingency
+// ============================================================================
+
+#if get_bool("has_hoa") or get_bool("has_association") [
+  #pagebreak()
+
+  #text(size: 14pt, weight: "bold")[ADDENDUM I: HOA/CONDO ASSOCIATION ADDENDUM]
+
+  #v(0.5em)
+
+  This HOA/Condominium Association Addendum is attached to and made part of the Residential Lease Agreement dated #get("lease_start", default: "[Start Date]") for the property located at #get("property_address", default: "[Property Address]").
+
+  #v(1em)
+
+  #text(weight: "bold")[1. ASSOCIATION IDENTIFICATION]
+
+  #v(0.5em)
+
+  The Property is located within the following Homeowners Association or Condominium Association:
+
+  #v(0.3em)
+
+  *Association Name:* #get("hoa_name", default: "[Association Name]")
+
+  *Management Company (if any):* #get("hoa_management", default: "[Management Company]")
+
+  *Contact Information:* #get("hoa_contact", default: "[Contact Phone/Email]")
+
+  #v(1em)
+
+  // ========================================================================
+  // ASSOCIATION SUPREMACY CLAUSE
+  // Per FL_LEASE.md: Lease must explicitly subordinate itself to Association
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 12pt,
+    stroke: 2pt + black,
+    radius: 4pt,
+  )[
+    #text(weight: "bold", size: 11pt)[2. ASSOCIATION SUPREMACY CLAUSE]
+
+    #v(0.5em)
+
+    *SUBORDINATION TO GOVERNING DOCUMENTS:* This Lease Agreement is subordinate to the Declaration of Covenants, Conditions, and Restrictions (CC&Rs), Bylaws, Rules and Regulations, and all other governing documents of the Association (collectively, the "Governing Documents").
+
+    #v(0.5em)
+
+    *TENANT COMPLIANCE REQUIRED:* Tenant agrees to abide by all Governing Documents of the Association. *Any violation of Association rules by Tenant constitutes a material breach of this Lease* and grounds for termination.
+
+    #v(0.5em)
+
+    *ASSOCIATION AS THIRD-PARTY BENEFICIARY:* The Association is a third-party beneficiary of this Lease with respect to Tenant's compliance with the Governing Documents.
+  ]
+
+  #v(1em)
+
+  // ========================================================================
+  // EVICTION BY ASSOCIATION INDEMNITY
+  // Per FL_LEASE.md: Under Ch 718, Associations can evict tenant for rule violations
+  // ========================================================================
+
+  #text(weight: "bold")[3. INDEMNIFICATION FOR ASSOCIATION ACTIONS]
+
+  #v(0.5em)
+
+  Under Florida Statutes Chapter 718 (Condominiums) and Chapter 720 (Homeowners Associations), the Association has independent authority to pursue eviction or levy fines against Tenant for violations of the Governing Documents.
+
+  #v(0.5em)
+
+  *TENANT INDEMNITY:* Tenant agrees to indemnify and hold harmless Landlord from and against any and all costs, expenses, fines, assessments, legal fees, and other damages incurred by Landlord as a result of:
+
+  - Tenant's violation of any Governing Document
+  - Any Association-initiated eviction action against Tenant
+  - Any fines or penalties assessed by the Association due to Tenant's conduct
+
+  #v(1em)
+
+  // ========================================================================
+  // APPROVAL CONTINGENCY
+  // Per FL_LEASE.md: Many Associations require tenant approval
+  // ========================================================================
+
+  #text(weight: "bold")[4. ASSOCIATION APPROVAL CONTINGENCY]
+
+  #v(0.5em)
+
+  #if get_bool("hoa_approval_required") [
+    This Lease is *contingent upon approval of Tenant by the Association*.
+
+    #v(0.3em)
+
+    - Landlord shall submit Tenant's application to the Association within *5 business days* of lease execution
+    - If the Association denies Tenant's application, this Lease shall automatically terminate
+    - Upon termination due to Association denial, all deposits shall be returned to Tenant within 10 days
+    - Neither party shall have any further liability to the other
+  ] else [
+    #box(width: 12pt, height: 12pt, stroke: 1pt)[] Association approval is required for this tenancy.
+
+    #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Association approval is NOT required, or Tenant has already been approved.
+  ]
+
+  #v(1em)
+
+  #text(weight: "bold")[5. ASSOCIATION FEES AND ASSESSMENTS]
+
+  #v(0.5em)
+
+  *Monthly HOA/Condo Fees:* #if get("hoa_monthly_fee", default: "") != "" [#format_money(get_num("hoa_monthly_fee"))] else [[Amount]]
+
+  *Responsibility:* #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord #box(width: 12pt, height: 12pt, stroke: 1pt)[] Tenant
+
+  *Special Assessments:* Any special assessments levied by the Association during the Lease term shall be the responsibility of the *Landlord*, unless caused by Tenant's conduct.
+
+  #v(1em)
+
+  #text(weight: "bold")[6. ACCESS FOR INSPECTIONS]
+
+  #v(0.5em)
+
+  Tenant grants Landlord and the Association reasonable access to the Premises for inspections required by:
+  - The Governing Documents
+  - Florida Statutes (including structural inspections under HB 1021)
+  - Local building codes
+
+  Landlord shall provide at least 24 hours' notice except in emergencies.
+
+  #v(1em)
+
+  #text(weight: "bold")[7. RECEIPT OF GOVERNING DOCUMENTS]
+
+  #v(0.5em)
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Tenant acknowledges receipt of a copy of the Association's Rules and Regulations.
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Tenant acknowledges that Rules and Regulations are available at: #get("hoa_rules_url", default: "[Association Website or Office]")
+
+  #v(2em)
+
+  #grid(
+    columns: (1fr, 1fr),
+    gutter: 40pt,
+    [
+      #text(weight: "bold")[LANDLORD]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ],
+    [
+      #text(weight: "bold")[TENANT]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ]
+  )
+]
+
+// ============================================================================
+// ADDENDUM J: CDD DISCLOSURE (§ 190.048)
+// Community Development District Disclosure - Required for properties in CDD
+// Boldfaced text required per Florida Statutes
+// ============================================================================
+
+#if get_bool("in_cdd") [
+  #pagebreak()
+
+  #text(size: 14pt, weight: "bold")[ADDENDUM J: COMMUNITY DEVELOPMENT DISTRICT (CDD) DISCLOSURE]
+
+  #v(0.5em)
+
+  This Community Development District Disclosure is attached to and made part of the Residential Lease Agreement dated #get("lease_start", default: "[Start Date]") for the property located at #get("property_address", default: "[Property Address]").
+
+  #v(1em)
+
+  #text(weight: "bold")[PURSUANT TO FLORIDA STATUTES § 190.048]
+
+  #v(1em)
+
+  // ========================================================================
+  // MANDATORY CDD DISCLOSURE - BOLDFACED AS REQUIRED BY STATUTE
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 15pt,
+    stroke: 3pt + black,
+    fill: rgb("#fff3cd"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold", size: 12pt)[
+      THE #upper(get("cdd_name", default: "[CDD NAME]")) COMMUNITY DEVELOPMENT DISTRICT MAY IMPOSE AND LEVY TAXES OR ASSESSMENTS, OR BOTH TAXES AND ASSESSMENTS, ON THIS PROPERTY.
+
+      #v(0.5em)
+
+      THESE TAXES AND ASSESSMENTS PAY THE CONSTRUCTION, OPERATION, AND MAINTENANCE COSTS OF CERTAIN PUBLIC FACILITIES AND SERVICES OF THE DISTRICT AND ARE SET ANNUALLY BY THE GOVERNING BOARD OF THE DISTRICT.
+
+      #v(0.5em)
+
+      THESE ASSESSMENTS ARE IN ADDITION TO COUNTY AND OTHER LOCAL GOVERNMENTAL TAXES AND ASSESSMENTS AND ALL OTHER TAXES AND ASSESSMENTS PROVIDED FOR BY LAW.
+    ]
+  ]
+
+  #v(1em)
+
+  #text(weight: "bold")[1. CDD IDENTIFICATION]
+
+  #v(0.5em)
+
+  *Community Development District Name:* #get("cdd_name", default: "[CDD Name]")
+
+  *CDD Contact/Management:* #get("cdd_contact", default: "[CDD Manager Contact]")
+
+  #v(1em)
+
+  #text(weight: "bold")[2. CURRENT CDD ASSESSMENT AMOUNTS]
+
+  #v(0.5em)
+
+  *Annual CDD Assessment:* #if get("cdd_assessment", default: "") != "" [#format_money(get_num("cdd_assessment"))] else [[Current Annual Amount]]
+
+  *Monthly Equivalent:* #if get("cdd_assessment", default: "") != "" [#format_money(get_num("cdd_assessment") / 12)] else [[Monthly Amount]]
+
+  *Assessment Responsibility:*
+  - Debt Service (Bond Payments): #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord
+  - Operations & Maintenance: #box(width: 12pt, height: 12pt, stroke: 1pt, inset: 2pt)[#sym.checkmark] Landlord
+
+  #v(0.5em)
+
+  #text(size: 9pt, style: "italic")[
+    Note: CDD assessments typically appear on the annual property tax bill. The Landlord is responsible for these assessments unless otherwise agreed in writing.
+  ]
+
+  #v(1em)
+
+  #text(weight: "bold")[3. NATURE OF CDD ASSESSMENTS]
+
+  #v(0.5em)
+
+  CDD assessments fund:
+  - *Infrastructure:* Roads, water management, utilities
+  - *Amenities:* Parks, pools, clubhouses, landscaping
+  - *Maintenance:* Common area upkeep, security
+
+  #v(0.5em)
+
+  #rect(
+    width: 100%,
+    inset: 10pt,
+    stroke: 1pt + rgb("#666"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold")[IMPORTANT NOTICE:]
+
+    CDD assessments are *NOT rent*. They are governmental assessments that run with the property. Unlike HOA fees, CDD assessments:
+    - Are collected through the County Tax Collector
+    - Are secured by a lien on the property
+    - May increase or decrease based on District needs
+  ]
+
+  #v(1em)
+
+  #text(weight: "bold")[4. TENANT ACKNOWLEDGMENT]
+
+  #v(0.5em)
+
+  Tenant acknowledges and understands:
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] The Property is located within a Community Development District
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] CDD assessments are in addition to other property taxes
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] CDD assessment amounts may change annually
+
+  #box(width: 12pt, height: 12pt, stroke: 1pt)[] Tenant has been informed of the current CDD assessment amount
+
+  #v(2em)
+
+  #grid(
+    columns: (1fr, 1fr),
+    gutter: 40pt,
+    [
+      #text(weight: "bold")[LANDLORD]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("landlord_name", default: "[Landlord Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ],
+    [
+      #text(weight: "bold")[TENANT]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("tenant_name", default: "[Tenant Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ]
+  )
+]
+
+// ============================================================================
+// ADDENDUM K: LIQUIDATED DAMAGES / EARLY TERMINATION (§ 83.595)
+// "Safe Harbor" Early Termination Fee - Requires Separate Signature
+// Per FL_LEASE.md §6.2: Max 2 months rent, specific bold language required
+// ============================================================================
+
+#if get_bool("early_termination_fee") [
+  #pagebreak()
+
+  #text(size: 14pt, weight: "bold")[ADDENDUM K: LIQUIDATED DAMAGES / EARLY TERMINATION FEE]
+
+  #v(0.5em)
+
+  #text(size: 10pt, style: "italic")[Pursuant to Florida Statutes § 83.595]
+
+  #v(1em)
+
+  This Liquidated Damages Addendum ("Addendum") is attached to and made part of the Residential Lease Agreement dated #get("lease_start", default: "[Start Date]") between:
+
+  #v(0.5em)
+
+  *Landlord:* #get("landlord_name", default: "[Landlord Name]")
+
+  *Tenant:* #get("tenant_name", default: "[Tenant Name]")
+
+  *Property:* #get("property_address", default: "[Property Address]")
+
+  #v(1em)
+
+  // ========================================================================
+  // STATUTORY BACKGROUND
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 12pt,
+    stroke: 1pt + rgb("#666"),
+    fill: rgb("#f0f9ff"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold")[FLORIDA STATUTES § 83.595 - LIQUIDATED DAMAGES]
+
+    #v(0.5em)
+
+    Florida law provides a "safe harbor" for lease termination fees. Under § 83.595, if a tenant wishes to terminate the lease early, both parties may agree to a fixed fee (not exceeding two months' rent) as liquidated damages, in lieu of the landlord pursuing claims for unpaid rent through the end of the lease term.
+  ]
+
+  #v(1em)
+
+  // ========================================================================
+  // EARLY TERMINATION FEE AMOUNT
+  // ========================================================================
+
+  #text(weight: "bold")[1. EARLY TERMINATION FEE AMOUNT]
+
+  #v(0.5em)
+
+  The Early Termination Fee under this Addendum is:
+
+  #v(0.5em)
+
+  #let monthly_rent_val = get_num("monthly_rent")
+  #let custom_fee = get("early_termination_amount", default: "")
+
+  #text(size: 12pt, weight: "bold")[
+    #if custom_fee != "" [
+      #format_money(get_num("early_termination_amount"))
+    ] else [
+      #format_money(monthly_rent_val * 2)
+    ]
+  ]
+
+  #v(0.5em)
+
+  #text(size: 10pt, style: "italic")[
+    (This amount does not exceed two months' rent as required by § 83.595)
+  ]
+
+  #v(1em)
+
+  // ========================================================================
+  // REQUIRED TENANT ACKNOWLEDGMENT (BOLD TEXT PER STATUTE)
+  // ========================================================================
+
+  #text(weight: "bold")[2. TENANT ACKNOWLEDGMENT]
+
+  #v(0.5em)
+
+  #rect(
+    width: 100%,
+    inset: 15pt,
+    stroke: 3pt + rgb("#dc2626"),
+    fill: rgb("#fef2f2"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold", size: 11pt)[
+      I, THE TENANT, AGREE, AS PROVIDED IN THE RENTAL AGREEMENT, TO PAY THE EARLY TERMINATION FEE STATED ABOVE (AN AMOUNT THAT DOES NOT EXCEED TWO (2) MONTHS' RENT) AS LIQUIDATED DAMAGES IN THE EVENT I ELECT TO TERMINATE THIS LEASE BEFORE THE END OF THE LEASE TERM.
+
+      #v(0.5em)
+
+      I UNDERSTAND THAT:
+
+      #v(0.3em)
+
+      1. THIS FEE IS IN LIEU OF THE LANDLORD PURSUING CLAIMS FOR UNPAID RENT THROUGH THE END OF THE LEASE TERM;
+
+      #v(0.2em)
+
+      2. I MUST PROVIDE PROPER WRITTEN NOTICE OF MY INTENT TO TERMINATE;
+
+      #v(0.2em)
+
+      3. THE EARLY TERMINATION FEE MUST BE PAID IN FULL BEFORE OR UPON VACATING THE PREMISES;
+
+      #v(0.2em)
+
+      4. THIS ADDENDUM DOES NOT RELIEVE ME OF OTHER OBLIGATIONS UNDER THE LEASE, INCLUDING LEAVING THE PREMISES IN GOOD CONDITION AND PAYING ALL RENT DUE THROUGH THE TERMINATION DATE.
+    ]
+  ]
+
+  #v(1em)
+
+  // ========================================================================
+  // TERMS AND CONDITIONS
+  // ========================================================================
+
+  #text(weight: "bold")[3. TERMS AND CONDITIONS FOR EARLY TERMINATION]
+
+  #v(0.5em)
+
+  To exercise early termination under this Addendum, Tenant must:
+
+  #v(0.3em)
+
+  a) Provide Landlord with written notice of intent to terminate at least *30 days* before the desired termination date;
+
+  #v(0.2em)
+
+  b) Pay the Early Termination Fee in full at the time of notice or as otherwise agreed in writing;
+
+  #v(0.2em)
+
+  c) Continue to pay rent through the termination date;
+
+  #v(0.2em)
+
+  d) Return possession of the premises in the condition required by the Lease (normal wear and tear excepted);
+
+  #v(0.2em)
+
+  e) Return all keys and access devices to Landlord.
+
+  #v(1em)
+
+  #text(weight: "bold")[4. EFFECT OF EARLY TERMINATION]
+
+  #v(0.5em)
+
+  Upon satisfaction of all conditions in Section 3:
+
+  #v(0.3em)
+
+  - Landlord releases Tenant from liability for rent for the remainder of the original lease term;
+  - Landlord waives the right to pursue claims for unpaid rent beyond the termination date;
+  - Tenant's security deposit will be handled in accordance with Florida Statutes § 83.49.
+
+  #v(1em)
+
+  #text(weight: "bold")[5. LANDLORD'S DUTY TO MITIGATE]
+
+  #v(0.5em)
+
+  #text(size: 10pt, style: "italic")[
+    Note: If Tenant does not exercise early termination under this Addendum and simply vacates, Landlord retains all rights under Florida law, including the duty to mitigate damages by making reasonable efforts to re-rent the property. In such case, Tenant may be liable for rent until the property is re-rented or the lease term expires, whichever occurs first.
+  ]
+
+  #v(2em)
+
+  // ========================================================================
+  // SEPARATE SIGNATURE REQUIRED
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 12pt,
+    stroke: 2pt + rgb("#b45309"),
+    fill: rgb("#fffbeb"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold")[IMPORTANT: SEPARATE SIGNATURE REQUIRED]
+
+    #v(0.3em)
+
+    Florida Statutes § 83.595 requires that this Liquidated Damages provision be contained in a separate addendum and signed separately by the Tenant. This signature below is IN ADDITION TO the Tenant's signature on the main Lease Agreement.
+  ]
+
+  #v(2em)
+
+  #text(size: 11pt, weight: "bold")[ACKNOWLEDGMENT AND AGREEMENT]
+
+  #v(0.5em)
+
+  By signing below, Tenant acknowledges having read and understood this Addendum and agrees to its terms.
+
+  #v(2em)
+
+  #grid(
+    columns: (1fr, 1fr),
+    gutter: 40pt,
+    [
+      #text(weight: "bold")[TENANT SIGNATURE (REQUIRED)]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("tenant_name", default: "[Tenant Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ],
+    [
+      #text(weight: "bold")[LANDLORD SIGNATURE]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("landlord_name", default: "[Landlord Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ]
+  )
+]
+
+// ============================================================================
+// ADDENDUM L: MOLD PREVENTION ADDENDUM (Optional)
+// Per FL_LEASE.md §6.4: AC operation, humidity control, leak reporting
+// Florida's climate makes mold prevention critical
+// ============================================================================
+
+#if get_bool("mold_addendum") [
+  #pagebreak()
+
+  #text(size: 14pt, weight: "bold")[ADDENDUM L: MOLD PREVENTION ADDENDUM]
+
+  #v(0.5em)
+
+  #text(size: 10pt, style: "italic")[Florida Climate Mold Prevention Requirements]
+
+  #v(1em)
+
+  This Mold Prevention Addendum is attached to and made part of the Residential Lease Agreement dated #get("lease_start", default: "[Start Date]") for the property located at #get("property_address", default: "[Property Address]").
+
+  #v(1em)
+
+  // ========================================================================
+  // INTRODUCTION
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 12pt,
+    stroke: 1pt + rgb("#666"),
+    fill: rgb("#f0fdf4"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold")[IMPORTANCE OF MOLD PREVENTION]
+
+    #v(0.3em)
+
+    Florida's humid subtropical climate creates conditions favorable to mold growth. Mold can cause property damage and may affect indoor air quality. Both Landlord and Tenant have responsibilities in preventing mold growth. This addendum outlines Tenant's specific obligations to help prevent mold.
+  ]
+
+  #v(1em)
+
+  // ========================================================================
+  // TENANT OBLIGATIONS
+  // ========================================================================
+
+  #text(weight: "bold")[1. TENANT MOLD PREVENTION OBLIGATIONS]
+
+  #v(0.5em)
+
+  Tenant agrees to the following mold prevention measures:
+
+  #v(0.5em)
+
+  #text(weight: "bold")[A. Air Conditioning Operation]
+
+  - Tenant shall operate the air conditioning system *continuously* during warm and humid months (typically April through October)
+  - Thermostat shall be set to maintain indoor temperature at or below 78°F when occupied
+  - AC shall not be turned off for extended periods, even when premises are unoccupied
+  - Tenant shall notify Landlord immediately if the AC system fails or is not cooling properly
+
+  #v(0.5em)
+
+  #text(weight: "bold")[B. Humidity Control]
+
+  - Tenant shall maintain indoor humidity levels *below 60%*
+  - Use of bathroom exhaust fans during and after bathing/showering is required
+  - Use of kitchen exhaust fans during cooking is required
+  - Tenant should avoid hanging wet clothes indoors to dry
+
+  #v(0.5em)
+
+  #text(weight: "bold")[C. Ventilation]
+
+  - Tenant shall ensure adequate air circulation throughout the premises
+  - Furniture shall not completely block air vents or returns
+  - Closet doors should be left slightly open to allow air circulation
+
+  #v(0.5em)
+
+  #text(weight: "bold")[D. Leak Reporting]
+
+  - Tenant shall *immediately* report any leaks, water intrusion, or moisture problems to Landlord
+  - This includes: roof leaks, plumbing leaks, window leaks, condensation on windows, and standing water
+  - Tenant shall not ignore or delay reporting any signs of water damage or mold
+
+  #v(0.5em)
+
+  #text(weight: "bold")[E. Cleaning]
+
+  - Tenant shall regularly clean bathroom surfaces to prevent mold growth
+  - Tenant shall promptly clean any visible mold with appropriate cleaning products
+  - Tenant shall not allow food waste to accumulate
+
+  #v(1em)
+
+  // ========================================================================
+  // REPORTING REQUIREMENTS
+  // ========================================================================
+
+  #text(weight: "bold")[2. REQUIRED REPORTING]
+
+  #v(0.5em)
+
+  Tenant shall immediately notify Landlord in writing of any of the following:
+
+  - Visible mold or mildew growth
+  - Musty or moldy odors
+  - Water leaks or water damage
+  - Malfunctioning HVAC equipment
+  - Excessive condensation on windows or walls
+  - Any flooding or water intrusion
+
+  #v(1em)
+
+  // ========================================================================
+  // LANDLORD RESPONSIBILITIES
+  // ========================================================================
+
+  #text(weight: "bold")[3. LANDLORD RESPONSIBILITIES]
+
+  #v(0.5em)
+
+  Landlord agrees to:
+
+  - Maintain the premises in a condition that prevents moisture intrusion
+  - Promptly respond to reports of leaks, water damage, or mold
+  - Ensure HVAC systems are in proper working condition
+  - Address any structural issues that may contribute to moisture problems
+
+  #v(1em)
+
+  // ========================================================================
+  // CONSEQUENCES
+  // ========================================================================
+
+  #rect(
+    width: 100%,
+    inset: 12pt,
+    stroke: 2pt + rgb("#b45309"),
+    fill: rgb("#fffbeb"),
+    radius: 4pt,
+  )[
+    #text(weight: "bold")[IMPORTANT NOTICE]
+
+    #v(0.3em)
+
+    Failure to comply with the mold prevention obligations in this addendum may result in:
+
+    - Tenant being held responsible for mold remediation costs caused by Tenant's negligence
+    - Deduction from security deposit for mold damage
+    - Potential liability for property damage
+
+    #v(0.3em)
+
+    Mold problems that result from Tenant's failure to operate AC, control humidity, or report leaks may be considered damage beyond normal wear and tear.
+  ]
+
+  #v(2em)
+
+  // ========================================================================
+  // SIGNATURES
+  // ========================================================================
+
+  #text(size: 11pt, weight: "bold")[ACKNOWLEDGMENT]
+
+  #v(0.5em)
+
+  By signing below, Tenant acknowledges having read, understood, and agreed to comply with all terms of this Mold Prevention Addendum.
+
+  #v(2em)
+
+  #grid(
+    columns: (1fr, 1fr),
+    gutter: 40pt,
+    [
+      #text(weight: "bold")[TENANT]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("tenant_name", default: "[Tenant Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ],
+    [
+      #text(weight: "bold")[LANDLORD]
+      #v(1.5em)
+      Signature: #box(width: 150pt, repeat[\_])
+      #v(0.5em)
+      Print Name: #get("landlord_name", default: "[Landlord Name]")
+      #v(0.5em)
+      Date: #box(width: 100pt, repeat[\_])
+    ]
+  )
+]

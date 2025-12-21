@@ -32,3 +32,4 @@ chrono = { workspace = true }
 tokio-test = "0.4"
 proptest = { workspace = true }
 tracing-subscriber = "0.3"
+reqwest = "0.12"

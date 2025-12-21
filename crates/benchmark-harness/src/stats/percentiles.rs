@@ -27,7 +27,7 @@
 /// assert_eq!(p50, Some(3.0));
 /// ```
 pub fn percentile(samples: &[f64], p: f64) -> Option<f64> {
-    if samples.is_empty() || p < 0.0 || p > 100.0 {
+    if samples.is_empty() || !(0.0..=100.0).contains(&p) {
         return None;
     }
 

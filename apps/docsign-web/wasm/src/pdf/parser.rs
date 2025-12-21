@@ -147,6 +147,50 @@ impl PdfDocument {
 mod tests {
     use super::*;
 
+    // Use actual PDF from typst output
+    const TEST_PDF: &[u8] = include_bytes!("../../../../../output/florida_listing_agreement.pdf");
+
+    #[test]
+    fn test_from_bytes_valid_pdf() {
+        // This test ensures valid PDF bytes can be loaded
+        let result = PdfDocument::from_bytes(TEST_PDF.to_vec());
+        match result {
+            Ok(pdf) => assert!(pdf.page_count() > 0, "Should have at least 1 page"),
+            Err(e) => panic!("Valid PDF should parse successfully, got: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_from_bytes_html_fails_with_invalid_header() {
+        // This is the regression test for the bug where HTML was passed instead of PDF
+        // (e.g., when fetch() returns SPA fallback instead of actual PDF)
+        let html_bytes = b"<!DOCTYPE html><html><head></head><body>Not a PDF</body></html>";
+        let result = PdfDocument::from_bytes(html_bytes.to_vec());
+        match result {
+            Ok(_) => panic!("HTML should not parse as PDF"),
+            Err(err) => {
+                assert!(
+                    err.contains("Invalid file header") || err.contains("PDF parse error"),
+                    "Error should mention invalid header, got: {}",
+                    err
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_from_bytes_empty_fails() {
+        let result = PdfDocument::from_bytes(vec![]);
+        assert!(result.is_err(), "Empty bytes should fail");
+    }
+
+    #[test]
+    fn test_from_bytes_garbage_fails() {
+        let garbage = vec![0u8; 100]; // All zeros
+        let result = PdfDocument::from_bytes(garbage);
+        assert!(result.is_err(), "Garbage bytes should fail");
+    }
+
     #[test]
     fn test_pdf_document_struct() {
         // Test that PdfDocument can be created with a Document

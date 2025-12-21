@@ -380,6 +380,44 @@ This Agreement shall expire at 11:59 PM on the Listing Expiration Date. Seller i
 #text(size: 14pt, weight: "bold")[4. BROKER'S COMPENSATION]
 #v(1em)
 
+// NAR Settlement Compliance - Mandatory Fee Negotiability Disclosure
+#rect(
+  width: 100%,
+  inset: 12pt,
+  stroke: 2pt + rgb("#b45309"),
+  fill: rgb("#fffbeb"),
+  radius: 4pt,
+)[
+  #text(weight: "bold", size: 11pt)[NOTICE: BROKER FEES ARE FULLY NEGOTIABLE]
+
+  #v(0.5em)
+
+  #text(weight: "bold")[
+    THE AMOUNT OR RATE OF REAL ESTATE COMMISSIONS IS NOT FIXED BY LAW. COMMISSIONS ARE SET BY EACH BROKER INDIVIDUALLY AND MAY BE NEGOTIABLE BETWEEN SELLER AND BROKER.
+  ]
+
+  #v(0.5em)
+
+  #text(size: 10pt)[
+    This disclosure is required pursuant to the 2024 NAR Settlement Agreement. Seller acknowledges that broker compensation is not set by any law, regulation, or real estate board, and that Seller has had the opportunity to negotiate the commission rate or fee.
+  ]
+
+  #v(0.5em)
+
+  #grid(
+    columns: (1fr, 1fr),
+    gutter: 20pt,
+    [
+      Seller Initials: #box(width: 60pt, repeat[\_])
+    ],
+    [
+      Date: #box(width: 80pt, repeat[\_])
+    ]
+  )
+]
+
+#v(1em)
+
 #text(size: 12pt, weight: "bold")[4.1 COMMISSION]
 #v(0.5em)
 

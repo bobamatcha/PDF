@@ -118,7 +118,7 @@ impl OutlierResult {
     /// let clean = result.clean_samples(&data);
     /// assert_eq!(clean.len(), 5); // 100.0 removed
     /// ```
-    pub fn clean_samples<'a>(&self, samples: &'a [f64]) -> Vec<f64> {
+    pub fn clean_samples(&self, samples: &[f64]) -> Vec<f64> {
         samples
             .iter()
             .enumerate()

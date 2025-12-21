@@ -89,8 +89,6 @@ impl CpuThrottler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_invalid_throttling_rate() {
         // This test verifies the validation logic, but can't test the actual CDP call
