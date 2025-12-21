@@ -768,3 +768,57 @@ fn test_wasm_opt_level_parity() {
 
     eprintln!("✓ Both apps have matching wasm-opt level: {:?}", agentpdf_level);
 }
+
+/// Test that duplicated source files (coords.rs) have matching test coverage
+/// This catches when a bug fix or new test is added to one app but not the other
+#[test]
+fn test_coords_rs_test_parity() {
+    let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| std::path::PathBuf::from(d).parent().unwrap().parent().unwrap().to_path_buf())
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let agentpdf_coords = workspace_root.join("apps/agentpdf-web/wasm/src/coords.rs");
+    let docsign_coords = workspace_root.join("apps/docsign-web/wasm/src/coords.rs");
+
+    let agentpdf_content = std::fs::read_to_string(&agentpdf_coords)
+        .expect("Should read agentpdf coords.rs");
+    let docsign_content = std::fs::read_to_string(&docsign_coords)
+        .expect("Should read docsign coords.rs");
+
+    // Extract test function names from both files
+    let extract_test_names = |content: &str| -> Vec<String> {
+        let pattern = r#"fn (test_[a-z_]+|roundtrip_[a-z_]+|origin_[a-z_]+|linear_[a-z_]+|offset_[a-z_]+)\s*\("#;
+        let re = regex::Regex::new(pattern).unwrap();
+        re.captures_iter(content)
+            .map(|c| c.get(1).unwrap().as_str().to_string())
+            .collect()
+    };
+
+    let agentpdf_tests: std::collections::HashSet<_> = extract_test_names(&agentpdf_content).into_iter().collect();
+    let docsign_tests: std::collections::HashSet<_> = extract_test_names(&docsign_content).into_iter().collect();
+
+    // Find tests that exist in one but not the other
+    let only_in_agentpdf: Vec<_> = agentpdf_tests.difference(&docsign_tests).collect();
+    let only_in_docsign: Vec<_> = docsign_tests.difference(&agentpdf_tests).collect();
+
+    eprintln!("agentpdf coords.rs tests: {:?}", agentpdf_tests);
+    eprintln!("docsign coords.rs tests: {:?}", docsign_tests);
+
+    if !only_in_agentpdf.is_empty() {
+        eprintln!("⚠️  Tests only in agentpdf: {:?}", only_in_agentpdf);
+    }
+    if !only_in_docsign.is_empty() {
+        eprintln!("⚠️  Tests only in docsign: {:?}", only_in_docsign);
+    }
+
+    // This is a warning, not a failure - we want visibility into drift
+    // Change to assert! if you want strict parity enforcement
+    if !only_in_agentpdf.is_empty() || !only_in_docsign.is_empty() {
+        eprintln!("⚠️  coords.rs test coverage differs between apps!");
+        eprintln!("    Consider syncing tests to ensure both apps have equivalent coverage.");
+        // Uncomment below to enforce strict parity:
+        // panic!("Test parity violation in coords.rs");
+    } else {
+        eprintln!("✓ coords.rs has matching test coverage in both apps");
+    }
+}

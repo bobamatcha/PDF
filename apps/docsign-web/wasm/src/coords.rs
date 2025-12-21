@@ -75,6 +75,44 @@ mod tests {
         assert!((x - 612.0).abs() < 0.1);
         assert!((y - 0.0).abs() < 0.1);
     }
+
+    #[test]
+    fn test_overlay_coordinates_round_trip() {
+        let pdf_coord = (100.0, 200.0);
+        let page_height = 792.0; // Letter size
+        let page_width = 612.0;
+        let scale = 1.5;
+        let container_width = page_width * scale;
+        let container_height = page_height * scale;
+        let media_box = [0.0, 0.0, page_width, page_height];
+
+        let dom = pdf_to_dom(
+            pdf_coord.0,
+            pdf_coord.1,
+            container_width,
+            container_height,
+            media_box,
+        );
+        let back = dom_to_pdf(dom.0, dom.1, container_width, container_height, media_box);
+        assert!((back.0 - pdf_coord.0).abs() < 0.001);
+        assert!((back.1 - pdf_coord.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_y_axis_flip() {
+        // PDF origin is bottom-left, DOM origin is top-left
+        let pdf_y = 100.0;
+        let page_height = 792.0;
+        let page_width = 612.0;
+        let scale = 1.0;
+        let container_width = page_width * scale;
+        let container_height = page_height * scale;
+        let media_box = [0.0, 0.0, page_width, page_height];
+
+        let dom = pdf_to_dom(0.0, pdf_y, container_width, container_height, media_box);
+        // DOM y should be (792 - 100) * 1.0 = 692
+        assert_eq!(dom.1, 692.0);
+    }
 }
 
 #[cfg(test)]
