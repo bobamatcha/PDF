@@ -6,7 +6,7 @@
 name = "GetSignatures Performance"
 
 # Base URL of the application under test
-base_url = "http://localhost:3001"
+base_url = "http://127.0.0.1:8081"
 
 # Number of iterations per scenario (default: 30)
 iterations = 30

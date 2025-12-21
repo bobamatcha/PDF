@@ -40,6 +40,7 @@
 
 use anyhow::{Context, Result};
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::target::{CreateBrowserContextParams, CreateTargetParams};
 use chromiumoxide::Page;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -186,6 +187,9 @@ pub struct BenchmarkRunner {
 impl BenchmarkRunner {
     /// Create a new benchmark runner with a headless browser
     ///
+    /// This will automatically detect Chrome for Testing (used by Puppeteer)
+    /// if available, falling back to system Chrome if not found.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -197,7 +201,81 @@ impl BenchmarkRunner {
     /// # }
     /// ```
     pub async fn new() -> Result<Self> {
-        Self::with_config(BrowserConfig::builder().build().map_err(|e| anyhow::anyhow!("{}", e))?).await
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static RUNNER_ID: AtomicU64 = AtomicU64::new(0);
+
+        let mut builder = BrowserConfig::builder();
+
+        // Try to find Chrome for Testing (used by Puppeteer)
+        if let Some(chrome_path) = Self::find_chrome_for_testing() {
+            info!("Using Chrome for Testing at: {}", chrome_path.display());
+            builder = builder.chrome_executable(chrome_path);
+        } else {
+            info!("Chrome for Testing not found, using system Chrome");
+        }
+
+        // Use unique user data directory to avoid conflicts
+        let runner_id = RUNNER_ID.fetch_add(1, Ordering::SeqCst);
+        let user_data_dir =
+            std::env::temp_dir().join(format!("benchmark-harness-runner-{}", runner_id));
+        builder = builder.user_data_dir(user_data_dir);
+
+        Self::with_config(
+            builder
+                .build()
+                .map_err(|e| anyhow::anyhow!("{}", e))?,
+        )
+        .await
+    }
+
+    /// Find Chrome for Testing installed by Puppeteer
+    fn find_chrome_for_testing() -> Option<std::path::PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        let puppeteer_cache = std::path::Path::new(&home).join(".cache/puppeteer/chrome");
+
+        if !puppeteer_cache.exists() {
+            debug!("Puppeteer cache not found at {:?}", puppeteer_cache);
+            return None;
+        }
+
+        // Find latest chrome version directory (e.g., "mac_arm-131.0.6778.204")
+        let mut versions: Vec<_> = std::fs::read_dir(&puppeteer_cache)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().ok().is_some_and(|t| t.is_dir()))
+            .collect();
+
+        // Sort by version number descending
+        versions.sort_by_key(|v| std::cmp::Reverse(v.path()));
+
+        for version_dir in versions {
+            // Try macOS arm64 path first
+            let mac_arm_path = version_dir
+                .path()
+                .join("chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
+
+            if mac_arm_path.exists() {
+                return Some(mac_arm_path);
+            }
+
+            // Try macOS x64 path
+            let mac_x64_path = version_dir
+                .path()
+                .join("chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing");
+
+            if mac_x64_path.exists() {
+                return Some(mac_x64_path);
+            }
+
+            // Try Linux path
+            let linux_path = version_dir.path().join("chrome-linux64/chrome");
+
+            if linux_path.exists() {
+                return Some(linux_path);
+            }
+        }
+
+        None
     }
 
     /// Create a runner with custom browser configuration
@@ -215,7 +293,8 @@ impl BenchmarkRunner {
     /// # async fn example() -> anyhow::Result<()> {
     /// let browser_config = BrowserConfig::builder()
     ///     .with_head()  // Run with visible browser window
-    ///     .build()?;
+    ///     .build()
+    ///     .map_err(|e| anyhow::anyhow!("{}", e))?;
     /// let runner = BenchmarkRunner::with_config(browser_config).await?;
     /// # Ok(())
     /// # }
@@ -501,11 +580,45 @@ impl BenchmarkRunner {
     ) -> IterationMetrics {
         let start_time = Instant::now();
 
-        // Create a new incognito context for isolation
-        let page = match self.browser.new_page("about:blank").await {
+        // Create a new incognito browser context for full isolation
+        // Each context has its own cookies, cache, storage - no interference between iterations
+        let browser_context_id = match self
+            .browser
+            .create_browser_context(CreateBrowserContextParams::default())
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                error!("Failed to create browser context: {}", e);
+                return IterationMetrics {
+                    lcp: None,
+                    cls: None,
+                    inp: None,
+                    duration_ms: start_time.elapsed().as_millis() as u64,
+                    success: false,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
+
+        // Create a page within this isolated context
+        let page = match self
+            .browser
+            .new_page(CreateTargetParams {
+                url: "about:blank".to_string(),
+                browser_context_id: Some(browser_context_id.clone()),
+                ..Default::default()
+            })
+            .await
+        {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to create page: {}", e);
+                // Clean up the context before returning
+                let _ = self
+                    .browser
+                    .dispose_browser_context(browser_context_id)
+                    .await;
                 return IterationMetrics {
                     lcp: None,
                     cls: None,
@@ -545,6 +658,10 @@ impl BenchmarkRunner {
             };
         }
 
+        // Start collecting metrics BEFORE executing steps
+        // This ensures we capture metrics logged during navigation
+        let metrics_handle = collector.start_collecting(&page).await;
+
         // Execute scenario steps
         let mut last_error = None;
         for step in &scenario.steps {
@@ -555,37 +672,36 @@ impl BenchmarkRunner {
             }
         }
 
-        // Collect metrics
-        let metric_timeout = Duration::from_secs(10);
+        // Wait a bit for metrics to be reported after page load
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let lcp = match collector.wait_for_lcp(&page, metric_timeout).await {
-            Ok(m) => Some(m.value),
-            Err(e) => {
-                debug!("LCP collection failed: {}", e);
-                None
+        // Collect the metrics that were captured
+        let (lcp, cls, inp) = match metrics_handle {
+            Ok(handle) => {
+                let metrics = handle.collect().await;
+                (metrics.lcp, metrics.cls, metrics.inp)
             }
-        };
-
-        let cls = match collector.wait_for_cls(&page, metric_timeout).await {
-            Ok(m) => Some(m.value),
             Err(e) => {
-                debug!("CLS collection failed: {}", e);
-                None
+                debug!("Metrics collection failed: {}", e);
+                (None, None, None)
             }
-        };
-
-        // INP requires user interaction, may not be available
-        let inp = match collector.wait_for_inp(&page, Duration::from_secs(2)).await {
-            Ok(m) => Some(m.value),
-            Err(_) => None,
         };
 
         // Clear throttling
         let _ = NetworkThrottler::clear(&page).await;
         let _ = CpuThrottler::clear(&page).await;
 
-        // Close the page
-        let _ = page.close().await;
+        // Close the page first
+        drop(page);
+
+        // Dispose of the browser context (this cleans up all resources for this context)
+        if let Err(e) = self
+            .browser
+            .dispose_browser_context(browser_context_id)
+            .await
+        {
+            debug!("Failed to dispose browser context: {}", e);
+        }
 
         let duration = start_time.elapsed();
 

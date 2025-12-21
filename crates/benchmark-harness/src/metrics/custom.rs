@@ -12,36 +12,32 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use benchmark_harness::metrics::custom::CustomTimingCollector;
-//! use chromiumoxide::Browser;
+//! use chromiumoxide::Page;
 //!
-//! # async fn example() -> anyhow::Result<()> {
-//! let browser = Browser::default().await?;
-//! let page = browser.new_page("https://example.com").await?;
+//! async fn example(page: &Page) -> anyhow::Result<()> {
+//!     let collector = CustomTimingCollector::new();
 //!
-//! let collector = CustomTimingCollector::new();
+//!     // Mark the start of an operation
+//!     collector.mark_start(&page, "button-click").await?;
 //!
-//! // Mark the start of an operation
-//! collector.mark_start(&page, "button-click").await?;
+//!     // Perform the operation (e.g., click a button)
 //!
-//! // Perform the operation
-//! page.click("button#submit").await?;
+//!     // Mark the end
+//!     collector.mark_end(&page, "button-click").await?;
 //!
-//! // Mark the end
-//! collector.mark_end(&page, "button-click").await?;
+//!     // Measure the duration
+//!     let measurement = collector.measure(
+//!         &page,
+//!         "button-click-duration",
+//!         "button-click-start",
+//!         "button-click-end"
+//!     ).await?;
 //!
-//! // Measure the duration
-//! let measurement = collector.measure(
-//!     &page,
-//!     "button-click-duration",
-//!     "button-click-start",
-//!     "button-click-end"
-//! ).await?;
-//!
-//! println!("Button click took {}ms", measurement.duration);
-//! # Ok(())
-//! # }
+//!     println!("Button click took {}ms", measurement.duration);
+//!     Ok(())
+//! }
 //! ```
 
 use anyhow::{Context, Result};

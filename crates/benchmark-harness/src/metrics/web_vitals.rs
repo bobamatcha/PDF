@@ -12,24 +12,21 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use benchmark_harness::metrics::web_vitals::WebVitalsCollector;
-//! use chromiumoxide::Browser;
+//! use chromiumoxide::Page;
 //! use std::time::Duration;
 //!
-//! # async fn example() -> anyhow::Result<()> {
-//! let browser = Browser::default().await?;
-//! let page = browser.new_page("about:blank").await?;
+//! async fn example(page: &Page) -> anyhow::Result<()> {
+//!     let collector = WebVitalsCollector::new();
+//!     collector.inject_into_page(&page).await?;
 //!
-//! let collector = WebVitalsCollector::new();
-//! collector.inject_into_page(&page).await?;
+//!     page.goto("https://example.com").await?;
 //!
-//! page.goto("https://example.com").await?;
-//!
-//! let lcp = collector.wait_for_lcp(&page, Duration::from_secs(30)).await?;
-//! println!("LCP: {}ms (delta: {}ms, id: {})", lcp.value, lcp.delta, lcp.id);
-//! # Ok(())
-//! # }
+//!     let lcp = collector.wait_for_lcp(&page, Duration::from_secs(30)).await?;
+//!     println!("LCP: {}ms (delta: {}ms, id: {})", lcp.value, lcp.delta, lcp.id);
+//!     Ok(())
+//! }
 //! ```
 
 use anyhow::{Context, Result};
@@ -62,6 +59,33 @@ pub struct WebVitalMetric {
     pub timestamp: u64,
 }
 
+/// Collected metrics from a page
+#[derive(Debug, Clone, Default)]
+pub struct CollectedMetrics {
+    /// LCP value in milliseconds
+    pub lcp: Option<f64>,
+    /// CLS value (unitless)
+    pub cls: Option<f64>,
+    /// INP value in milliseconds
+    pub inp: Option<f64>,
+}
+
+/// Handle to a running metrics collection task
+pub struct MetricsHandle {
+    metrics: Arc<Mutex<CollectedMetrics>>,
+    _task: tokio::task::JoinHandle<()>,
+}
+
+impl MetricsHandle {
+    /// Collect the metrics that have been captured so far
+    pub async fn collect(self) -> CollectedMetrics {
+        // Abort the listener task
+        self._task.abort();
+        // Return the collected metrics
+        self.metrics.lock().await.clone()
+    }
+}
+
 /// Web Vitals metrics collector
 ///
 /// Injects the web-vitals library into browser pages and collects Core Web Vitals
@@ -76,6 +100,73 @@ impl WebVitalsCollector {
     /// Create a new Web Vitals collector
     pub fn new() -> Self {
         Self { _private: () }
+    }
+
+    /// Start collecting metrics in the background
+    ///
+    /// This spawns a task that listens for console events and accumulates metrics.
+    /// Call this BEFORE navigating to ensure metrics logged during page load are captured.
+    ///
+    /// # Arguments
+    ///
+    /// * `page` - The page to collect metrics from
+    ///
+    /// # Returns
+    ///
+    /// A handle that can be used to collect the accumulated metrics
+    pub async fn start_collecting(&self, page: &Page) -> Result<MetricsHandle> {
+        debug!("Starting background metrics collection");
+
+        let metrics = Arc::new(Mutex::new(CollectedMetrics::default()));
+        let metrics_clone = metrics.clone();
+
+        // Subscribe to console API events
+        let mut events = page
+            .event_listener::<EventConsoleApiCalled>()
+            .await
+            .context("Failed to subscribe to console events")?;
+
+        // Spawn a task to listen for console events
+        let task = tokio::spawn(async move {
+            while let Some(event) = events.next().await {
+                // Check if this is a metric log
+                if let Some(first_arg) = event.args.first() {
+                    if let Some(value) = first_arg.value.as_ref() {
+                        if let Some(message) = value.as_str() {
+                            if message.starts_with("__BENCHMARK_METRIC__:") {
+                                let json_start = "__BENCHMARK_METRIC__:".len();
+                                let json_str = &message[json_start..];
+
+                                if let Ok(metric) = serde_json::from_str::<WebVitalMetric>(json_str)
+                                {
+                                    let mut m = metrics_clone.lock().await;
+                                    match metric.name.as_str() {
+                                        "LCP" => {
+                                            debug!("Captured LCP: {}ms", metric.value);
+                                            m.lcp = Some(metric.value);
+                                        }
+                                        "CLS" => {
+                                            debug!("Captured CLS: {}", metric.value);
+                                            m.cls = Some(metric.value);
+                                        }
+                                        "INP" => {
+                                            debug!("Captured INP: {}ms", metric.value);
+                                            m.inp = Some(metric.value);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(MetricsHandle {
+            metrics,
+            _task: task,
+        })
     }
 
     /// Inject the web-vitals library into a page

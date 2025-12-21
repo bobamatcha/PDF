@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 # Browser automation
-chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+chromiumoxide = { version = "0.8", features = ["tokio-runtime"] }
 
 # Async runtime
 tokio = { workspace = true }
