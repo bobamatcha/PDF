@@ -1,0 +1,85 @@
+# Example benchmark configuration
+# This demonstrates the full configuration schema for the benchmark harness
+
+[benchmark]
+# Name of the benchmark suite
+name = "AgentPDF Performance Tests"
+
+# Base URL of the application under test
+base_url = "https://agentpdf.org"
+
+# Number of iterations per scenario (default: 30)
+iterations = 50
+
+# Number of warmup runs before measurement (default: 3)
+warmup = 5
+
+# Number of parallel browser contexts (default: 4)
+parallel_contexts = 8
+
+[throttling]
+# Network profile: "Fast3G", "Slow4G", "Offline", or "None"
+network_profile = "Fast3G"
+
+# CPU slowdown multiplier (1.0 = no slowdown, 4.0 = 4x slower)
+cpu_slowdown = 4.0
+
+[thresholds]
+# Performance thresholds for pass/fail (all optional)
+# Largest Contentful Paint p95 in milliseconds
+lcp_p95 = 2500.0
+
+# Interaction to Next Paint p95 in milliseconds
+inp_p95 = 200.0
+
+# Cumulative Layout Shift p95 (unitless)
+cls_p95 = 0.1
+
+# Scenario 1: Homepage load
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "homepage" }
+]
+
+# Scenario 2: PDF upload and processing
+[[scenarios]]
+name = "PDF Upload Flow"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#upload-button" },
+    { type = "click", selector = "#upload-button" },
+    { type = "upload", selector = "#file-input", file_path = "/tmp/test.pdf" },
+    { type = "wait", wait_for = "selector", selector = "#processing-complete" },
+    { type = "measure", label = "pdf-upload-complete" }
+]
+
+# Scenario 3: Complex user interaction
+[[scenarios]]
+name = "Login and Search"
+steps = [
+    { type = "navigate", url = "/login" },
+    { type = "wait", wait_for = "selector", selector = "#username" },
+    { type = "type", selector = "#username", text = "test@example.com" },
+    { type = "type", selector = "#password", text = "password123" },
+    { type = "click", selector = "#submit" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "post-login" },
+    { type = "navigate", url = "/search" },
+    { type = "wait", wait_for = "selector", selector = "#search-input" },
+    { type = "type", selector = "#search-input", text = "compliance violations" },
+    { type = "click", selector = "#search-button" },
+    { type = "wait", wait_for = "selector", selector = ".search-results" },
+    { type = "measure", label = "search-complete" }
+]
+
+# Scenario 4: Simple timeout wait
+[[scenarios]]
+name = "Delayed Content"
+steps = [
+    { type = "navigate", url = "/delayed" },
+    { type = "wait", wait_for = "timeout", duration = 3000 },
+    { type = "measure" }
+]

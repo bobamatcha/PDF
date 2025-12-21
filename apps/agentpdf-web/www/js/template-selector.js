@@ -347,9 +347,29 @@ const TemplateSelector = {
         div.className = 'form-field';
 
         const label = document.createElement('label');
-        label.textContent = this._formatFieldName(fieldName);
+        const friendlyLabel = this._getFriendlyLabel(fieldName);
+        label.textContent = friendlyLabel;
         label.htmlFor = fieldName;
         if (required) label.className = 'required';
+
+        // Check if this is a tristate flood disclosure field (3 neutral options)
+        // Per scrivener adherence - must not lead user to any particular answer
+        if (this._isTristateFloodField(fieldName)) {
+            div.appendChild(label);
+            div.appendChild(this._createTristateRadio(fieldName));
+            return div;
+        }
+
+        // Check if this is a simple boolean field (lead paint, etc)
+        if (this._isBooleanField(fieldName)) {
+            div.appendChild(label);
+            div.appendChild(this._createYesNoRadio(fieldName));
+            return div;
+        }
+
+        // NOTE: email_consent is NOT shown in template form
+        // Per HB 615, tenant must actively consent during SIGNATURE CEREMONY
+        // The template generates unchecked boxes that tenant fills during signing
 
         const input = document.createElement('input');
         input.type = this._getInputType(fieldName);
@@ -361,6 +381,132 @@ const TemplateSelector = {
         div.appendChild(label);
         div.appendChild(input);
         return div;
+    },
+
+    /**
+     * Check if field is a tristate flood disclosure field
+     * Per scrivener adherence, these MUST offer 3 neutral options
+     */
+    _isTristateFloodField(fieldName) {
+        const tristateFields = [
+            'flood_history_status',
+            'flood_claims_status',
+            'flood_fema_status'
+        ];
+        return tristateFields.includes(fieldName);
+    },
+
+    /**
+     * Check if field is a simple boolean (lead paint, etc)
+     */
+    _isBooleanField(fieldName) {
+        // Only is_pre_1978 remains as simple boolean
+        // Flood fields are now tristate per scrivener adherence
+        return fieldName === 'is_pre_1978' || fieldName.startsWith('is_');
+    },
+
+    /**
+     * Create tristate radio buttons with 3 neutral options
+     * Per STRATEGY.md scrivener adherence requirements
+     */
+    _createTristateRadio(fieldName) {
+        const container = document.createElement('div');
+        container.className = 'radio-group tristate';
+
+        // Option 1: Yes
+        const yesLabel = document.createElement('label');
+        yesLabel.className = 'radio-label';
+        const yesInput = document.createElement('input');
+        yesInput.type = 'radio';
+        yesInput.name = fieldName;
+        yesInput.value = 'yes';
+        yesLabel.appendChild(yesInput);
+        yesLabel.appendChild(document.createTextNode(' Yes'));
+
+        // Option 2: No
+        const noLabel = document.createElement('label');
+        noLabel.className = 'radio-label';
+        const noInput = document.createElement('input');
+        noInput.type = 'radio';
+        noInput.name = fieldName;
+        noInput.value = 'no';
+        noLabel.appendChild(noInput);
+        noLabel.appendChild(document.createTextNode(' No'));
+
+        // Option 3: Unknown - DEFAULT per scrivener neutrality
+        const unknownLabel = document.createElement('label');
+        unknownLabel.className = 'radio-label';
+        const unknownInput = document.createElement('input');
+        unknownInput.type = 'radio';
+        unknownInput.name = fieldName;
+        unknownInput.value = 'unknown';
+        unknownInput.checked = true; // Default to unknown - neutral, not leading
+        unknownLabel.appendChild(unknownInput);
+        unknownLabel.appendChild(document.createTextNode(' I don\'t know'));
+
+        container.appendChild(yesLabel);
+        container.appendChild(noLabel);
+        container.appendChild(unknownLabel);
+        return container;
+    },
+
+    /**
+     * Create Yes/No radio for simple boolean fields (like lead paint)
+     */
+    _createYesNoRadio(fieldName) {
+        const container = document.createElement('div');
+        container.className = 'radio-group';
+
+        const yesLabel = document.createElement('label');
+        yesLabel.className = 'radio-label';
+        const yesInput = document.createElement('input');
+        yesInput.type = 'radio';
+        yesInput.name = fieldName;
+        yesInput.value = 'true';
+        yesLabel.appendChild(yesInput);
+        yesLabel.appendChild(document.createTextNode(' Yes'));
+
+        const noLabel = document.createElement('label');
+        noLabel.className = 'radio-label';
+        const noInput = document.createElement('input');
+        noInput.type = 'radio';
+        noInput.name = fieldName;
+        noInput.value = 'false';
+        noInput.checked = true; // Default to No for simple booleans
+        noLabel.appendChild(noInput);
+        noLabel.appendChild(document.createTextNode(' No'));
+
+        container.appendChild(yesLabel);
+        container.appendChild(noLabel);
+        return container;
+    },
+
+    _getFriendlyLabel(fieldName) {
+        const friendlyLabels = {
+            // Flood Disclosure (§ 83.512 / SB 948) - NEUTRAL PHRASING
+            // Per scrivener adherence: questions must not lead the user
+            'flood_history_status': '§ 83.512 Flood Disclosure: Property flooding history',
+            'flood_claims_status': '§ 83.512 Flood Disclosure: Flood insurance claims',
+            'flood_fema_status': '§ 83.512 Flood Disclosure: Federal flood assistance (FEMA)',
+            'flood_status_unknown': 'Include "unknown" option for flood disclosure',
+            'flooding_description': 'Describe flooding details (if applicable)',
+            // Lead Paint
+            'is_pre_1978': 'Was this property built before 1978? (Lead paint disclosure required)',
+            'year_built': 'Year Built',
+            // Standard fields
+            'landlord_name': 'Landlord Name',
+            'tenant_name': 'Tenant Name',
+            'property_address': 'Property Address',
+            'monthly_rent': 'Monthly Rent ($)',
+            'lease_start': 'Lease Start Date',
+            'lease_end': 'Lease End Date',
+            'security_deposit': 'Security Deposit ($)',
+            'deposit_details': 'Security Deposit Details',
+            'landlord_email': 'Landlord Email',
+            'landlord_address': 'Landlord Address',
+            'tenant_email': 'Tenant Email'
+        };
+        return friendlyLabels[fieldName] || this._formatFieldName(fieldName);
     },
 
     _formatFieldName(name) {
@@ -393,14 +539,22 @@ const TemplateSelector = {
 
     _getFallbackTemplates() {
         // Hardcoded templates for offline/demo mode
+        // NOTE: email_consent removed - belongs in signature ceremony, not template form
+        // Flood fields use neutral tristate names per scrivener adherence
         return [
             {
                 name: 'Florida Lease',
                 id: 'florida_lease',
                 state: 'FL',
-                description: 'Florida residential lease with HB 615 Email Consent & SB 948 Flood Disclosure',
+                description: 'Florida residential lease (F.S. Chapter 83) with § 83.512 Flood Disclosure',
                 required_fields: ['landlord_name', 'tenant_name', 'property_address', 'monthly_rent', 'lease_start', 'lease_end'],
-                optional_fields: ['landlord_phone', 'landlord_email', 'tenant_email', 'security_deposit', 'pet_deposit', 'late_fee', 'grace_period_days', 'year_built', 'email_consent', 'has_prior_flooding', 'has_flood_claims', 'has_fema_assistance', 'flooding_description']
+                optional_fields: [
+                    'landlord_address', 'landlord_email', 'tenant_email',
+                    'year_built', 'is_pre_1978', 'deposit_details',
+                    // § 83.512 Flood Disclosure - tristate fields (yes/no/unknown)
+                    'flood_history_status', 'flood_claims_status', 'flood_fema_status',
+                    'flood_status_unknown', 'flooding_description'
+                ]
             },
             {
                 name: 'Texas Lease',
@@ -811,6 +965,58 @@ const StateSelector = {
             outline: none;
             border-color: #007bff;
         }
+        .radio-group {
+            display: flex;
+            gap: 12px;
+            padding: 8px 0;
+            flex-wrap: wrap;
+        }
+        .radio-group.tristate {
+            /* Tristate groups have 3 options - allow wrapping on mobile */
+            gap: 10px;
+        }
+        .radio-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 8px 14px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+        .radio-label:hover {
+            border-color: #007bff;
+            background: #f8f9fa;
+        }
+        .radio-label input[type="radio"] {
+            margin: 0;
+        }
+        /* Style for checked radio labels */
+        .radio-label:has(input:checked) {
+            border-color: #007bff;
+            background: #e7f1ff;
+        }
+        .checkbox-field {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: #e8f4fd;
+            border: 1px solid #b6d4fe;
+            border-radius: 6px;
+        }
+        .checkbox-field input[type="checkbox"] {
+            margin-top: 3px;
+            width: 18px;
+            height: 18px;
+        }
+        .checkbox-label {
+            flex: 1;
+            font-size: 0.9rem;
+            line-height: 1.4;
+        }
         /* Dark mode support */
         .dark-mode .modal-content {
             background: #1e1e1e;
@@ -836,6 +1042,18 @@ const StateSelector = {
             background: #2d2d2d;
             border-color: #444;
             color: #fff;
+        }
+        .dark-mode .radio-label {
+            border-color: #444;
+            background: #2d2d2d;
+        }
+        .dark-mode .radio-label:hover {
+            border-color: #007bff;
+            background: #333;
+        }
+        .dark-mode .checkbox-field {
+            background: #1a3a5c;
+            border-color: #2563eb;
         }
     `;
     document.head.appendChild(style);

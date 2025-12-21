@@ -4,6 +4,492 @@
 
 > Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with two deployable web applications.
 
+---
+
+## 🎯 TAMPA DEMO PRIORITY (January 2026)
+
+> **Goal:** Ship a comprehensive, featureful demo for Tampa Bay real estate meetups covering all three contract types: **Lease**, **Purchase**, and **Listing**.
+
+### Research Foundation
+
+Three comprehensive research documents have been created to guide implementation:
+
+| Document | Coverage | Key Statutes |
+|----------|----------|--------------|
+| [FL_PURCHASE.md](./FL_PURCHASE.md) | Purchase contracts, condos, mobile homes, maritime | FAR/BAR, SB 264, F.S. 718.503, F.S. 319.261 |
+| [FL_LEASE.md](./FL_LEASE.md) | Residential, commercial, mobile home park leases | Ch. 83 Pt I/II, Ch. 723, HB 1015, HB 621 |
+| [FL_LIST.md](./FL_LIST.md) | Listing agreements, brokerage compliance | Ch. 475, NAR Settlement, F.S. 689.302 |
+
+### Contract Type Priority Matrix
+
+| Contract Type | Template | Status | Demo Priority |
+|--------------|----------|--------|---------------|
+| **Residential Lease** | `florida_lease.typ` | ✅ Exists (needs gaps filled) | P0 - Showcase |
+| **Purchase - As-Is** | `florida_purchase_as_is.typ` | 🔴 Needs creation | P0 - Most common transaction |
+| **Listing Agreement** | `florida_listing.typ` | 🔴 Needs creation | P0 - Brokers are the audience |
+
+### Tampa Bay Metro Local Considerations
+
+| Area | County | Key Local Issues | Implementation |
+|------|--------|------------------|----------------|
+| **Tampa** | Hillsborough | MacDill AFB (SB 264 10-mile zone), CDDs (South Tampa, Brandon), Bayshore flood zones | Military proximity check, CDD addendum trigger |
+| **St. Petersburg** | Pinellas | CCCL disclosures, aging condo stock (SIRS critical), barrier islands | Coastal property rider, enhanced condo safety |
+| **Clearwater** | Pinellas | Beach regulations, height restrictions, short-term rental rules | Zoning disclosure addendum |
+| **Wesley Chapel** | Pasco | Extensive CDDs, agricultural transitions, Scrub Jay habitat | CDD detection, environmental disclosure |
+
+### Metro Detection Implementation
+
+```typescript
+// Efficient zip code → metro mapping (~15KB JSON)
+const FL_ZIP_METRO = {
+  // Tampa Bay (~600 zips)
+  "33601": { metro: "Tampa", county: "Hillsborough" },
+  "33701": { metro: "St. Petersburg", county: "Pinellas" },
+  // Orlando (~400 zips)
+  "32801": { metro: "Orlando", county: "Orange" },
+  // Miami (~500 zips)
+  "33101": { metro: "Miami", county: "Miami-Dade" },
+  // Jacksonville (~300 zips)
+  "32201": { metro: "Jacksonville", county: "Duval" },
+};
+
+// Critical infrastructure zones for SB 264
+const MILITARY_BASES = [
+  { name: "MacDill AFB", lat: 27.8492, lng: -82.5213, radius_miles: 10 },
+  { name: "NAS Jacksonville", lat: 30.3867, lng: -81.6800, radius_miles: 10 },
+  { name: "NS Mayport", lat: 30.3936, lng: -81.4183, radius_miles: 10 },
+];
+```
+
+**Detection Priority:**
+1. Zip code lookup (fastest, ~1ms)
+2. Parcel ID prefix (Hillsborough = 19-XXXXX)
+3. Geocode address (async, ~200ms, requires API)
+4. Manual selection (fallback)
+
+---
+
+## 📋 EXISTING TEMPLATE GAP ANALYSIS
+
+### `florida_lease.typ` - Current State Assessment
+
+**What's Implemented Well:**
+
+| Aspect | Status | Notes |
+|--------|--------|-------|
+| Modular Addenda Architecture | ✅ Excellent | Uses `#if get_bool()` for conditional sections |
+| Radon Gas (§ 404.056) | ✅ Complete | Exact statutory text |
+| Lead-Based Paint (pre-1978) | ✅ Complete | Conditional on year built |
+| Security Deposit (§ 83.49) | ✅ Complete | Bank details, method, statutory rights |
+| HB 615 Email Consent | ✅ Complete | Both checkboxes blank—tenant must choose |
+| Flood Disclosure (§ 83.512) | ✅ Complete | Tristate wizard, scrivener compliant |
+| Scrivener Doctrine | ✅ Followed | No "we recommend" language |
+
+**Gaps to Fill:**
+
+| Gap | Research Source | Priority | Implementation Notes |
+|-----|-----------------|----------|---------------------|
+| **HOA/Condo Association Addendum** | FL_LEASE.md §3.1 | P0 | "Association Supremacy Clause", indemnity for Association eviction costs, approval contingency |
+| **CDD Disclosure (§ 190.048)** | FL_LEASE.md, FL_LIST.md | P0 | Boldfaced text required, assessment amounts |
+| **Liquidated Damages (§ 83.595)** | FL_LEASE.md §6.2 | P1 | "Safe harbor" early termination—max 2 months rent, separate signature required |
+| **30-Day Notice Explicit Reference** | FL_LEASE.md (HB 1417) | P1 | Currently uses variable, should cite statute explicitly |
+| **Jury Trial Waiver** | FL_LEASE.md §6.3 | P2 | Bold, all-caps clause for faster bench trials |
+| **Mold Prevention Addendum** | FL_LEASE.md §6.4 | P2 | Tenant obligation: run AC, humidity < 60%, report leaks |
+| **HB 621 Squatter Language** | FL_LEASE.md §6.1 | P2 | "Unauthorized occupants = transient occupants/trespassers" |
+| **Service Member Rights (§ 83.682)** | FL_LEASE.md §3.2 | P2 | 35-mile radius termination right for military tenants |
+| **ESA Fraud Prevention (SB 1084)** | FL_LEASE.md §6.5 | P3 | Cite § 817.265, require "personal knowledge" documentation |
+
+### New Templates Required
+
+#### `florida_purchase_as_is.typ` - Structure
+
+Based on FL_PURCHASE.md research, modeled on FAR/BAR "As-Is" Residential Contract:
+
+```
+SECTIONS:
+1. PARTIES AND PROPERTY
+   - Buyer/Seller identification
+   - Property legal description (not just address)
+   - Parcel ID requirement
+
+2. PURCHASE PRICE AND DEPOSITS
+   - Initial deposit, additional deposit
+   - Escrow agent details
+
+3. FINANCING (Conditional)
+   - Cash, Conventional, FHA, VA options
+   - Appraisal contingency
+   - Appraisal Gap Clause (configurable cap)
+
+4. INSPECTION PERIOD (Key "As-Is" Feature)
+   - Sole discretion termination right
+   - Default 15 days (negotiable to 7-10 in competitive markets)
+   - No repair obligation language
+
+5. TITLE AND SURVEY
+   - Title insurance commitment
+   - Survey requirements
+   - Marketable title definition
+
+6. CLOSING
+   - Closing date
+   - Prorations (taxes, HOA, etc.)
+   - Closing costs allocation
+
+7. DISCLOSURES (Mandatory Addenda)
+   - Flood Disclosure (§ 689.302)
+   - Foreign Ownership Affidavit (SB 264)
+   - Lead-Based Paint (pre-1978)
+   - Radon Gas (§ 404.056)
+
+CONDITIONAL ADDENDA:
+A. Condo Rider (if condo)
+   - SIRS/Milestone Inspection acknowledgment
+   - 7-day document review period
+   - Association approval contingency
+
+B. HOA Rider (if in HOA)
+   - HOA disclosure summary (§ 720.401)
+   - Assessment disclosure
+
+C. CDD Rider (if in CDD)
+   - § 190.048 boldfaced disclosure
+
+D. SB 264 Critical Infrastructure Warning (if near military base)
+   - MacDill, NAS Jax, etc.
+   - Foreign principal prohibition notice
+
+E. Appraisal Gap Guarantee (optional)
+   - Configurable cap amount
+
+F. Kick-Out Clause / Rider X (optional)
+   - For home-sale contingencies
+   - 24-72 hour response window
+
+G. Post-Closing Occupancy Agreement (optional)
+   - Seller as "licensee" not "tenant"
+   - Holdback escrow provision
+```
+
+#### `florida_listing.typ` - Structure
+
+Based on FL_LIST.md research, Ch. 475 compliant:
+
+```
+SECTIONS:
+1. BROKER AND SELLER INFORMATION
+   - License numbers
+   - Brokerage details
+
+2. PROPERTY INFORMATION
+   - Legal description (not just address)
+   - Parcel ID
+   - Year built (Lead Paint trigger)
+
+3. LISTING TERMS (Ch. 475 "Four Pillars")
+   - Definite expiration date (hard-coded, no auto-renewal)
+   - Property description
+   - Price and terms
+   - Commission structure
+
+4. COMPENSATION (NAR Settlement Compliant)
+   - Listing broker fee (explicit, separate)
+   - Buyer concession authorization (optional, separate section)
+   - Fee negotiability disclosure (bold, initialed)
+   - NO aggregated commission language
+
+5. SELLER OBLIGATIONS
+   - Access for showings
+   - Disclosure duties
+   - Cooperation requirements
+
+6. BROKER OBLIGATIONS
+   - Marketing commitments
+   - MLS participation
+   - Fiduciary duties
+
+7. TERMINATION
+   - Protection period clause
+   - Liquidated damages (not penalty)
+   - Procuring cause protection
+
+8. SIGNATURES
+   - 24-hour delivery acknowledgment
+   - Electronic consent (Ch. 668)
+
+MANDATORY DISCLOSURES (Pre-filled at Listing):
+A. Flood Disclosure Questionnaire (§ 689.302)
+   - Completed by seller at listing time
+   - Ready for buyer at contract
+
+B. Radon Gas Notification (§ 404.056)
+   - Statutory text
+
+CONDITIONAL ADDENDA:
+C. Lead-Based Paint (pre-1978)
+   - Federal requirement
+
+D. CDD Disclosure (if applicable)
+   - § 190.048 boldfaced text
+
+E. HOA Disclosure Summary (§ 720.401)
+   - Voidability warning if not provided
+
+F. Condo Safety Rider (if condo)
+   - SIRS/Milestone status
+   - 7-day review period disclosure
+
+G. Coastal Property Rider (if seaward of CCCL)
+   - § 161.57 disclosure
+
+H. Scrub Jay/HCP Disclosure (if in habitat zone)
+   - Charlotte, Sarasota, Brevard, Palm Bay
+
+I. SB 264 Foreign Interest Notice
+   - Warning for properties near critical infrastructure
+```
+
+---
+
+## 🎬 FOUR DEMO STRUCTURE
+
+### Demo 1: High-Level Overview (5-7 min)
+**"The Florida Real Estate Compliance Shield"**
+
+```
+FLOW:
+1. Open agentPDF.org → Show three contract types available
+   - "Lease, Purchase, Listing—all Florida-compliant"
+
+2. Metro detection demo
+   - Enter zip 33629 (South Tampa)
+   - System detects: "Tampa Bay Metro, Hillsborough County"
+   - Warning appears: "Property within 10 miles of MacDill AFB - SB 264 restrictions apply"
+
+3. Quick generation of each type (30 seconds each)
+   - Generate a lease → Show flood disclosure included
+   - Generate a purchase contract → Show As-Is inspection clause
+   - Generate a listing → Show NAR-compliant commission structure
+
+4. Cross-site handoff demonstration
+   - Click "Send for Signature"
+   - Seamless redirect to getsignatures.org
+   - Document pre-loaded, ready to sign
+
+5. Show "Coming Soon: 16 States" selector
+   - FL highlighted as available
+   - TX, CA, NY, GA, IL, etc. shown with lock icons
+   - "Q2 2026" tooltip on hover
+```
+
+### Demo 2: Lease Deep Dive (10-15 min)
+**"The Chapter 83 Compliance Engine"**
+
+```
+FLOW:
+1. Start new lease template
+   - Enter property address in Tampa
+   - System auto-detects metro, shows applicable disclosures
+
+2. Flood Disclosure Wizard walkthrough (§ 83.512)
+   - Step through tristate questions
+   - Show "I don't know" as neutral default
+   - Generate compliant disclosure
+
+3. Basic lease terms
+   - Rent, deposit, dates
+   - Show security deposit bank disclosure auto-generated
+
+4. Conditional addenda demonstration
+   - Toggle "Property in HOA" → HOA Addendum appears
+   - Toggle "Property in CDD" → CDD Disclosure appears
+   - Toggle "Military tenant" → § 83.682 rights notice appears
+
+5. HB 615 Email Consent ceremony
+   - Show both checkboxes blank
+   - Explain tenant must actively choose during signing
+   - "This saves landlords $800/month in certified mail"
+
+6. Generate PDF → Send to GetSignatures
+   - Show complete document with all addenda
+   - Demonstrate signature flow
+```
+
+### Demo 3: Purchase Contract Deep Dive (10-15 min)
+**"The Tiered Contractual Defense Protocol"**
+
+```
+FLOW:
+1. Explain As-Is vs Standard contract selection
+   - "As-Is gives buyer sole discretion exit during inspection"
+   - "Standard locks buyer in once seller agrees to repairs"
+   - Show why As-Is is recommended for buyers
+
+2. Property identification
+   - Enter address near MacDill AFB
+   - System triggers SB 264 warning
+   - "This property is within Critical Infrastructure Zone"
+   - Foreign Ownership Affidavit requirement shown
+
+3. Flood Disclosure integration
+   - Same wizard as lease
+   - "Disclosure must be ready at contract time"
+
+4. Condo scenario walkthrough
+   - Select "Property is a condominium"
+   - SIRS/Milestone Inspection disclosure appears
+   - Explain 7-day document review period
+   - "Buyer can void until closing if paperwork is flawed"
+
+5. Financing contingencies
+   - Show Appraisal Gap clause configuration
+   - "Pay up to $10,000 over appraisal, exit if gap exceeds"
+   - Demonstrate Kick-Out clause for contingent offers
+
+6. Generate and explain signature blocks
+   - Multiple signature points for different addenda
+   - Clear separation of disclosures
+```
+
+### Demo 4: Listing Agreement Deep Dive (10-15 min)
+**"The NAR Settlement-Ready Listing System"**
+
+```
+FLOW:
+1. Chapter 475 "Four Pillars" validation
+   - Definite expiration date (no auto-renewal allowed by law)
+   - Legal description requirement
+   - Price and terms
+   - Commission structure
+
+2. NAR Settlement compliance demonstration
+   - Show decoupled commission structure
+   - "Listing broker fee: X%" (explicit, separate)
+   - "Buyer concession authorization" (optional, separate section)
+   - Fee negotiability disclosure with required initial box
+   - "No more aggregated 6% language"
+
+3. Pre-listing disclosure collection
+   - Flood disclosure completed by seller NOW
+   - "Ready to provide to buyers immediately"
+   - Explain voidability risk if disclosures missing
+
+4. Property-specific triggers
+   - Enter pre-1978 property → Lead Paint Rider attached
+   - Enter CDD property → § 190.048 disclosure attached
+   - Enter coastal property → CCCL Rider attached
+
+5. Protection period and termination
+   - Explain procuring cause protection
+   - Show liquidated damages vs penalty distinction
+   - "Exception voids if seller relists with another broker"
+
+6. Electronic consent and 24-hour delivery
+   - Ch. 668 compliance
+   - Audit trail generation
+   - "Proof of delivery protects your license"
+```
+
+---
+
+## 📅 IMPLEMENTATION ROADMAP
+
+### Week 1: Template Gap Fixes
+
+| Task | File | Priority |
+|------|------|----------|
+| Add HOA/Condo Association Addendum | `florida_lease.typ` | P0 |
+| Add CDD Disclosure Addendum | `florida_lease.typ` | P0 |
+| Add Liquidated Damages Addendum (§ 83.595) | `florida_lease.typ` | P1 |
+| Add explicit 30-day notice statutory reference | `florida_lease.typ` | P1 |
+| Add Jury Trial Waiver clause | `florida_lease.typ` | P2 |
+| Add Mold Prevention Addendum | `florida_lease.typ` | P2 |
+| Add HB 621 Squatter Language | `florida_lease.typ` | P2 |
+
+### Week 2: Purchase Template Creation
+
+| Task | File | Priority |
+|------|------|----------|
+| Create base template structure | `florida_purchase_as_is.typ` | P0 |
+| Implement As-Is inspection clause | `florida_purchase_as_is.typ` | P0 |
+| Add Flood Disclosure integration | `florida_purchase_as_is.typ` | P0 |
+| Add SB 264 Foreign Ownership section | `florida_purchase_as_is.typ` | P0 |
+| Add Condo Rider (SIRS/Milestone) | `florida_purchase_as_is.typ` | P1 |
+| Add Appraisal Gap clause | `florida_purchase_as_is.typ` | P2 |
+| Add Kick-Out clause | `florida_purchase_as_is.typ` | P2 |
+
+### Week 3: Listing Template Creation
+
+| Task | File | Priority |
+|------|------|----------|
+| Create base template with Four Pillars | `florida_listing.typ` | P0 |
+| Implement NAR-compliant commission structure | `florida_listing.typ` | P0 |
+| Add fee negotiability disclosure | `florida_listing.typ` | P0 |
+| Add pre-listing disclosure collection | `florida_listing.typ` | P0 |
+| Add CDD/HOA/Condo conditional riders | `florida_listing.typ` | P1 |
+| Add protection period clause | `florida_listing.typ` | P1 |
+| Add Coastal/CCCL rider | `florida_listing.typ` | P2 |
+
+### Week 4: Metro Detection & Integration
+
+| Task | Location | Priority |
+|------|----------|----------|
+| Create FL zip → metro JSON mapping | `wasm/src/data/` | P0 |
+| Implement military base proximity check | `wasm/src/geo.rs` | P0 |
+| Add metro detection to template selector | `www/js/template-selector.js` | P0 |
+| Wire up conditional addenda based on metro | `www/js/template-selector.js` | P1 |
+| Add "Coming Soon" state selector UI | `www/index.html` | P2 |
+
+### Week 5: Demo Polish & Testing
+
+| Task | Priority |
+|------|----------|
+| Create Demo 1 script (overview) | P0 |
+| Create Demo 2 script (lease deep dive) | P0 |
+| Create Demo 3 script (purchase deep dive) | P0 |
+| Create Demo 4 script (listing deep dive) | P0 |
+| Update Tampa landing page with new features | P1 |
+| Test all flows end-to-end | P0 |
+| Create sample documents for each contract type | P1 |
+
+---
+
+## 🌍 16-STATE COMPLIANCE ENGINE (Coming Soon Display)
+
+The existing compliance engine supports 16 states with 227 tests. For the Tampa demo, display these as "Coming Soon":
+
+```javascript
+const STATE_STATUS = {
+  available: {
+    FL: { name: "Florida", tests: 31, templates: ["lease", "purchase", "listing"] }
+  },
+  coming_soon: {
+    TX: { name: "Texas", tests: 15, eta: "Q2 2026" },
+    CA: { name: "California", tests: 18, eta: "Q2 2026" },
+    NY: { name: "New York", tests: 12, eta: "Q2 2026" },
+    GA: { name: "Georgia", tests: 10, eta: "Q2 2026" },
+    IL: { name: "Illinois", tests: 11, eta: "Q2 2026" },
+    PA: { name: "Pennsylvania", tests: 8, eta: "Q3 2026" },
+    NJ: { name: "New Jersey", tests: 9, eta: "Q3 2026" },
+    VA: { name: "Virginia", tests: 8, eta: "Q3 2026" },
+    MA: { name: "Massachusetts", tests: 7, eta: "Q3 2026" },
+    OH: { name: "Ohio", tests: 6, eta: "Q3 2026" },
+    MI: { name: "Michigan", tests: 7, eta: "Q3 2026" },
+    WA: { name: "Washington", tests: 8, eta: "Q3 2026" },
+    AZ: { name: "Arizona", tests: 6, eta: "Q3 2026" },
+    NC: { name: "North Carolina", tests: 5, eta: "Q3 2026" },
+    TN: { name: "Tennessee", tests: 5, eta: "Q3 2026" }
+  }
+};
+```
+
+**UI Treatment:**
+- Florida: Green checkmark, fully clickable
+- Others: Lock icon with state outline, "Coming Q2 2026" tooltip
+- Clicking locked state shows: "Join waitlist for [State] launch notification"
+
+---
+
 ## Quick Reference
 
 | Domain | Purpose | Source Microservice | Priority |
@@ -33,33 +519,53 @@
 | **Tampa Demo Script** | Marketing | SHORT-TERM | ✅ COMPLETE |
 | **30-Day Termination Notice** | § 83.57 | SHORT-TERM | ⚠️ Template needs update |
 
-### § 83.512 Flood Disclosure (MEDIUM-TERM PRIORITY)
+### § 83.512 Flood Disclosure (MEDIUM-TERM PRIORITY) - ✅ COMPLETE
 
 **Risk**: Landlords who fail to provide this disclosure can face:
 - Tenant can terminate lease immediately
 - Tenant can demand full rent refund
 - Creates "voidability risk" for every lease that lacks this addendum
 
-**Implementation**: Interview-based wizard that generates compliant form:
+**Implementation**: Neutral tristate wizard that generates compliant form:
 
 ```
-Step 1: "Has this property experienced flooding during your ownership?"
-Step 2: "Have you filed any flood-related insurance claims?"
-Step 3: "Has this property received FEMA or federal flood assistance?"
-         ↓
-[Generate § 83.512 Compliant Disclosure Form]
+Step 1: "Property flooding history"          → [Yes] [No] [I don't know]
+Step 2: "Flood insurance claims"             → [Yes] [No] [I don't know]
+Step 3: "Federal flood assistance (FEMA)"    → [Yes] [No] [I don't know]
+                                               ↓
+                    [Generate § 83.512 Compliant Disclosure Form]
 ```
 
-### HB 615 Email Consent (SHORT-TERM PRIORITY)
+**Scrivener Adherence**: Per strict neutrality requirements, the wizard:
+- Offers 3 options including "I don't know / Property recently acquired"
+- Defaults to "I don't know" (doesn't lead user either way)
+- Uses neutral phrasing without implying a "correct" answer
+- Complies with form generation best practices for legal documents
+
+### HB 615 Email Consent (SHORT-TERM PRIORITY) - ✅ COMPLETE
 
 **Value Prop**: "Stop paying for Certified Mail. Get the free form to make Email Legal in Florida."
 
-**Implementation**: Checkbox during signature ceremony + addendum attachment:
+**Implementation**: The TENANT signs consent during signature ceremony (not pre-filled by landlord):
 
 ```
-☑ I agree to receive all legally required notices via email at: [tenant@email.com]
-  This consent is provided pursuant to Florida Statute § 83.56 as amended by HB 615.
+Template generates:
+┌────────────────────────────────────────────────────────────────┐
+│  TENANT'S ELECTION (HB 615)                                    │
+│  (Tenant: Please check ONE option below during signing)        │
+│                                                                │
+│  ☐ I CONSENT to receive notices via email                      │
+│  ☐ I DECLINE and require postal mail                           │
+│                                                                │
+│  Email: [tenant@email.com]                                     │
+│  Signature: ________________________                           │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+**Scrivener Adherence**:
+- Both options unchecked by default (tenant must actively choose)
+- Tenant signs during getsignatures.org ceremony
+- Not pre-filled by landlord in template form
 
 ---
 
@@ -171,7 +677,8 @@ const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
 12. [Phase 4: Nationwide Template Expansion](#phase-4-nationwide-template-expansion)
 13. [Phase 5: Tax Preparation Platform](#phase-5-tax-preparation-platform)
 14. [Phase 6: Estate Planning Platform](#phase-6-estate-planning-platform)
-15. [Test Coverage Strategy](#12-test-coverage-strategy)
+15. [Phase 7: Web Performance Benchmarking](#phase-7-web-performance-benchmarking)
+16. [Test Coverage Strategy](#12-test-coverage-strategy)
 16. [Demo Functionality Preservation](#13-demo-functionality-preservation)
 17. [Future Considerations](#14-future-considerations)
 
@@ -332,6 +839,13 @@ Migrated from Python `http.server` to **Trunk** for local development:
 2. Show "Flood Disclosure" card → "Generate Form"
 3. Fill quick form → Download PDF in seconds
 4. "Works offline - perfect for showings"
+
+**Demo Enhancement Ideas** (for smoother Tampa REIA demos):
+| Feature | Description | Impact | Status |
+|---------|-------------|--------|--------|
+| **Address Autofill** | Type Tampa address → auto-fill property info (year built, flood zone, etc.) | Makes demo faster, "wow" factor | 🔮 Future |
+| **QR Code Export** | Generate QR code linking to pre-filled form | Easy sharing at events | 🔮 Future |
+| **Kiosk Mode** | Full-screen demo mode without URL bar | Professional presentation | 🔮 Future |
 
 ---
 
@@ -621,7 +1135,329 @@ PERMITTED (Scrivener): "Do you want a Credit Shelter Trust? [Tooltip: defined as
 - [ ] Build B2B2C partner portal for financial advisors
 - [ ] Complete document suite with Self-Proving Affidavits
 
+---
+
+## Phase 7: Web Performance Benchmarking
+
+> **Full Research**: See [BENCHMARKING_RESEARCH.md](./BENCHMARKING_RESEARCH.md) for comprehensive implementation guide.
+
+### Overview
+
+This phase introduces a SOTA (State-of-the-Art) web performance benchmarking harness built on `chromiumoxide` and Rust. The harness measures Core Web Vitals (LCP, INP, CLS) and custom business metrics for Critical User Journeys (CUJs), integrating with the existing testing infrastructure.
+
+### Why Benchmarking?
+
+| Problem | Solution |
+|---------|----------|
+| Performance regressions slip into production | Automated CI/CD quality gates with threshold enforcement |
+| "It works on my machine" syndrome | Network/CPU throttling simulates real-world conditions |
+| Single-metric blindness (just measuring "load time") | Multi-dimensional metrics: Loading, Interactivity, Visual Stability |
+| Averages hide tail latency problems | Percentile-based assertions (P50, P95, P99) |
+
+### Architecture: Parallel Browser Contexts
+
+The benchmarking harness leverages `chromiumoxide`'s async architecture for high-throughput measurement:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      BENCHMARK ORCHESTRATOR                         │
+│  - Reads benchmark.toml configuration                               │
+│  - Spawns parallel browser contexts (not processes)                 │
+│  - Aggregates results and computes statistics                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐       │
+│  │ Browser Context │ │ Browser Context │ │ Browser Context │ ...   │
+│  │ (Iteration 1)   │ │ (Iteration 2)   │ │ (Iteration 3)   │       │
+│  │                 │ │                 │ │                 │       │
+│  │ - Isolated      │ │ - Isolated      │ │ - Isolated      │       │
+│  │ - Fresh cache   │ │ - Fresh cache   │ │ - Fresh cache   │       │
+│  │ - web-vitals.js │ │ - web-vitals.js │ │ - web-vitals.js │       │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘       │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                   SINGLE BROWSER PROCESS                     │   │
+│  │  (Reused across all contexts for efficiency)                 │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Insight**: Unlike testing where parallelism is per-process, benchmarking uses **parallel Browser Contexts** within a single Chromium process. Context creation is ~50-100ms vs ~2-5s for process startup.
+
+### Integration with Testing Infrastructure
+
+The benchmarking harness builds on the existing `chromiumoxide`-based E2E testing:
+
+| Component | Testing Use | Benchmarking Use |
+|-----------|-------------|------------------|
+| Browser spawn | 1 per test file | 1 shared, many contexts |
+| Context isolation | Test independence | Iteration isolation (cold cache) |
+| CDP commands | Assertions | Metric collection + throttling |
+| Page navigation | Verify UI state | Measure LCP, wait for NetworkIdle |
+| Element interaction | Verify behavior | Measure INP, custom timings |
+
+### Crate Structure
+
+```
+crates/
+└── benchmark-harness/
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs              # Public API
+        ├── config.rs           # TOML configuration parsing
+        ├── runner.rs           # Parallel execution orchestrator
+        ├── metrics/
+        │   ├── mod.rs
+        │   ├── web_vitals.rs   # LCP, INP, CLS collection
+        │   ├── custom.rs       # User Timing API bridge
+        │   └── trace.rs        # Chrome Tracing analysis
+        ├── throttling/
+        │   ├── mod.rs
+        │   ├── network.rs      # Network.emulateNetworkConditions
+        │   └── cpu.rs          # Emulation.setCPUThrottlingRate
+        ├── stats/
+        │   ├── mod.rs
+        │   ├── percentiles.rs  # P50, P75, P95, P99
+        │   └── outliers.rs     # IQR-based detection
+        └── reporter/
+            ├── mod.rs
+            ├── json.rs         # CI artifact output
+            └── console.rs      # Human-readable summary
+```
+
+### Configuration Schema
+
+```toml
+# benchmark.toml
+
+[benchmark]
+name = "agentPDF Compliance Check Flow"
+base_url = "http://localhost:8080"
+iterations = 30
+warmup = 3
+parallel_contexts = 4
+
+[throttling]
+network_profile = "Slow4G"  # Fast3G, Slow4G, Offline
+cpu_slowdown = 4.0          # 1.0 = no throttling, 4.0 = mid-tier mobile
+
+[thresholds]
+lcp_p95 = 2500   # Largest Contentful Paint (ms)
+inp_p95 = 200    # Interaction to Next Paint (ms)
+cls_p95 = 0.1    # Cumulative Layout Shift (score)
+
+[[scenarios]]
+name = "Upload and Check PDF"
+steps = [
+    { action = "navigate", url = "/" },
+    { action = "wait", condition = "network_idle" },
+    { action = "upload", selector = "#file-input", file = "fixtures/florida_lease.pdf" },
+    { action = "click", selector = "#check-compliance" },
+    { action = "wait", condition = { selector = ".compliance-results" } },
+    { action = "measure", name = "compliance-check-duration" },
+]
+
+[[scenarios]]
+name = "Signature Flow"
+steps = [
+    { action = "navigate", url = "https://getsignatures.org" },
+    { action = "wait", condition = "network_idle" },
+    { action = "upload", selector = "#pdf-upload", file = "fixtures/contract.pdf" },
+    { action = "click", selector = ".add-recipient" },
+    { action = "type", selector = "#recipient-email", text = "test@example.com" },
+    { action = "click", selector = ".next-step" },
+    { action = "measure", name = "recipient-add-duration" },
+]
+```
+
+### Claude Code Subagent Delegation Strategy
+
+The benchmarking implementation is well-suited for **parallel subagent delegation** due to its modular, independent components. Here's the optimal delegation plan:
+
+#### Phase 7.1: Foundation (Parallel Subagents)
+
+| Subagent | Task | Dependencies | Estimated Complexity |
+|----------|------|--------------|---------------------|
+| **Agent A** | `benchmark-harness` crate scaffold + config.rs | None | Low |
+| **Agent B** | `metrics/web_vitals.rs` - LCP, INP, CLS collection | None | Medium |
+| **Agent C** | `throttling/` module - Network + CPU throttling | None | Low |
+| **Agent D** | `stats/` module - Percentiles + Outlier detection | None | Medium |
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PARALLEL EXECUTION (Phase 7.1)                                     │
+│                                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
+│  │ Agent A  │  │ Agent B  │  │ Agent C  │  │ Agent D  │            │
+│  │ Scaffold │  │ Metrics  │  │ Throttle │  │ Stats    │            │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘            │
+│       │             │             │             │                   │
+│       └─────────────┴─────────────┴─────────────┘                   │
+│                           │                                         │
+│                     MERGE POINT                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why Parallel**: These components have no code dependencies on each other. They only share types from `shared-types` which already exists.
+
+#### Phase 7.2: Integration (Sequential)
+
+| Step | Task | Depends On |
+|------|------|-----------|
+| 1 | `runner.rs` - Orchestrator that uses all modules | Phase 7.1 complete |
+| 2 | `reporter/` - JSON + Console output | runner.rs |
+| 3 | Integration tests with real scenarios | All above |
+
+**Why Sequential**: The runner must integrate all the parallel work. This is a natural merge point.
+
+#### Phase 7.3: CI/CD Integration (Parallel Subagents)
+
+| Subagent | Task | Dependencies |
+|----------|------|--------------|
+| **Agent E** | GitHub Actions workflow for benchmarks | Phase 7.2 |
+| **Agent F** | Benchmark scenarios for agentPDF.org | Phase 7.2 |
+| **Agent G** | Benchmark scenarios for getsignatures.org | Phase 7.2 |
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PARALLEL EXECUTION (Phase 7.3)                                     │
+│                                                                     │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │ Agent E  │  │   Agent F    │  │   Agent G    │                  │
+│  │ CI/CD    │  │ agentPDF     │  │ docsign      │                  │
+│  │ Workflow │  │ Scenarios    │  │ Scenarios    │                  │
+│  └──────────┘  └──────────────┘  └──────────────┘                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why Parallel**: Each domain (CI config, agentPDF scenarios, docsign scenarios) is independent.
+
+### Implementation Checklist
+
+**Phase 7.1: Foundation (Parallel)**
+- [ ] Create `crates/benchmark-harness/` scaffold with Cargo.toml
+- [ ] Implement config.rs (TOML parsing with serde)
+- [ ] Implement `metrics/web_vitals.rs` (inject web-vitals.js, collect via console)
+- [ ] Implement `throttling/network.rs` (Network.emulateNetworkConditions)
+- [ ] Implement `throttling/cpu.rs` (Emulation.setCPUThrottlingRate)
+- [ ] Implement `stats/percentiles.rs` (P50, P75, P95, P99)
+- [ ] Implement `stats/outliers.rs` (IQR method)
+
+**Phase 7.2: Integration (Sequential)**
+- [ ] Implement `runner.rs` (parallel context spawning, scenario execution)
+- [ ] Implement `metrics/custom.rs` (User Timing API bridge)
+- [ ] Implement `metrics/trace.rs` (Chrome Tracing for Long Tasks)
+- [ ] Implement `reporter/json.rs` (structured output for CI)
+- [ ] Implement `reporter/console.rs` (human-readable summary)
+- [ ] Add integration tests with mock scenarios
+
+**Phase 7.3: CI/CD & Scenarios (Parallel)**
+- [ ] Create `.github/workflows/benchmark.yml`
+- [ ] Create `benchmarks/agentpdf/` scenario files
+- [ ] Create `benchmarks/docsign/` scenario files
+- [ ] Add threshold enforcement (exit codes for CI)
+- [ ] Document benchmark results format
+
+**Phase 7.4: Advanced Features (Optional)**
+- [ ] Add `metrics/trace.rs` for Long Task detection
+- [ ] Add Perfetto trace export for manual analysis
+- [ ] Add historical trend tracking (store results over time)
+- [ ] Add A/B comparison mode (compare branches)
+
+### Key Dependencies
+
+```toml
+# crates/benchmark-harness/Cargo.toml
+
+[dependencies]
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+toml = "0.8"
+statrs = "0.17"            # Statistical functions
+average = "0.15"           # Online mean/variance
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+```
+
+### Usage Examples
+
+**CLI Usage:**
+```bash
+# Run all benchmarks
+cargo run -p benchmark-harness -- --config benchmarks/agentpdf.toml
+
+# Run with specific throttling override
+cargo run -p benchmark-harness -- --config benchmarks/docsign.toml --network slow4g --cpu 6
+
+# Output JSON for CI
+cargo run -p benchmark-harness -- --config benchmarks/all.toml --output json > results.json
+```
+
+**Programmatic Usage:**
+```rust
+use benchmark_harness::{BenchmarkRunner, Config};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = Config::from_file("benchmark.toml")?;
+    let runner = BenchmarkRunner::new(config).await?;
+
+    let results = runner.run_all().await?;
+
+    // Check thresholds
+    if results.lcp_p95 > config.thresholds.lcp_p95 {
+        eprintln!("LCP P95 exceeded threshold!");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+```
+
+### Success Metrics
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Benchmark execution time | < 5 min for 30 iterations | Wall clock |
+| Context startup overhead | < 100ms per context | Trace |
+| Statistical significance | < 5% CoV for stable pages | Coefficient of Variation |
+| CI integration | Zero false positives | Track over 100 runs |
+
+### Relationship to Testing Infrastructure
+
+The benchmarking harness **complements but does not replace** the existing E2E testing:
+
+| Concern | E2E Tests | Benchmarks |
+|---------|-----------|------------|
+| **Question answered** | "Does it work?" | "Is it fast enough?" |
+| **Failure mode** | Assertion failure | Threshold violation |
+| **Parallelism** | Multiple browser processes | Multiple contexts in one process |
+| **Isolation** | Full process isolation | Context isolation (cache, cookies) |
+| **Frequency** | Every PR | Nightly + release |
+| **Duration** | Seconds per test | Minutes per scenario (many iterations) |
+
+Both systems share:
+- `chromiumoxide` as the browser automation layer
+- Scenario definitions (can share selectors)
+- CI infrastructure (GitHub Actions)
+
 ### Build Commands
+
+```bash
+# Run benchmarks locally
+cargo run -p benchmark-harness -- --config benchmarks/config.toml
+
+# Run with verbose output
+RUST_LOG=benchmark_harness=debug cargo run -p benchmark-harness
+
+# Generate JSON report
+cargo run -p benchmark-harness -- --output json > benchmark-results.json
+```
+
+### General Build Commands
 
 ```bash
 # Full workspace check

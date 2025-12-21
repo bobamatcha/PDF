@@ -10,6 +10,7 @@ members = [
     # "crates/corpus-core",      # Blocked: candle/rand/half version conflicts
     "crates/docsign-core",
     "crates/typst-engine",
+    "crates/benchmark-harness",
 
     # Apps
     "apps/agentpdf-web/wasm",
@@ -140,6 +141,7 @@ compliance-engine = { path = "crates/compliance-engine" }
 corpus-core = { path = "crates/corpus-core" }
 docsign-core = { path = "crates/docsign-core" }
 typst-engine = { path = "crates/typst-engine" }
+benchmark-harness = { path = "crates/benchmark-harness" }
 
 [profile.release]
 opt-level = "z"  # Smallest size (was "s")
