@@ -56,16 +56,30 @@ apps/                       # Deployable applications
 
 ### Compliance Engine
 - **16-State Coverage** - FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN
-- **227 Tests** - Comprehensive rule validation with property-based testing
+- **268 Tests** - Comprehensive rule validation with property-based testing (including Florida real estate)
 - **Violation Detection** - Pattern matching with severity levels (Critical, Warning, Info)
 - **State-specific Rules** - Security deposits, notice periods, prohibited provisions, disclosures
 
 ### Document Templates
-- **3 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`
-- **florida_lease.typ**: 1100-line comprehensive Florida residential lease (F.S. Chapter 83 compliant)
-- **Dynamic Field Population**: 40+ customizable fields via JSON inputs
+- **6 Embedded Typst Templates**: `invoice`, `letter`, `florida_lease`, `florida_purchase_contract`, `florida_escalation_addendum`, `florida_listing_agreement`
+- **florida_lease.typ**: Comprehensive Florida residential lease (F.S. Chapter 83 compliant)
+- **florida_purchase_contract.typ**: Full residential purchase contract with all mandatory disclosures
+- **florida_escalation_addendum.typ**: Competitive offer escalation with max price cap
+- **florida_listing_agreement.typ**: Exclusive listing with § 475.278 brokerage disclosure
+- **Dynamic Field Population**: 60+ customizable fields via JSON inputs
 - **HB 615 Email Consent**: Addendum G - Electronic notice consent per § 83.56
 - **SB 948 Flood Disclosure**: Addendum H - Mandatory flood history disclosure per § 83.512
+
+### Florida Real Estate Compliance (NEW)
+- **§ 404.056** - Radon Gas Disclosure
+- **§ 689.261** - Property Tax Disclosure
+- **§ 689.302** - Flood Disclosure (SB 948, October 2025)
+- **§ 720.401** - HOA Disclosure
+- **§ 553.996** - Energy Efficiency Disclosure
+- **§ 475.278** - Brokerage Relationship Disclosure
+- **§ 475.25** - Definite Expiration Date (Listing Agreements)
+- **42 U.S.C. § 4852d** - Lead Paint Disclosure (pre-1978)
+- **Johnson v. Davis (1985)** - Material Defect Disclosure
 
 ### Digital Signatures
 - **PAdES-B Signatures**: PDF Advanced Electronic Signatures
@@ -466,21 +480,21 @@ See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
 | **Worker** | ✅ docsign-worker compiles (worker 0.7) |
 | **Demos** | ✅ Both verified with Puppeteer |
 
-### Test Results: 460+ Tests Passing
+### Test Results: 510+ Tests Passing
 
 | Crate | Tests | Description |
 |-------|-------|-------------|
-| compliance-engine | 227 | 16-state landlord-tenant rules (FL, TX, CA, NY, etc.) |
+| compliance-engine | 268 | 16-state rules + Florida real estate compliance (with property tests) |
 | agentpdf-wasm | 82 | WASM bindings + compliance integration |
 | docsign-wasm | 63 | WASM bindings + signing workflow |
-| typst-engine | 42 | Document rendering, 3 templates, verifier |
+| typst-engine | 59 | Document rendering, 6 templates, verifier, registry tests |
 | shared-crypto | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
 | docsign-worker | 31 | Cloudflare Worker + session/magic link property tests |
 | shared-pdf | 30 | PDF parsing, coordinate transforms, signer |
 | mcp-server | 29 | MCP protocol, HTTP transport, REST API property tests |
 | shared-types | 22 | Document, Violation, ComplianceReport types |
 | docsign-core | 2 | PAdES signing, audit chain |
-| **Total** | **460+** | All tests passing |
+| **Total** | **510+** | All tests passing (including property/fuzz tests) |
 
 ### All Components Compiling
 

@@ -517,12 +517,18 @@ pub fn check_lead_paint_disclosure(text: &str, year_built: Option<u32>) -> Vec<V
     let effective_year = year_built.or_else(|| extract_year_built(&text_lower));
 
     // Check if property is pre-1978
+    // If we have an explicit year, use it; otherwise fall back to text pattern matching
     let is_pre_1978 = effective_year.map(|y| y < 1978).unwrap_or(false);
-    let mentions_pre_1978 = text_lower.contains("1978")
-        || text_lower.contains("pre-1978")
-        || text_lower.contains("before 1978");
 
-    // If post-1978 or unknown, skip
+    // Only check for "pre-1978" mentions if we don't have an explicit year
+    // Note: Just mentioning "1978" isn't enough - we need explicit pre-1978 indicators
+    let mentions_pre_1978 = effective_year.is_none()
+        && (text_lower.contains("pre-1978")
+            || text_lower.contains("before 1978")
+            || text_lower.contains("prior to 1978")
+            || (text_lower.contains("built") && text_lower.contains("before") && text_lower.contains("1978")));
+
+    // If post-1978 or unknown (with no pre-1978 mentions), skip
     if !is_pre_1978 && !mentions_pre_1978 {
         return violations;
     }
@@ -1333,5 +1339,494 @@ mod tests {
             "Compliant contract should have no critical violations. Got: {:?}",
             critical
         );
+    }
+
+    // ========================================================================
+    // New Template Integration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_florida_purchase_contract_template_compliance() {
+        // Test that a fully-populated Florida purchase contract template passes compliance
+        let text = r#"
+            FLORIDA RESIDENTIAL REAL ESTATE PURCHASE CONTRACT
+
+            This Contract is entered into between John Seller ("Seller") and Jane Buyer ("Buyer")
+            for the purchase of the property located at 123 Palm Beach Road, Miami, FL 33101.
+
+            RADON GAS DISCLOSURE (F.S. § 404.056)
+            Radon is a naturally occurring radioactive gas that, when accumulated in a building
+            in sufficient quantities, may present health risks. Levels of radon that exceed
+            federal and state guidelines have been found in buildings in Florida. Additional
+            information regarding radon and radon testing may be obtained from your county
+            health department. Testing for radon is recommended prior to purchase.
+
+            PROPERTY TAX DISCLOSURE (F.S. § 689.261)
+            The ad valorem property taxes for this property may increase substantially upon
+            change of ownership and reassessment by the county property appraiser.
+            Buyer should consult with the county tax office regarding potential tax liability.
+            Information about homestead exemption available from property appraiser.
+
+            FLOOD DISCLOSURE (F.S. § 689.302 / SB 948)
+            Seller has knowledge of the following regarding flooding:
+            - Prior flooding: Seller has no knowledge of prior flooding at the property.
+            - Flood insurance claims: No flood insurance claims have been filed for this property.
+            - Federal flood assistance: No FEMA assistance has been received for this property.
+
+            HOA DISCLOSURE (F.S. § 720.401)
+            Property is not subject to HOA.
+
+            ENERGY EFFICIENCY DISCLOSURE (F.S. § 553.996)
+            Per Florida energy code, energy efficiency rating information is available
+            upon request from the builder or current owner.
+
+            SELLER'S DISCLOSURE OF KNOWN DEFECTS (Johnson v. Davis)
+            Seller discloses all known material defects that affect the property value
+            and are not readily observable to the Buyer.
+
+            EARNEST MONEY: $25,000.00 due within 3 business days to XYZ Title Company (escrow agent).
+
+            CLOSING DATE: March 15, 2026 at Miami Title Insurance Company.
+            Title insurance to be provided by Seller.
+        "#;
+
+        let violations = check_purchase_contract(text);
+        let critical: Vec<_> = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Critical)
+            .collect();
+
+        assert!(
+            critical.is_empty(),
+            "Florida purchase contract template should pass compliance. Critical violations: {:?}",
+            critical
+        );
+    }
+
+    #[test]
+    fn test_florida_escalation_addendum_template_compliance() {
+        // Test that a fully-populated Florida escalation addendum passes compliance
+        let text = r#"
+            ESCALATION ADDENDUM TO PURCHASE AND SALE CONTRACT
+
+            This Addendum is attached to the Contract dated January 15, 2026 between
+            John Seller ("Seller") and Jane Buyer ("Buyer") for the property at
+            456 Ocean Drive, Tampa, FL 33607.
+
+            ESCALATION CLAUSE:
+            Buyer's base purchase price offer is $450,000.00.
+
+            Buyer agrees to escalate the purchase price by an increment of $5,000.00
+            above any bona fide competing offer received by Seller.
+
+            Maximum purchase price cap: Buyer's escalated purchase price shall not exceed
+            $500,000.00 under any circumstances.
+
+            PROOF OF COMPETING OFFER:
+            Seller must provide Buyer with a copy of the competing offer or written
+            evidence of the bona fide offer within 24 hours of escalation activation.
+
+            APPRAISAL GAP COVERAGE:
+            In the event the appraised value is less than the escalated purchase price,
+            Buyer agrees to cover the difference up to $15,000.00 (appraisal gap).
+
+            EARNEST MONEY INCREASE:
+            Upon escalation, Buyer will deposit an additional 1% of the escalated price
+            within 3 business days.
+        "#;
+
+        let violations = check_escalation_addendum(text);
+        let critical: Vec<_> = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Critical)
+            .collect();
+
+        assert!(
+            critical.is_empty(),
+            "Florida escalation addendum template should pass compliance. Critical violations: {:?}",
+            critical
+        );
+    }
+
+    #[test]
+    fn test_florida_listing_agreement_template_compliance() {
+        // Test that a fully-populated Florida listing agreement passes compliance
+        let text = r#"
+            EXCLUSIVE LISTING AGREEMENT
+
+            This Listing Agreement is entered into on January 1, 2026 between
+            John Seller ("Seller") and ABC Realty ("Broker").
+
+            BROKERAGE RELATIONSHIP DISCLOSURE (F.S. § 475.278)
+            Broker will act as SINGLE AGENT for Seller with the following duties:
+            - Loyalty to Seller
+            - Confidentiality of all information
+            - Obedience to lawful instructions
+            - Full disclosure of all material facts
+            - Accounting for all funds
+            - Skill, care, and diligence in the transaction
+
+            PROPERTY: 789 Bayshore Blvd, St. Petersburg, FL 33701
+
+            LISTING TERMS (F.S. Chapter 475 Compliance):
+            Listing Price: $599,000.00
+            Listing Start Date: January 1, 2026
+            Listing Expiration Date: June 30, 2026
+
+            COMMISSION STRUCTURE:
+            Listing broker fee: 3% of final sale price
+            Commission is negotiable and not fixed by law.
+
+            BROKER LICENSE INFORMATION:
+            Broker: ABC Realty, License #BK123456
+            Agent: Mary Agent, License #SL789012
+
+            PROTECTION PERIOD:
+            If property is sold within 90 days after expiration to a buyer who
+            was introduced during the listing period, commission shall still be due.
+        "#;
+
+        let violations = check_listing_agreement(text);
+        let critical: Vec<_> = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Critical)
+            .collect();
+
+        assert!(
+            critical.is_empty(),
+            "Florida listing agreement template should pass compliance. Critical violations: {:?}",
+            critical
+        );
+    }
+}
+
+// ============================================================================
+// PROPERTY TESTS - Fuzz testing for compliance rules
+// ============================================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use shared_types::Severity;
+
+    // ========================================================================
+    // Document Type Detection Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Document type detection should never panic on arbitrary input
+        #[test]
+        fn document_type_detection_no_panic(text in "\\PC*") {
+            // Just ensure it doesn't panic
+            let _ = RealEstateDocumentType::detect(&text);
+        }
+
+        /// Property: Escalation addendum detection requires key terms together
+        #[test]
+        fn escalation_detection_requires_keywords(
+            prefix in "\\PC{0,100}",
+            suffix in "\\PC{0,100}"
+        ) {
+            // Without all required keywords, should not detect as escalation addendum
+            let text_without_keywords = format!("{} Some random contract text {}", prefix, suffix);
+            let doc_type = RealEstateDocumentType::detect(&text_without_keywords);
+
+            // If text doesn't contain all escalation keywords, shouldn't be detected as escalation
+            let lower = text_without_keywords.to_lowercase();
+            let has_all = lower.contains("escalation")
+                && (lower.contains("addendum") || lower.contains("clause"))
+                && lower.contains("maximum")
+                && lower.contains("purchase price");
+
+            if !has_all {
+                prop_assert_ne!(doc_type, RealEstateDocumentType::EscalationAddendum);
+            }
+        }
+
+        /// Property: Adding escalation keywords should detect as escalation addendum
+        #[test]
+        fn escalation_detection_with_keywords(
+            prefix in "\\PC{0,50}",
+            suffix in "\\PC{0,50}"
+        ) {
+            let text = format!(
+                "{} ESCALATION ADDENDUM. The maximum purchase price shall be $500,000. {}",
+                prefix, suffix
+            );
+            let doc_type = RealEstateDocumentType::detect(&text);
+            prop_assert_eq!(doc_type, RealEstateDocumentType::EscalationAddendum);
+        }
+    }
+
+    // ========================================================================
+    // Radon Disclosure Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Any text without radon disclosure should trigger a violation
+        #[test]
+        fn radon_disclosure_required_when_missing(text in "[a-zA-Z0-9 ]{10,100}") {
+            // Skip if text accidentally contains radon-related keywords
+            let lower = text.to_lowercase();
+            prop_assume!(!lower.contains("radon"));
+            prop_assume!(!lower.contains("404.056"));
+
+            let violations = check_radon_disclosure(&text);
+            prop_assert!(
+                violations.iter().any(|v| v.statute.contains("404.056")),
+                "Missing radon disclosure should be flagged"
+            );
+        }
+
+        /// Property: Proper radon disclosure should not trigger critical violations
+        #[test]
+        fn proper_radon_disclosure_passes(
+            property_address in "[0-9]+ [A-Za-z]+ Street, [A-Za-z]+, FL [0-9]{5}"
+        ) {
+            let text = format!(
+                "RADON DISCLOSURE for property at {}. \
+                 Pursuant to F.S. § 404.056, radon gas is a naturally occurring \
+                 radioactive gas that poses health risks including lung cancer. \
+                 Testing for radon is recommended.",
+                property_address
+            );
+            let violations = check_radon_disclosure(&text);
+            prop_assert!(violations.is_empty(), "Proper radon disclosure should pass");
+        }
+    }
+
+    // ========================================================================
+    // Flood Disclosure Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Complete flood disclosure should pass
+        #[test]
+        fn complete_flood_disclosure_passes(
+            flooding_choice in prop::bool::ANY,
+            claims_choice in prop::bool::ANY,
+            fema_choice in prop::bool::ANY
+        ) {
+            let flooding = if flooding_choice {
+                "Seller has knowledge of prior flooding"
+            } else {
+                "Seller has no knowledge of flooding"
+            };
+            let claims = if claims_choice {
+                "Flood insurance claims have been filed"
+            } else {
+                "No flood insurance claims have been filed"
+            };
+            let fema = if fema_choice {
+                "FEMA assistance received"
+            } else {
+                "No FEMA or federal flood assistance received"
+            };
+
+            let text = format!(
+                "FLOOD DISCLOSURE: Per § 689.302, Seller discloses: {}. {}. {}.",
+                flooding, claims, fema
+            );
+
+            let violations = check_flood_disclosure_realestate(&text);
+            prop_assert!(
+                violations.is_empty(),
+                "Complete flood disclosure should pass. Got: {:?}",
+                violations
+            );
+        }
+    }
+
+    // ========================================================================
+    // Escalation Addendum Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Escalation without maximum cap should trigger critical violation
+        #[test]
+        fn escalation_without_cap_fails(
+            base_price in 100000u32..2000000u32,
+            increment in 1000u32..50000u32
+        ) {
+            let text = format!(
+                "ESCALATION: Base offer price is ${}. \
+                 Buyer will escalate by ${}.",
+                base_price, increment
+            );
+
+            let violations = check_escalation_addendum(&text);
+            prop_assert!(
+                violations.iter().any(|v| v.message.contains("maximum") && v.severity == Severity::Critical),
+                "Escalation without cap should fail. Got: {:?}",
+                violations
+            );
+        }
+
+        /// Property: Complete escalation clause should not have critical violations
+        #[test]
+        fn complete_escalation_passes(
+            base_price in 100000u32..1000000u32,
+            increment in 1000u32..25000u32,
+            max_above_base in 10000u32..100000u32
+        ) {
+            let max_price = base_price + max_above_base;
+            let text = format!(
+                "ESCALATION CLAUSE: Base offer price is ${}. \
+                 Buyer will escalate by increment of ${} above any bona fide competing offer. \
+                 Maximum purchase price not to exceed ${}. \
+                 Seller must provide proof/copy of competing offer.",
+                base_price, increment, max_price
+            );
+
+            let violations = check_escalation_addendum(&text);
+            let critical: Vec<_> = violations
+                .iter()
+                .filter(|v| v.severity == Severity::Critical)
+                .collect();
+
+            prop_assert!(
+                critical.is_empty(),
+                "Complete escalation should pass. Critical: {:?}",
+                critical
+            );
+        }
+    }
+
+    // ========================================================================
+    // Listing Agreement Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Listing without expiration date should fail
+        #[test]
+        fn listing_without_expiration_fails(
+            broker_name in "[A-Z][a-z]+ Realty",
+            commission in 1u32..10u32
+        ) {
+            let text = format!(
+                "EXCLUSIVE LISTING AGREEMENT. \
+                 Broker: {}. \
+                 Commission: {}%.",
+                broker_name, commission
+            );
+
+            let violations = check_listing_expiration(&text);
+            prop_assert!(
+                violations.iter().any(|v| v.statute.contains("475.25")),
+                "Listing without expiration should fail. Got: {:?}",
+                violations
+            );
+        }
+
+        /// Property: Listing with valid expiration date should pass expiration check
+        #[test]
+        fn listing_with_expiration_passes(
+            month in 1u32..12u32,
+            day in 1u32..28u32,
+            year in 2025u32..2030u32
+        ) {
+            let months = ["January", "February", "March", "April", "May", "June",
+                         "July", "August", "September", "October", "November", "December"];
+            let month_name = months[(month - 1) as usize];
+
+            let text = format!(
+                "This listing agreement expires on {} {}, {}.",
+                month_name, day, year
+            );
+
+            let violations = check_listing_expiration(&text);
+            prop_assert!(
+                violations.is_empty(),
+                "Listing with expiration should pass. Got: {:?}",
+                violations
+            );
+        }
+
+        /// Property: Listing without brokerage relationship disclosure should fail
+        #[test]
+        fn listing_without_brokerage_disclosure_fails(
+            seller_name in "[A-Z][a-z]+ [A-Z][a-z]+",
+            broker_name in "[A-Z][a-z]+ Realty"
+        ) {
+            let text = format!(
+                "LISTING AGREEMENT between {} (Seller) and {} (Broker).",
+                seller_name, broker_name
+            );
+
+            let violations = check_brokerage_relationship(&text);
+            prop_assert!(
+                violations.iter().any(|v| v.statute.contains("475.278")),
+                "Missing brokerage disclosure should fail. Got: {:?}",
+                violations
+            );
+        }
+    }
+
+    // ========================================================================
+    // Lead Paint Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Post-1978 properties should not require lead paint disclosure
+        #[test]
+        fn post_1978_no_lead_disclosure(year in 1978u32..2025u32) {
+            let text = format!("Property built in {}.", year);
+            let violations = check_lead_paint_disclosure(&text, Some(year));
+            prop_assert!(
+                violations.is_empty(),
+                "Post-1978 should not require lead disclosure. Got: {:?}",
+                violations
+            );
+        }
+
+        /// Property: Pre-1978 properties should require lead paint disclosure
+        #[test]
+        fn pre_1978_requires_lead_disclosure(year in 1900u32..1978u32) {
+            let text = format!("Property built in {}. No other disclosures.", year);
+            let violations = check_lead_paint_disclosure(&text, Some(year));
+            prop_assert!(
+                violations.iter().any(|v| v.statute.contains("4852d")),
+                "Pre-1978 should require lead disclosure. Got: {:?}",
+                violations
+            );
+        }
+    }
+
+    // ========================================================================
+    // Complete Document Property Tests
+    // ========================================================================
+
+    proptest! {
+        /// Property: Auto-detection should categorize based on key phrases
+        #[test]
+        fn auto_detection_consistent(text in "\\PC{50,200}") {
+            let doc_type = RealEstateDocumentType::detect(&text);
+
+            // Detection should be consistent
+            let doc_type2 = RealEstateDocumentType::detect(&text);
+            prop_assert_eq!(doc_type, doc_type2);
+        }
+
+        /// Property: Checking compliance should never panic on arbitrary input
+        #[test]
+        fn compliance_check_no_panic(text in "\\PC*") {
+            // These should never panic
+            let _ = check_radon_disclosure(&text);
+            let _ = check_property_tax_disclosure(&text);
+            let _ = check_flood_disclosure_realestate(&text);
+            let _ = check_hoa_disclosure(&text);
+            let _ = check_energy_efficiency_disclosure(&text);
+            let _ = check_material_defect_disclosure(&text);
+            let _ = check_earnest_money(&text);
+            let _ = check_closing_provisions(&text);
+            let _ = check_escalation_addendum(&text);
+            let _ = check_listing_agreement(&text);
+            let _ = check_brokerage_relationship(&text);
+            let _ = check_listing_expiration(&text);
+            let _ = check_commission_provisions(&text);
+            let _ = check_broker_license(&text);
+            let _ = check_lead_paint_disclosure(&text, None);
+        }
     }
 }

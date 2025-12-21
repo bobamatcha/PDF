@@ -694,9 +694,9 @@ const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
 | **shared-types** | ✅ Tests Pass | 22 | Document, Violation, ComplianceReport types |
 | **shared-pdf** | ✅ Tests Pass | 30 | PDF parsing, coordinate transforms, signer |
 | **shared-crypto** | ✅ Tests Pass | 33 | ECDSA P-256, CMS/PKCS#7, certificates, TSA |
-| **compliance-engine** | ✅ Tests Pass | 227 | 16 states (FL, TX, CA, NY, GA, IL, PA, NJ, VA, MA, OH, MI, WA, AZ, NC, TN) |
+| **compliance-engine** | ✅ Tests Pass | 268 | 16 states + Florida real estate (property tests) |
 | **docsign-core** | ✅ Tests Pass | 2 | PAdES signing, audit chain |
-| **typst-engine** | ✅ Tests Pass | 42 | Document rendering, 3 templates, verifier |
+| **typst-engine** | ✅ Tests Pass | 59 | Document rendering, 6 templates, verifier, registry tests |
 | **mcp-server** | ✅ Tests Pass | 29 | Claude Desktop MCP with HTTP transport, REST API, property tests |
 | **agentpdf-wasm** | ✅ Tests Pass | 82 | WASM bindings + compliance integration |
 | **docsign-wasm** | ✅ Tests Pass | 63 | WASM bindings + signing workflow |
@@ -728,7 +728,7 @@ const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **typst-engine templates** | ✅ Complete | 3 templates (invoice, letter, florida_lease) |
+| **typst-engine templates** | ✅ Complete | 6 templates (invoice, letter, florida_lease, florida_purchase_contract, florida_escalation_addendum, florida_listing_agreement) |
 | **MCP render_document** | ✅ Complete | Template rendering via MCP protocol |
 | **MCP list_templates** | ✅ Complete | Template discovery |
 | **REST API /api/templates** | ✅ Complete | HTTP endpoint for web clients (with CORS) |
@@ -738,20 +738,47 @@ const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
 | **Template selector UI** | ✅ Complete | Modal UI for template selection + form filling |
 | **Deep link parsing** | ✅ Complete | Signing links + agentpdf integration |
 
-**Total Tests: 460+ passing** (including property tests for REST API and session/magic link, plus 16-state compliance)
+### ✅ Phase 3.5: Florida Real Estate Templates - COMPLETE
+
+Added comprehensive Florida real estate transaction support:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **florida_purchase_contract.typ** | ✅ Complete | Residential purchase contract with all mandatory disclosures |
+| **florida_escalation_addendum.typ** | ✅ Complete | Competitive offer escalation clause with max price cap |
+| **florida_listing_agreement.typ** | ✅ Complete | Exclusive listing with § 475.278 brokerage disclosure |
+| **florida_realestate.rs compliance** | ✅ Complete | 9 check functions for real estate document compliance |
+| **Property tests (proptest)** | ✅ Complete | Fuzz testing for all compliance rules |
+| **Template integration tests** | ✅ Complete | Registry tests for new templates |
+
+**Real Estate Compliance Coverage:**
+- § 404.056 - Radon Gas Disclosure
+- § 689.261 - Property Tax Disclosure
+- § 689.302 - Flood Disclosure (SB 948, October 2025)
+- § 720.401 - HOA Disclosure
+- § 553.996 - Energy Efficiency Disclosure
+- § 475.278 - Brokerage Relationship Disclosure
+- § 475.25 - Definite Expiration Date (Listing Agreements)
+- 42 U.S.C. § 4852d - Lead Paint Disclosure (pre-1978)
+- Johnson v. Davis (1985) - Material Defect Disclosure
+
+**Bug Fix (Test-First):** Fixed lead paint disclosure incorrectly triggering for properties built exactly in 1978. The law applies to pre-1978 properties only.
+
+**Total Tests: 510+ passing** (including new property tests for Florida real estate compliance)
 
 ### ✅ Quality Checks
 
 | Check | Status |
 |-------|--------|
-| **cargo test --workspace --all-features** | ✅ 460+ tests passing |
-| **cargo clippy --workspace --all-features -- -D warnings** | ✅ Clean |
+| **cargo test --workspace --all-features** | ✅ 510+ tests passing |
+| **cargo clippy --workspace --all-features -- -D warnings** | ✅ Clean (compliance-engine, typst-engine) |
 | **cargo fmt --all -- --check** | ✅ Formatted |
 | **WASM Compilation (agentpdf-wasm)** | ✅ Compiles (wasm-opt disabled) |
 | **WASM Compilation (docsign-wasm)** | ✅ Compiles (wasm-opt disabled) |
 | **docsign-worker** | ✅ Compiles | Upgraded to worker 0.7 |
 | **Demo Verification (Puppeteer)** | ✅ Both apps working |
 | **Trunk Build System** | ✅ Migrated | Both apps use `trunk serve/build` |
+| **Property Testing (proptest)** | ✅ Complete | Fuzz testing for Florida real estate compliance |
 
 ### ✅ Dev Tooling: Trunk Migration
 

@@ -434,4 +434,203 @@ mod tests {
             "Flood disclosure fields should exist for § 83.512 compliance"
         );
     }
+
+    // ============================================================
+    // NEW FLORIDA REAL ESTATE TEMPLATES TESTS
+    // ============================================================
+
+    #[test]
+    fn test_florida_purchase_contract_template_exists() {
+        let templates = list_templates();
+        let purchase_contract = templates
+            .iter()
+            .find(|t| t.name == "florida_purchase_contract");
+
+        assert!(
+            purchase_contract.is_some(),
+            "florida_purchase_contract template should exist"
+        );
+
+        let template = purchase_contract.unwrap();
+
+        // Required inputs for purchase contract
+        assert!(
+            template.required_inputs.contains(&"seller_name".to_string()),
+            "Purchase contract should require seller_name"
+        );
+        assert!(
+            template.required_inputs.contains(&"buyer_name".to_string()),
+            "Purchase contract should require buyer_name"
+        );
+        assert!(
+            template.required_inputs.contains(&"purchase_price".to_string()),
+            "Purchase contract should require purchase_price"
+        );
+        assert!(
+            template.required_inputs.contains(&"closing_date".to_string()),
+            "Purchase contract should require closing_date"
+        );
+
+        // Flood disclosure fields (§ 689.302)
+        assert!(
+            template.optional_inputs.contains(&"has_prior_flooding".to_string()),
+            "Purchase contract should have flood disclosure fields for § 689.302"
+        );
+
+        // HOA disclosure fields (§ 720.401)
+        assert!(
+            template.optional_inputs.contains(&"has_hoa".to_string()),
+            "Purchase contract should have HOA disclosure fields for § 720.401"
+        );
+    }
+
+    #[test]
+    fn test_florida_escalation_addendum_template_exists() {
+        let templates = list_templates();
+        let escalation = templates
+            .iter()
+            .find(|t| t.name == "florida_escalation_addendum");
+
+        assert!(
+            escalation.is_some(),
+            "florida_escalation_addendum template should exist"
+        );
+
+        let template = escalation.unwrap();
+
+        // Critical escalation fields - these must all be required
+        assert!(
+            template.required_inputs.contains(&"base_purchase_price".to_string()),
+            "Escalation addendum should require base_purchase_price"
+        );
+        assert!(
+            template.required_inputs.contains(&"escalation_increment".to_string()),
+            "Escalation addendum should require escalation_increment"
+        );
+        assert!(
+            template.required_inputs.contains(&"maximum_purchase_price".to_string()),
+            "Escalation addendum MUST require maximum_purchase_price (critical for compliance)"
+        );
+
+        // Appraisal gap fields
+        assert!(
+            template.optional_inputs.contains(&"appraisal_gap_coverage".to_string()),
+            "Escalation should have appraisal gap coverage option"
+        );
+    }
+
+    #[test]
+    fn test_florida_listing_agreement_template_exists() {
+        let templates = list_templates();
+        let listing = templates
+            .iter()
+            .find(|t| t.name == "florida_listing_agreement");
+
+        assert!(
+            listing.is_some(),
+            "florida_listing_agreement template should exist"
+        );
+
+        let template = listing.unwrap();
+
+        // § 475.25 requires definite expiration date
+        assert!(
+            template.required_inputs.contains(&"listing_expiration_date".to_string()),
+            "Listing agreement MUST require expiration date (§ 475.25 compliance)"
+        );
+
+        // § 475.278 brokerage relationship
+        assert!(
+            template.optional_inputs.contains(&"brokerage_relationship".to_string()),
+            "Listing should have brokerage relationship field for § 475.278"
+        );
+
+        // License requirement
+        assert!(
+            template.required_inputs.contains(&"broker_license".to_string()),
+            "Listing agreement should require broker license"
+        );
+
+        // Commission structure
+        assert!(
+            template.required_inputs.contains(&"commission_rate".to_string()),
+            "Listing agreement should require commission rate"
+        );
+    }
+
+    #[test]
+    fn test_all_florida_real_estate_templates_have_source() {
+        let template_names = [
+            "florida_purchase_contract",
+            "florida_escalation_addendum",
+            "florida_listing_agreement",
+        ];
+
+        for name in &template_names {
+            let source = get_template_source(name);
+            assert!(
+                source.is_ok(),
+                "Template '{}' should have source code available. Error: {:?}",
+                name,
+                source.err()
+            );
+
+            let source_code = source.unwrap();
+            assert!(
+                !source_code.is_empty(),
+                "Template '{}' source should not be empty",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_florida_templates_uri_format() {
+        let templates = list_templates();
+
+        for template in &templates {
+            if template.name.starts_with("florida_") {
+                assert!(
+                    template.uri.starts_with("typst://templates/"),
+                    "Florida template '{}' should have proper URI format. Got: {}",
+                    template.name,
+                    template.uri
+                );
+
+                // Verify URI matches name
+                let expected_uri = format!("typst://templates/{}", template.name);
+                assert_eq!(
+                    template.uri, expected_uri,
+                    "Template '{}' URI should match name pattern",
+                    template.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_template_count_includes_new_florida_templates() {
+        let templates = list_templates();
+
+        // Should have at least 6 templates now:
+        // invoice, letter, florida_lease, florida_purchase_contract,
+        // florida_escalation_addendum, florida_listing_agreement
+        assert!(
+            templates.len() >= 6,
+            "Should have at least 6 templates including new Florida real estate templates. Got: {}",
+            templates.len()
+        );
+
+        // Count Florida templates specifically
+        let florida_count = templates
+            .iter()
+            .filter(|t| t.name.starts_with("florida_"))
+            .count();
+
+        assert!(
+            florida_count >= 4,
+            "Should have at least 4 Florida templates. Got: {}",
+            florida_count
+        );
+    }
 }

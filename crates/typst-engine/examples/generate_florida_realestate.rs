@@ -26,13 +26,13 @@ fn main() {
     println!("Generating Florida Real Estate Contract PDFs...\n");
 
     // Generate Florida Purchase Contract
-    generate_purchase_contract(&output_dir);
+    generate_purchase_contract(output_dir);
 
     // Generate Escalation Addendum
-    generate_escalation_addendum(&output_dir);
+    generate_escalation_addendum(output_dir);
 
     // Generate Listing Agreement
-    generate_listing_agreement(&output_dir);
+    generate_listing_agreement(output_dir);
 
     println!("\nAll documents generated successfully!");
     println!("Check the output/ directory for PDF files.");
