@@ -1,11 +1,12 @@
 //! State-specific compliance rules
 //!
 //! Each state module implements compliance checks for that jurisdiction's
-//! landlord-tenant statutes.
+//! landlord-tenant statutes and real estate transaction requirements.
 
 // Tier 1: Big Five
 pub mod california;
 pub mod florida;
+pub mod florida_realestate;
 pub mod georgia;
 pub mod illinois;
 pub mod new_york;
@@ -82,12 +83,21 @@ pub fn has_implementation(state: State) -> bool {
 pub fn covered_statutes(state: State) -> Vec<&'static str> {
     match state {
         State::FL => vec![
+            // Lease/Landlord-Tenant
             "F.S. § 83.47 - Prohibited provisions",
             "F.S. § 83.48 - Attorney fees reciprocity",
             "F.S. § 83.49 - Security deposits",
             "F.S. § 83.51 - Landlord obligations",
             "F.S. § 83.56 - Termination notices",
             "F.S. § 83.57 - Month-to-month tenancy",
+            // Real Estate Transactions
+            "F.S. § 404.056 - Radon Gas Disclosure",
+            "F.S. § 689.261 - Property Tax Disclosure",
+            "F.S. § 689.302 - Flood Disclosure (SB 948)",
+            "F.S. § 720.401 - HOA Disclosure",
+            "F.S. § 553.996 - Energy Efficiency Disclosure",
+            "F.S. § 475.278 - Brokerage Relationship Disclosure",
+            "F.S. § 475.25 - Listing Agreement Expiration",
         ],
         State::TX => vec![
             "Tex. Prop. Code § 92.001-92.355 - Landlord-tenant",
