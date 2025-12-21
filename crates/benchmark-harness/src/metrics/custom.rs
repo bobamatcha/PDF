@@ -451,10 +451,7 @@ mod tests {
 
     #[test]
     fn test_escape_js_string() {
-        assert_eq!(
-            CustomTimingCollector::escape_js_string("simple"),
-            "simple"
-        );
+        assert_eq!(CustomTimingCollector::escape_js_string("simple"), "simple");
         assert_eq!(
             CustomTimingCollector::escape_js_string("with'quote"),
             "with\\'quote"

@@ -1,7 +1,7 @@
 //! JSON reporter for benchmark results
 
-use anyhow::Result;
 use crate::runner::BenchmarkResults;
+use anyhow::Result;
 
 /// JSON format reporter
 pub struct JsonReporter;

@@ -30,8 +30,8 @@
 //! ```
 
 use anyhow::{Context, Result};
-use chromiumoxide::cdp::js_protocol::runtime::EventConsoleApiCalled;
 use chromiumoxide::cdp::browser_protocol::page::AddScriptToEvaluateOnNewDocumentParams;
+use chromiumoxide::cdp::js_protocol::runtime::EventConsoleApiCalled;
 use chromiumoxide::Page;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -288,7 +288,10 @@ impl WebVitalsCollector {
         metric_name: &str,
         timeout_duration: Duration,
     ) -> Result<WebVitalMetric> {
-        debug!("Waiting for {} metric (timeout: {:?})", metric_name, timeout_duration);
+        debug!(
+            "Waiting for {} metric (timeout: {:?})",
+            metric_name, timeout_duration
+        );
 
         let metric_name = metric_name.to_string();
         let metric_name_clone = metric_name.clone();
@@ -306,7 +309,9 @@ impl WebVitalsCollector {
         // Spawn a task to listen for console events
         let listener = tokio::spawn(async move {
             while let Some(event) = events.next().await {
-                if let Err(e) = Self::handle_console_event(&event, &metric_name_clone, &result_clone).await {
+                if let Err(e) =
+                    Self::handle_console_event(&event, &metric_name_clone, &result_clone).await
+                {
                     warn!("Error handling console event: {}", e);
                 }
 
@@ -340,8 +345,15 @@ impl WebVitalsCollector {
             }
             Ok(Err(e)) => Err(e),
             Err(_) => {
-                error!("Timeout waiting for {} metric after {:?}", metric_name, timeout_duration);
-                anyhow::bail!("Timeout waiting for {} metric after {:?}", metric_name, timeout_duration)
+                error!(
+                    "Timeout waiting for {} metric after {:?}",
+                    metric_name, timeout_duration
+                );
+                anyhow::bail!(
+                    "Timeout waiting for {} metric after {:?}",
+                    metric_name,
+                    timeout_duration
+                )
             }
         }
     }
@@ -366,11 +378,18 @@ impl WebVitalsCollector {
                         // Parse the metric
                         match serde_json::from_str::<WebVitalMetric>(json_str) {
                             Ok(metric) if metric.name == metric_name => {
-                                debug!("Parsed {} metric: value={}, delta={}", metric_name, metric.value, metric.delta);
+                                debug!(
+                                    "Parsed {} metric: value={}, delta={}",
+                                    metric_name, metric.value, metric.delta
+                                );
                                 *result.lock().await = Some(metric);
                             }
                             Ok(metric) => {
-                                trace!("Ignoring {} metric (waiting for {})", metric.name, metric_name);
+                                trace!(
+                                    "Ignoring {} metric (waiting for {})",
+                                    metric.name,
+                                    metric_name
+                                );
                             }
                             Err(e) => {
                                 warn!("Failed to parse metric JSON: {} - Error: {}", json_str, e);
@@ -503,7 +522,8 @@ impl WebVitalsCollector {
         }
     });
 })();
-"#.to_string()
+"#
+        .to_string()
     }
 }
 
@@ -549,7 +569,8 @@ mod tests {
 
     #[test]
     fn test_metric_deserialization_from_js() {
-        let json = r#"{"name":"LCP","value":2500.5,"delta":2500.5,"id":"abc123","timestamp":1700000000}"#;
+        let json =
+            r#"{"name":"LCP","value":2500.5,"delta":2500.5,"id":"abc123","timestamp":1700000000}"#;
         let metric: WebVitalMetric = serde_json::from_str(json).unwrap();
 
         assert_eq!(metric.name, "LCP");

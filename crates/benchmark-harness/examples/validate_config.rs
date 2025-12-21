@@ -32,7 +32,12 @@ fn main() -> anyhow::Result<()> {
 
     println!("\nScenarios ({}):", config.scenarios.len());
     for (i, scenario) in config.scenarios.iter().enumerate() {
-        println!("  {}. {} ({} steps)", i + 1, scenario.name, scenario.steps.len());
+        println!(
+            "  {}. {} ({} steps)",
+            i + 1,
+            scenario.name,
+            scenario.steps.len()
+        );
     }
 
     println!("\n✓ All validations passed!");

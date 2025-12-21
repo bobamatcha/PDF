@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use chromiumoxide::cdp::browser_protocol::network::{
-    EmulateNetworkConditionsParams, ConnectionType,
+    ConnectionType, EmulateNetworkConditionsParams,
 };
 use chromiumoxide::Page;
 use tracing::{debug, instrument};
@@ -116,7 +116,7 @@ impl NetworkThrottler {
             .offline(false)
             .latency(0.0)
             .download_throughput(-1.0) // -1 means no throttling
-            .upload_throughput(-1.0)   // -1 means no throttling
+            .upload_throughput(-1.0) // -1 means no throttling
             .connection_type(ConnectionType::None)
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build network params: {}", e))?;

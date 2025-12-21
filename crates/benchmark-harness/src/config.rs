@@ -363,17 +363,11 @@ mod tests {
 
     #[test]
     fn test_network_profile_speeds() {
-        assert_eq!(
-            NetworkProfile::Fast3G.download_bps(),
-            Some(1_600_000 / 8)
-        );
+        assert_eq!(NetworkProfile::Fast3G.download_bps(), Some(1_600_000 / 8));
         assert_eq!(NetworkProfile::Fast3G.upload_bps(), Some(750_000 / 8));
         assert_eq!(NetworkProfile::Fast3G.rtt_ms(), Some(562));
 
-        assert_eq!(
-            NetworkProfile::Slow4G.download_bps(),
-            Some(4_000_000 / 8)
-        );
+        assert_eq!(NetworkProfile::Slow4G.download_bps(), Some(4_000_000 / 8));
         assert_eq!(NetworkProfile::Slow4G.upload_bps(), Some(3_000_000 / 8));
         assert_eq!(NetworkProfile::Slow4G.rtt_ms(), Some(20));
 

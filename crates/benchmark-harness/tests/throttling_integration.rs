@@ -12,14 +12,14 @@ fn test_network_profile_values() {
     // Fast3G
     let profile = NetworkProfile::Fast3G;
     assert_eq!(profile.download_throughput(), 200_000.0); // 1.6 Mbps = 200 KB/s
-    assert_eq!(profile.upload_throughput(), 93_750.0);    // 750 Kbps = 93.75 KB/s
+    assert_eq!(profile.upload_throughput(), 93_750.0); // 750 Kbps = 93.75 KB/s
     assert_eq!(profile.latency(), 562.0);
     assert!(!profile.offline());
 
     // Slow4G
     let profile = NetworkProfile::Slow4G;
     assert_eq!(profile.download_throughput(), 500_000.0); // 4 Mbps = 500 KB/s
-    assert_eq!(profile.upload_throughput(), 375_000.0);   // 3 Mbps = 375 KB/s
+    assert_eq!(profile.upload_throughput(), 375_000.0); // 3 Mbps = 375 KB/s
     assert_eq!(profile.latency(), 20.0);
     assert!(!profile.offline());
 

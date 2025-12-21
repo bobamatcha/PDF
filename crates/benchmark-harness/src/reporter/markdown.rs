@@ -36,7 +36,15 @@ impl MarkdownReporter {
         writeln!(output, "| **Base URL** | {} |", results.base_url)?;
         writeln!(output, "| **Started** | {} |", results.started_at)?;
         writeln!(output, "| **Duration** | {}ms |", results.total_duration_ms)?;
-        writeln!(output, "| **Status** | {} |", if results.passed { "✅ Passed" } else { "❌ Failed" })?;
+        writeln!(
+            output,
+            "| **Status** | {} |",
+            if results.passed {
+                "✅ Passed"
+            } else {
+                "❌ Failed"
+            }
+        )?;
         writeln!(output)?;
 
         // Configuration section
@@ -44,11 +52,27 @@ impl MarkdownReporter {
         writeln!(output)?;
         writeln!(output, "| Setting | Value |")?;
         writeln!(output, "|---------|-------|")?;
-        writeln!(output, "| Iterations | {} |", results.config_summary.iterations)?;
+        writeln!(
+            output,
+            "| Iterations | {} |",
+            results.config_summary.iterations
+        )?;
         writeln!(output, "| Warmup | {} |", results.config_summary.warmup)?;
-        writeln!(output, "| Parallel Contexts | {} |", results.config_summary.parallel_contexts)?;
-        writeln!(output, "| Network Profile | {} |", results.config_summary.network_profile)?;
-        writeln!(output, "| CPU Slowdown | {}x |", results.config_summary.cpu_slowdown)?;
+        writeln!(
+            output,
+            "| Parallel Contexts | {} |",
+            results.config_summary.parallel_contexts
+        )?;
+        writeln!(
+            output,
+            "| Network Profile | {} |",
+            results.config_summary.network_profile
+        )?;
+        writeln!(
+            output,
+            "| CPU Slowdown | {}x |",
+            results.config_summary.cpu_slowdown
+        )?;
         writeln!(output)?;
 
         // Scenario results

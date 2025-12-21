@@ -80,11 +80,7 @@ impl Reporter {
     }
 
     /// Write results to a file
-    pub fn write_to_file<P: AsRef<Path>>(
-        &self,
-        results: &BenchmarkResults,
-        path: P,
-    ) -> Result<()> {
+    pub fn write_to_file<P: AsRef<Path>>(&self, results: &BenchmarkResults, path: P) -> Result<()> {
         let output = self.format_results(results)?;
         fs::write(path, output)?;
         Ok(())

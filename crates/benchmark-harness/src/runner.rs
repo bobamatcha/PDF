@@ -40,7 +40,9 @@
 
 use anyhow::{Context, Result};
 use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::target::{CreateBrowserContextParams, CreateTargetParams};
+use chromiumoxide::cdp::browser_protocol::target::{
+    CreateBrowserContextParams, CreateTargetParams,
+};
 use chromiumoxide::Page;
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -220,12 +222,7 @@ impl BenchmarkRunner {
             std::env::temp_dir().join(format!("benchmark-harness-runner-{}", runner_id));
         builder = builder.user_data_dir(user_data_dir);
 
-        Self::with_config(
-            builder
-                .build()
-                .map_err(|e| anyhow::anyhow!("{}", e))?,
-        )
-        .await
+        Self::with_config(builder.build().map_err(|e| anyhow::anyhow!("{}", e))?).await
     }
 
     /// Find Chrome for Testing installed by Puppeteer
@@ -381,8 +378,7 @@ impl BenchmarkRunner {
         if all_passed {
             info!(
                 "Benchmark suite '{}' completed successfully in {}ms",
-                config.benchmark.name,
-                results.total_duration_ms
+                config.benchmark.name, results.total_duration_ms
             );
         } else {
             warn!(
@@ -429,18 +425,9 @@ impl BenchmarkRunner {
         let measurement_metrics: Vec<_> = metrics.into_iter().skip(warmup_count).collect();
 
         // Extract samples
-        let mut lcp_samples: Vec<f64> = measurement_metrics
-            .iter()
-            .filter_map(|m| m.lcp)
-            .collect();
-        let mut cls_samples: Vec<f64> = measurement_metrics
-            .iter()
-            .filter_map(|m| m.cls)
-            .collect();
-        let inp_samples: Vec<f64> = measurement_metrics
-            .iter()
-            .filter_map(|m| m.inp)
-            .collect();
+        let mut lcp_samples: Vec<f64> = measurement_metrics.iter().filter_map(|m| m.lcp).collect();
+        let mut cls_samples: Vec<f64> = measurement_metrics.iter().filter_map(|m| m.cls).collect();
+        let inp_samples: Vec<f64> = measurement_metrics.iter().filter_map(|m| m.inp).collect();
 
         // Count successes/failures
         let successful_iterations = measurement_metrics.iter().filter(|m| m.success).count() as u32;
@@ -717,12 +704,7 @@ impl BenchmarkRunner {
 
     /// Execute a single benchmark step
     #[instrument(skip(self, config, page))]
-    async fn execute_step(
-        &self,
-        config: &Config,
-        page: &Page,
-        step: &BenchmarkStep,
-    ) -> Result<()> {
+    async fn execute_step(&self, config: &Config, page: &Page, step: &BenchmarkStep) -> Result<()> {
         match step {
             BenchmarkStep::Navigate { url } => {
                 let full_url = if url.starts_with("http://") || url.starts_with("https://") {
@@ -740,9 +722,7 @@ impl BenchmarkRunner {
                 };
 
                 debug!("Navigating to: {}", full_url);
-                page.goto(&full_url)
-                    .await
-                    .context("Navigation failed")?;
+                page.goto(&full_url).await.context("Navigation failed")?;
             }
 
             BenchmarkStep::Wait { condition } => match condition {
@@ -780,13 +760,13 @@ impl BenchmarkRunner {
                     .find_element(selector)
                     .await
                     .context(format!("Element not found: {}", selector))?;
-                element
-                    .type_str(text)
-                    .await
-                    .context("Type failed")?;
+                element.type_str(text).await.context("Type failed")?;
             }
 
-            BenchmarkStep::Upload { selector, file_path } => {
+            BenchmarkStep::Upload {
+                selector,
+                file_path,
+            } => {
                 debug!("Uploading file to: {}", selector);
                 let element = page
                     .find_element(selector)

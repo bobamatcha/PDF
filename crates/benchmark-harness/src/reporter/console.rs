@@ -17,9 +17,18 @@ impl ConsoleReporter {
 
         // Header
         writeln!(output)?;
-        writeln!(output, "╔══════════════════════════════════════════════════════════════╗")?;
-        writeln!(output, "║                    BENCHMARK RESULTS                          ║")?;
-        writeln!(output, "╚══════════════════════════════════════════════════════════════╝")?;
+        writeln!(
+            output,
+            "╔══════════════════════════════════════════════════════════════╗"
+        )?;
+        writeln!(
+            output,
+            "║                    BENCHMARK RESULTS                          ║"
+        )?;
+        writeln!(
+            output,
+            "╚══════════════════════════════════════════════════════════════╝"
+        )?;
         writeln!(output)?;
 
         // Suite info
@@ -31,11 +40,31 @@ impl ConsoleReporter {
 
         // Configuration
         writeln!(output, "Configuration:")?;
-        writeln!(output, "  Iterations:         {}", results.config_summary.iterations)?;
-        writeln!(output, "  Warmup:             {}", results.config_summary.warmup)?;
-        writeln!(output, "  Parallel Contexts:  {}", results.config_summary.parallel_contexts)?;
-        writeln!(output, "  Network Profile:    {}", results.config_summary.network_profile)?;
-        writeln!(output, "  CPU Slowdown:       {}x", results.config_summary.cpu_slowdown)?;
+        writeln!(
+            output,
+            "  Iterations:         {}",
+            results.config_summary.iterations
+        )?;
+        writeln!(
+            output,
+            "  Warmup:             {}",
+            results.config_summary.warmup
+        )?;
+        writeln!(
+            output,
+            "  Parallel Contexts:  {}",
+            results.config_summary.parallel_contexts
+        )?;
+        writeln!(
+            output,
+            "  Network Profile:    {}",
+            results.config_summary.network_profile
+        )?;
+        writeln!(
+            output,
+            "  CPU Slowdown:       {}x",
+            results.config_summary.cpu_slowdown
+        )?;
         writeln!(output)?;
 
         // Scenario results
@@ -45,7 +74,10 @@ impl ConsoleReporter {
 
         // Summary
         writeln!(output)?;
-        writeln!(output, "────────────────────────────────────────────────────────────────")?;
+        writeln!(
+            output,
+            "────────────────────────────────────────────────────────────────"
+        )?;
         let status = if results.passed { "PASSED" } else { "FAILED" };
         let status_symbol = if results.passed { "✓" } else { "✗" };
         writeln!(output, "Overall Status: {} {}", status_symbol, status)?;
@@ -65,9 +97,15 @@ impl ConsoleReporter {
     fn format_scenario(output: &mut String, scenario: &ScenarioResult) -> Result<()> {
         let status = if scenario.passed { "✓" } else { "✗" };
 
-        writeln!(output, "────────────────────────────────────────────────────────────────")?;
+        writeln!(
+            output,
+            "────────────────────────────────────────────────────────────────"
+        )?;
         writeln!(output, "Scenario: {} {}", scenario.scenario_name, status)?;
-        writeln!(output, "────────────────────────────────────────────────────────────────")?;
+        writeln!(
+            output,
+            "────────────────────────────────────────────────────────────────"
+        )?;
         writeln!(output)?;
 
         // Iterations info
@@ -80,9 +118,18 @@ impl ConsoleReporter {
         writeln!(output)?;
 
         // Metrics table
-        writeln!(output, "  ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐")?;
-        writeln!(output, "  │ Metric  │   Min   │   P50   │   P95   │   P99   │   Max   │")?;
-        writeln!(output, "  ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤")?;
+        writeln!(
+            output,
+            "  ┌─────────┬─────────┬─────────┬─────────┬─────────┬─────────┐"
+        )?;
+        writeln!(
+            output,
+            "  │ Metric  │   Min   │   P50   │   P95   │   P99   │   Max   │"
+        )?;
+        writeln!(
+            output,
+            "  ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤"
+        )?;
 
         Self::format_metric_row(output, "LCP", &scenario.lcp_summary, "ms")?;
         Self::format_metric_row(output, "CLS", &scenario.cls_summary, "")?;
@@ -91,7 +138,10 @@ impl ConsoleReporter {
             Self::format_metric_row(output, "INP", inp, "ms")?;
         }
 
-        writeln!(output, "  └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘")?;
+        writeln!(
+            output,
+            "  └─────────┴─────────┴─────────┴─────────┴─────────┴─────────┘"
+        )?;
         writeln!(output)?;
 
         // Additional stats
