@@ -1,0 +1,133 @@
+# GetSignatures.org Benchmark Configuration
+# Performance testing for document signing web application
+
+[benchmark]
+# Name of the benchmark suite
+name = "GetSignatures Performance"
+
+# Base URL of the application under test
+base_url = "http://127.0.0.1:8081"
+
+# Number of iterations per scenario (default: 30)
+iterations = 30
+
+# Number of warmup runs before measurement (default: 3)
+warmup = 3
+
+# Number of parallel browser contexts (default: 4)
+parallel_contexts = 4
+
+[throttling]
+# Network profile: "Fast3G", "Slow4G", "Offline", or "None"
+network_profile = "Fast3G"
+
+# CPU slowdown multiplier (1.0 = no slowdown, 4.0 = 4x slower)
+cpu_slowdown = 4.0
+
+[thresholds]
+# Performance thresholds for pass/fail (all optional)
+# Largest Contentful Paint p95 in milliseconds
+lcp_p95 = 2500.0
+
+# Interaction to Next Paint p95 in milliseconds
+inp_p95 = 200.0
+
+# Cumulative Layout Shift p95 (unitless)
+cls_p95 = 0.1
+
+# Scenario 1: Homepage load
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "homepage" }
+]
+
+# Scenario 2: Document signing flow
+[[scenarios]]
+name = "Document Signing Flow"
+steps = [
+    # Navigate to the signing page
+    { type = "navigate", url = "/sign" },
+    { type = "wait", wait_for = "selector", selector = "#file-input" },
+
+    # Upload a document
+    { type = "upload", selector = "#file-input", file_path = "/tmp/test-document.pdf" },
+    { type = "wait", wait_for = "selector", selector = ".signature-pad" },
+
+    # Measure after document loads
+    { type = "measure", label = "document-loaded" },
+
+    # Add signature (click on signature pad area)
+    { type = "click", selector = ".signature-pad" },
+    { type = "wait", wait_for = "timeout", duration = 500 },
+
+    # Click sign/complete button
+    { type = "click", selector = "#sign-btn" },
+    { type = "wait", wait_for = "selector", selector = "#signature-complete" },
+
+    # Measure signing complete
+    { type = "measure", label = "signature-complete" }
+]
+
+# Scenario 3: Signature verification flow
+[[scenarios]]
+name = "Signature Verification"
+steps = [
+    # Navigate to verification page
+    { type = "navigate", url = "/verify" },
+    { type = "wait", wait_for = "selector", selector = "#verify-file-input" },
+
+    # Upload signed document for verification
+    { type = "upload", selector = "#verify-file-input", file_path = "/tmp/signed-document.pdf" },
+    { type = "wait", wait_for = "selector", selector = "#verify-btn" },
+
+    # Click verify button
+    { type = "click", selector = "#verify-btn" },
+    { type = "wait", wait_for = "selector", selector = ".verification-result" },
+
+    # Measure verification complete
+    { type = "measure", label = "verification-complete" }
+]
+
+# Scenario 4: Quick sign flow (document already loaded)
+[[scenarios]]
+name = "Quick Sign Flow"
+steps = [
+    { type = "navigate", url = "/sign" },
+    { type = "wait", wait_for = "selector", selector = "#file-input" },
+    { type = "upload", selector = "#file-input", file_path = "/tmp/quick-sign.pdf" },
+    { type = "wait", wait_for = "selector", selector = ".signature-pad" },
+    { type = "click", selector = ".signature-pad" },
+    { type = "wait", wait_for = "timeout", duration = 300 },
+    { type = "click", selector = "#sign-btn" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "quick-sign-complete" }
+]
+
+# Scenario 5: Multi-page document signing
+[[scenarios]]
+name = "Multi-Page Document Signing"
+steps = [
+    { type = "navigate", url = "/sign" },
+    { type = "wait", wait_for = "selector", selector = "#file-input" },
+
+    # Upload multi-page document
+    { type = "upload", selector = "#file-input", file_path = "/tmp/multi-page.pdf" },
+    { type = "wait", wait_for = "selector", selector = ".pdf-viewer" },
+    { type = "measure", label = "multi-page-loaded" },
+
+    # Navigate through pages
+    { type = "click", selector = ".next-page-btn" },
+    { type = "wait", wait_for = "timeout", duration = 500 },
+    { type = "click", selector = ".next-page-btn" },
+    { type = "wait", wait_for = "timeout", duration = 500 },
+
+    # Sign on last page
+    { type = "click", selector = ".signature-pad" },
+    { type = "wait", wait_for = "timeout", duration = 500 },
+    { type = "click", selector = "#sign-btn" },
+    { type = "wait", wait_for = "selector", selector = "#signature-complete" },
+    { type = "measure", label = "multi-page-signed" }
+]

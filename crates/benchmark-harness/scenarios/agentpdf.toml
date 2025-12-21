@@ -1,0 +1,63 @@
+# agentPDF.org Performance Benchmark Scenarios
+# Comprehensive benchmarking configuration for the agentPDF web application
+
+[benchmark]
+# Name of the benchmark suite
+name = "agentPDF Performance"
+
+# Base URL for local testing
+base_url = "http://127.0.0.1:8080"
+
+# Number of iterations per scenario
+iterations = 5
+
+# Number of warmup runs before measurement
+warmup = 1
+
+# Number of parallel browser contexts
+parallel_contexts = 4
+
+[throttling]
+# No throttling for fast local/CI runs
+# Use "Fast3G" + cpu_slowdown = 4.0 for realistic user simulation
+network_profile = "None"
+cpu_slowdown = 1.0
+
+[thresholds]
+# Largest Contentful Paint p95 threshold (500ms for localhost without throttling)
+lcp_p95 = 500.0
+
+# Interaction to Next Paint p95 threshold (100ms)
+inp_p95 = 100.0
+
+# Cumulative Layout Shift p95 threshold
+cls_p95 = 0.1
+
+# Scenario 1: Homepage load performance
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#file-input" },
+    { type = "measure", label = "homepage" }
+]
+
+# Scenario 2: Upload area interaction
+[[scenarios]]
+name = "Upload Area Ready"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#drop-zone" },
+    { type = "click", selector = "#use-template-btn" },
+    { type = "wait", wait_for = "timeout", duration = 500 },
+    { type = "measure", label = "template-clicked" }
+]
+
+# Scenario 3: Tampa landing page
+[[scenarios]]
+name = "Tampa Landing Page"
+steps = [
+    { type = "navigate", url = "/tampa.html" },
+    { type = "wait", wait_for = "network_idle" },
+    { type = "measure", label = "tampa-page-loaded" }
+]

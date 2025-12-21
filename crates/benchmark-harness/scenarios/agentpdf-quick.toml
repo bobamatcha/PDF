@@ -1,0 +1,20 @@
+# Quick agentPDF.org Homepage Benchmark
+
+[benchmark]
+name = "agentPDF Homepage"
+base_url = "https://agentpdf.org"
+iterations = 5
+warmup = 1
+parallel_contexts = 1
+
+[throttling]
+network_profile = "None"
+cpu_slowdown = 1.0
+
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "timeout", duration = 3000 },
+    { type = "measure", label = "homepage" }
+]

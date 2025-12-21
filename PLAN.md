@@ -677,7 +677,8 @@ const errors = JSON.parse(wasm.validate_typst_syntax("#let x = "));
 12. [Phase 4: Nationwide Template Expansion](#phase-4-nationwide-template-expansion)
 13. [Phase 5: Tax Preparation Platform](#phase-5-tax-preparation-platform)
 14. [Phase 6: Estate Planning Platform](#phase-6-estate-planning-platform)
-15. [Test Coverage Strategy](#12-test-coverage-strategy)
+15. [Phase 7: Web Performance Benchmarking](#phase-7-web-performance-benchmarking)
+16. [Test Coverage Strategy](#12-test-coverage-strategy)
 16. [Demo Functionality Preservation](#13-demo-functionality-preservation)
 17. [Future Considerations](#14-future-considerations)
 
@@ -1134,7 +1135,329 @@ PERMITTED (Scrivener): "Do you want a Credit Shelter Trust? [Tooltip: defined as
 - [ ] Build B2B2C partner portal for financial advisors
 - [ ] Complete document suite with Self-Proving Affidavits
 
+---
+
+## Phase 7: Web Performance Benchmarking
+
+> **Full Research**: See [BENCHMARKING_RESEARCH.md](./BENCHMARKING_RESEARCH.md) for comprehensive implementation guide.
+
+### Overview
+
+This phase introduces a SOTA (State-of-the-Art) web performance benchmarking harness built on `chromiumoxide` and Rust. The harness measures Core Web Vitals (LCP, INP, CLS) and custom business metrics for Critical User Journeys (CUJs), integrating with the existing testing infrastructure.
+
+### Why Benchmarking?
+
+| Problem | Solution |
+|---------|----------|
+| Performance regressions slip into production | Automated CI/CD quality gates with threshold enforcement |
+| "It works on my machine" syndrome | Network/CPU throttling simulates real-world conditions |
+| Single-metric blindness (just measuring "load time") | Multi-dimensional metrics: Loading, Interactivity, Visual Stability |
+| Averages hide tail latency problems | Percentile-based assertions (P50, P95, P99) |
+
+### Architecture: Parallel Browser Contexts
+
+The benchmarking harness leverages `chromiumoxide`'s async architecture for high-throughput measurement:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      BENCHMARK ORCHESTRATOR                         │
+│  - Reads benchmark.toml configuration                               │
+│  - Spawns parallel browser contexts (not processes)                 │
+│  - Aggregates results and computes statistics                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐       │
+│  │ Browser Context │ │ Browser Context │ │ Browser Context │ ...   │
+│  │ (Iteration 1)   │ │ (Iteration 2)   │ │ (Iteration 3)   │       │
+│  │                 │ │                 │ │                 │       │
+│  │ - Isolated      │ │ - Isolated      │ │ - Isolated      │       │
+│  │ - Fresh cache   │ │ - Fresh cache   │ │ - Fresh cache   │       │
+│  │ - web-vitals.js │ │ - web-vitals.js │ │ - web-vitals.js │       │
+│  └─────────────────┘ └─────────────────┘ └─────────────────┘       │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                   SINGLE BROWSER PROCESS                     │   │
+│  │  (Reused across all contexts for efficiency)                 │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Insight**: Unlike testing where parallelism is per-process, benchmarking uses **parallel Browser Contexts** within a single Chromium process. Context creation is ~50-100ms vs ~2-5s for process startup.
+
+### Integration with Testing Infrastructure
+
+The benchmarking harness builds on the existing `chromiumoxide`-based E2E testing:
+
+| Component | Testing Use | Benchmarking Use |
+|-----------|-------------|------------------|
+| Browser spawn | 1 per test file | 1 shared, many contexts |
+| Context isolation | Test independence | Iteration isolation (cold cache) |
+| CDP commands | Assertions | Metric collection + throttling |
+| Page navigation | Verify UI state | Measure LCP, wait for NetworkIdle |
+| Element interaction | Verify behavior | Measure INP, custom timings |
+
+### Crate Structure
+
+```
+crates/
+└── benchmark-harness/
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs              # Public API
+        ├── config.rs           # TOML configuration parsing
+        ├── runner.rs           # Parallel execution orchestrator
+        ├── metrics/
+        │   ├── mod.rs
+        │   ├── web_vitals.rs   # LCP, INP, CLS collection
+        │   ├── custom.rs       # User Timing API bridge
+        │   └── trace.rs        # Chrome Tracing analysis
+        ├── throttling/
+        │   ├── mod.rs
+        │   ├── network.rs      # Network.emulateNetworkConditions
+        │   └── cpu.rs          # Emulation.setCPUThrottlingRate
+        ├── stats/
+        │   ├── mod.rs
+        │   ├── percentiles.rs  # P50, P75, P95, P99
+        │   └── outliers.rs     # IQR-based detection
+        └── reporter/
+            ├── mod.rs
+            ├── json.rs         # CI artifact output
+            └── console.rs      # Human-readable summary
+```
+
+### Configuration Schema
+
+```toml
+# benchmark.toml
+
+[benchmark]
+name = "agentPDF Compliance Check Flow"
+base_url = "http://localhost:8080"
+iterations = 30
+warmup = 3
+parallel_contexts = 4
+
+[throttling]
+network_profile = "Slow4G"  # Fast3G, Slow4G, Offline
+cpu_slowdown = 4.0          # 1.0 = no throttling, 4.0 = mid-tier mobile
+
+[thresholds]
+lcp_p95 = 2500   # Largest Contentful Paint (ms)
+inp_p95 = 200    # Interaction to Next Paint (ms)
+cls_p95 = 0.1    # Cumulative Layout Shift (score)
+
+[[scenarios]]
+name = "Upload and Check PDF"
+steps = [
+    { action = "navigate", url = "/" },
+    { action = "wait", condition = "network_idle" },
+    { action = "upload", selector = "#file-input", file = "fixtures/florida_lease.pdf" },
+    { action = "click", selector = "#check-compliance" },
+    { action = "wait", condition = { selector = ".compliance-results" } },
+    { action = "measure", name = "compliance-check-duration" },
+]
+
+[[scenarios]]
+name = "Signature Flow"
+steps = [
+    { action = "navigate", url = "https://getsignatures.org" },
+    { action = "wait", condition = "network_idle" },
+    { action = "upload", selector = "#pdf-upload", file = "fixtures/contract.pdf" },
+    { action = "click", selector = ".add-recipient" },
+    { action = "type", selector = "#recipient-email", text = "test@example.com" },
+    { action = "click", selector = ".next-step" },
+    { action = "measure", name = "recipient-add-duration" },
+]
+```
+
+### Claude Code Subagent Delegation Strategy
+
+The benchmarking implementation is well-suited for **parallel subagent delegation** due to its modular, independent components. Here's the optimal delegation plan:
+
+#### Phase 7.1: Foundation (Parallel Subagents)
+
+| Subagent | Task | Dependencies | Estimated Complexity |
+|----------|------|--------------|---------------------|
+| **Agent A** | `benchmark-harness` crate scaffold + config.rs | None | Low |
+| **Agent B** | `metrics/web_vitals.rs` - LCP, INP, CLS collection | None | Medium |
+| **Agent C** | `throttling/` module - Network + CPU throttling | None | Low |
+| **Agent D** | `stats/` module - Percentiles + Outlier detection | None | Medium |
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PARALLEL EXECUTION (Phase 7.1)                                     │
+│                                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │
+│  │ Agent A  │  │ Agent B  │  │ Agent C  │  │ Agent D  │            │
+│  │ Scaffold │  │ Metrics  │  │ Throttle │  │ Stats    │            │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘            │
+│       │             │             │             │                   │
+│       └─────────────┴─────────────┴─────────────┘                   │
+│                           │                                         │
+│                     MERGE POINT                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why Parallel**: These components have no code dependencies on each other. They only share types from `shared-types` which already exists.
+
+#### Phase 7.2: Integration (Sequential)
+
+| Step | Task | Depends On |
+|------|------|-----------|
+| 1 | `runner.rs` - Orchestrator that uses all modules | Phase 7.1 complete |
+| 2 | `reporter/` - JSON + Console output | runner.rs |
+| 3 | Integration tests with real scenarios | All above |
+
+**Why Sequential**: The runner must integrate all the parallel work. This is a natural merge point.
+
+#### Phase 7.3: CI/CD Integration (Parallel Subagents)
+
+| Subagent | Task | Dependencies |
+|----------|------|--------------|
+| **Agent E** | GitHub Actions workflow for benchmarks | Phase 7.2 |
+| **Agent F** | Benchmark scenarios for agentPDF.org | Phase 7.2 |
+| **Agent G** | Benchmark scenarios for getsignatures.org | Phase 7.2 |
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PARALLEL EXECUTION (Phase 7.3)                                     │
+│                                                                     │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │ Agent E  │  │   Agent F    │  │   Agent G    │                  │
+│  │ CI/CD    │  │ agentPDF     │  │ docsign      │                  │
+│  │ Workflow │  │ Scenarios    │  │ Scenarios    │                  │
+│  └──────────┘  └──────────────┘  └──────────────┘                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Why Parallel**: Each domain (CI config, agentPDF scenarios, docsign scenarios) is independent.
+
+### Implementation Checklist
+
+**Phase 7.1: Foundation (Parallel)**
+- [ ] Create `crates/benchmark-harness/` scaffold with Cargo.toml
+- [ ] Implement config.rs (TOML parsing with serde)
+- [ ] Implement `metrics/web_vitals.rs` (inject web-vitals.js, collect via console)
+- [ ] Implement `throttling/network.rs` (Network.emulateNetworkConditions)
+- [ ] Implement `throttling/cpu.rs` (Emulation.setCPUThrottlingRate)
+- [ ] Implement `stats/percentiles.rs` (P50, P75, P95, P99)
+- [ ] Implement `stats/outliers.rs` (IQR method)
+
+**Phase 7.2: Integration (Sequential)**
+- [ ] Implement `runner.rs` (parallel context spawning, scenario execution)
+- [ ] Implement `metrics/custom.rs` (User Timing API bridge)
+- [ ] Implement `metrics/trace.rs` (Chrome Tracing for Long Tasks)
+- [ ] Implement `reporter/json.rs` (structured output for CI)
+- [ ] Implement `reporter/console.rs` (human-readable summary)
+- [ ] Add integration tests with mock scenarios
+
+**Phase 7.3: CI/CD & Scenarios (Parallel)**
+- [ ] Create `.github/workflows/benchmark.yml`
+- [ ] Create `benchmarks/agentpdf/` scenario files
+- [ ] Create `benchmarks/docsign/` scenario files
+- [ ] Add threshold enforcement (exit codes for CI)
+- [ ] Document benchmark results format
+
+**Phase 7.4: Advanced Features (Optional)**
+- [ ] Add `metrics/trace.rs` for Long Task detection
+- [ ] Add Perfetto trace export for manual analysis
+- [ ] Add historical trend tracking (store results over time)
+- [ ] Add A/B comparison mode (compare branches)
+
+### Key Dependencies
+
+```toml
+# crates/benchmark-harness/Cargo.toml
+
+[dependencies]
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+toml = "0.8"
+statrs = "0.17"            # Statistical functions
+average = "0.15"           # Online mean/variance
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+```
+
+### Usage Examples
+
+**CLI Usage:**
+```bash
+# Run all benchmarks
+cargo run -p benchmark-harness -- --config benchmarks/agentpdf.toml
+
+# Run with specific throttling override
+cargo run -p benchmark-harness -- --config benchmarks/docsign.toml --network slow4g --cpu 6
+
+# Output JSON for CI
+cargo run -p benchmark-harness -- --config benchmarks/all.toml --output json > results.json
+```
+
+**Programmatic Usage:**
+```rust
+use benchmark_harness::{BenchmarkRunner, Config};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = Config::from_file("benchmark.toml")?;
+    let runner = BenchmarkRunner::new(config).await?;
+
+    let results = runner.run_all().await?;
+
+    // Check thresholds
+    if results.lcp_p95 > config.thresholds.lcp_p95 {
+        eprintln!("LCP P95 exceeded threshold!");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+```
+
+### Success Metrics
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Benchmark execution time | < 5 min for 30 iterations | Wall clock |
+| Context startup overhead | < 100ms per context | Trace |
+| Statistical significance | < 5% CoV for stable pages | Coefficient of Variation |
+| CI integration | Zero false positives | Track over 100 runs |
+
+### Relationship to Testing Infrastructure
+
+The benchmarking harness **complements but does not replace** the existing E2E testing:
+
+| Concern | E2E Tests | Benchmarks |
+|---------|-----------|------------|
+| **Question answered** | "Does it work?" | "Is it fast enough?" |
+| **Failure mode** | Assertion failure | Threshold violation |
+| **Parallelism** | Multiple browser processes | Multiple contexts in one process |
+| **Isolation** | Full process isolation | Context isolation (cache, cookies) |
+| **Frequency** | Every PR | Nightly + release |
+| **Duration** | Seconds per test | Minutes per scenario (many iterations) |
+
+Both systems share:
+- `chromiumoxide` as the browser automation layer
+- Scenario definitions (can share selectors)
+- CI infrastructure (GitHub Actions)
+
 ### Build Commands
+
+```bash
+# Run benchmarks locally
+cargo run -p benchmark-harness -- --config benchmarks/config.toml
+
+# Run with verbose output
+RUST_LOG=benchmark_harness=debug cargo run -p benchmark-harness
+
+# Generate JSON report
+cargo run -p benchmark-harness -- --output json > benchmark-results.json
+```
+
+### General Build Commands
 
 ```bash
 # Full workspace check
