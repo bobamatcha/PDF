@@ -6,8 +6,7 @@
 target = "www/index.html"
 # Output directory for build artifacts
 dist = "www/dist"
-# Disable wasm-opt (fails with bulk memory operations)
-no_wasm_opt = true
+# wasm-opt enabled with --enable-bulk-memory for Rust 1.82+ compatibility
 
 [watch]
 # Watch the wasm source and www directory

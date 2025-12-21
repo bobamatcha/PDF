@@ -6,8 +6,8 @@
     <meta name="description" content="agentPDF - Multi-State Lease Compliance Platform">
     <title>agentPDF.org - Lease Compliance</title>
     <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
-    <!-- Note: wasm-opt disabled due to bulk memory compatibility issues -->
-    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-no-wasm-opt="true" />
+    <!-- Enable WASM features for Rust 1.82+ compatibility -->
+    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
     <!-- Trunk: Copy static JS files -->
     <link data-trunk rel="copy-dir" href="js" />
     <!-- Trunk: Copy styles -->
@@ -1027,6 +1027,10 @@
             check_compliance_wasm,
             check_compliance_for_state_wasm,
             check_compliance_with_zip_wasm,
+            check_realestate_compliance_wasm,
+            check_compliance_auto_detect_wasm,
+            detect_document_type_wasm,
+            get_realestate_statutes,
             get_supported_states,
             extract_pdf_text,
             get_pdf_page_count
@@ -1045,7 +1049,17 @@
             selectedState: 'FL',
             yearBuilt: null,
             zipCode: null,
-            locality: null
+            locality: null,
+            documentType: 'lease' // 'lease', 'purchase_contract', 'escalation_addendum', 'listing_agreement'
+        };
+
+        // Document type display names
+        const DOC_TYPE_NAMES = {
+            'lease': 'Residential Lease',
+            'purchase_contract': 'Purchase Contract',
+            'escalation_addendum': 'Escalation Addendum',
+            'listing_agreement': 'Listing Agreement',
+            'unknown': 'Unknown Document'
         };
 
         // Locality detection mapping (matches compliance-engine/src/jurisdiction.rs)
@@ -1373,6 +1387,11 @@
                     return;
                 }
 
+                // Auto-detect document type
+                const detectedType = detect_document_type_wasm(text);
+                state.documentType = detectedType;
+                console.log('Detected document type:', detectedType);
+
                 // Create document object for compliance check
                 const document = {
                     id: 'current-doc',
@@ -1382,22 +1401,34 @@
                     created_at: Date.now()
                 };
 
-                // Run compliance check with selected state, year built, and ZIP code
-                // ZIP code enables Layer 3 local ordinance checks (Chicago RLTO, NYC rent laws, etc.)
-                const resultJson = check_compliance_with_zip_wasm(
-                    JSON.stringify(document),
-                    state.selectedState,
-                    state.yearBuilt,
-                    state.zipCode
-                );
+                let resultJson;
+
+                // Use appropriate compliance check based on document type
+                if (detectedType === 'lease') {
+                    // Use lease compliance (with ZIP code for local ordinance checks)
+                    resultJson = check_compliance_with_zip_wasm(
+                        JSON.stringify(document),
+                        state.selectedState,
+                        state.yearBuilt,
+                        state.zipCode
+                    );
+                } else {
+                    // Use real estate compliance for purchase contracts, listing agreements, etc.
+                    resultJson = check_realestate_compliance_wasm(
+                        JSON.stringify(document),
+                        state.selectedState,
+                        detectedType,
+                        state.yearBuilt
+                    );
+                }
+
                 const result = JSON.parse(resultJson);
 
                 state.violations = result.violations || [];
                 renderViolations();
 
-                // Update compliance title with current state info
-                const stateInfo = StateSelector.states.find(s => s.code === state.selectedState);
-                updateComplianceTitle(stateInfo);
+                // Update compliance title with document type and state
+                updateComplianceTitleWithDocType(detectedType);
 
                 // Show lead paint reminder if year built < 1978 and not provided
                 if (!state.yearBuilt) {
@@ -1419,6 +1450,15 @@
                         <p>Failed to analyze document. Please try again.</p>
                     </div>
                 `;
+            }
+        }
+
+        // Update compliance title to show document type
+        function updateComplianceTitleWithDocType(docType) {
+            const title = document.getElementById('compliance-title');
+            const docTypeName = DOC_TYPE_NAMES[docType] || 'Document';
+            if (title) {
+                title.textContent = `${docTypeName} Compliance`;
             }
         }
 
