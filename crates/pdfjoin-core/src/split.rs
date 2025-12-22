@@ -308,6 +308,53 @@ mod tests {
         assert_eq!(doc.get_pages().len(), 13);
     }
 
+    /// Test split pages 4-14 and write to /tmp for manual Preview inspection
+    /// This test specifically checks that page CONTENT is preserved, not just structure
+    #[test]
+    fn test_split_4_14_preserves_content() {
+        use std::path::PathBuf;
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let pdf_path = project_root.join("output/florida_purchase_contract.pdf");
+
+        if !pdf_path.exists() {
+            eprintln!("SKIP: Real PDF not found at {:?}", pdf_path);
+            return;
+        }
+
+        let pdf_bytes = std::fs::read(&pdf_path).expect("read PDF");
+        eprintln!("Input PDF: {} bytes", pdf_bytes.len());
+
+        // Split pages 4-14 (11 pages)
+        let pages: Vec<u32> = (4..=14).collect();
+        eprintln!("Splitting pages: {:?}", pages);
+
+        let result = split_document(&pdf_bytes, pages).expect("split should succeed");
+        eprintln!("Output PDF: {} bytes", result.len());
+
+        // Write to /tmp for manual inspection
+        let output_path = "/tmp/split_4_14_test.pdf";
+        std::fs::write(output_path, &result).expect("write output");
+        eprintln!("Written to: {}", output_path);
+        eprintln!("Run: open -a Preview {}", output_path);
+
+        // Verify structure
+        let doc = Document::load_mem(&result).expect("output must be parseable");
+        assert_eq!(doc.get_pages().len(), 11, "should have 11 pages");
+
+        // Check that output has reasonable size (not empty/stripped)
+        // Original is ~71KB for 17 pages, so 11 pages should be roughly 40-50KB
+        // If content is stripped, output will be much smaller (< 5KB)
+        assert!(
+            result.len() > 10000,
+            "Output too small ({} bytes) - content may be stripped!",
+            result.len()
+        );
+
+        eprintln!("Output size check passed: {} bytes", result.len());
+    }
+
     /// Regression test: streaming split must NOT produce duplicate Pages objects
     /// Bug: The streaming split was including the original Catalog and Pages objects
     /// AND creating new ones, resulting in two /Count entries which corrupts the PDF.
@@ -383,15 +430,47 @@ mod tests {
         eprintln!("Pages object ID: {}", pages_obj_id);
 
         // Find all /Parent references in page objects
+        // Note: Only Page objects should have /Parent pointing to the Pages object.
+        // Other objects (like annotations) might have /Parent pointing elsewhere.
         let parent_re = Regex::new(r"/Parent (\d+) 0 R").unwrap();
-        for cap in parent_re.captures_iter(&result_str) {
-            let parent_id = cap.get(1).unwrap().as_str();
+
+        // First, find all /Type /Page objects and their parent refs
+        let page_obj_re =
+            Regex::new(r"(\d+) 0 obj[^>]*?/Type /Page[^s][^>]*?/Parent (\d+) 0 R").unwrap();
+
+        for cap in page_obj_re.captures_iter(&result_str) {
+            let obj_id = cap.get(1).unwrap().as_str();
+            let parent_id = cap.get(2).unwrap().as_str();
+            if parent_id != pages_obj_id {
+                eprintln!(
+                    "Page object {} has /Parent {} (expected {})",
+                    obj_id, parent_id, pages_obj_id
+                );
+            }
             assert_eq!(
                 parent_id, pages_obj_id,
-                "REGRESSION: Page has /Parent {} but Pages object is {}. \
+                "REGRESSION: Page object {} has /Parent {} but Pages object is {}. \
                  Invalid parent references cause PDF corruption.",
-                parent_id, pages_obj_id
+                obj_id, parent_id, pages_obj_id
             );
+        }
+
+        // Also check all /Parent refs to see what's pointing to non-Pages objects
+        eprintln!("\nAll /Parent references in output:");
+        for cap in parent_re.captures_iter(&result_str) {
+            let parent_id = cap.get(1).unwrap().as_str();
+            if parent_id != pages_obj_id {
+                // Find context around this parent ref
+                let pos = cap.get(0).unwrap().start();
+                let start = pos.saturating_sub(100);
+                let end = (pos + 100).min(result_str.len());
+                eprintln!(
+                    "  Non-Pages parent {} at pos {}: ...{}...",
+                    parent_id,
+                    pos,
+                    &result_str[start..end].replace('\n', "\\n")
+                );
+            }
         }
     }
 }
