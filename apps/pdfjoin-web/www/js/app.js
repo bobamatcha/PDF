@@ -256,6 +256,7 @@ function setupMergeView() {
     const browseBtn = document.getElementById('merge-browse-btn');
     const addBtn = document.getElementById('merge-add-btn');
     const mergeBtn = document.getElementById('merge-btn');
+    const fileList = document.getElementById('merge-file-list');
 
     browseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -271,6 +272,18 @@ function setupMergeView() {
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
+        handleMergeFiles(e.dataTransfer.files);
+    });
+
+    // Also allow drag-and-drop on the file list for adding more files
+    fileList.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileList.classList.add('drag-over');
+    });
+    fileList.addEventListener('dragleave', () => fileList.classList.remove('drag-over'));
+    fileList.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileList.classList.remove('drag-over');
         handleMergeFiles(e.dataTransfer.files);
     });
 

@@ -1453,3 +1453,142 @@ async fn test_pdfjoin_split_multiple_files_have_correct_names() {
         }
     }
 }
+
+// ============================================================================
+// Merge Drag-and-Drop Bug Tests
+// ============================================================================
+
+/// Bug test: After adding the first file to merge, users should still be able
+/// to drag and drop additional files onto the file list area.
+/// Bug: The drop zone is hidden after adding files, and the file list has no
+/// drag-and-drop handlers, so users can only add more files via the button.
+#[tokio::test]
+async fn test_pdfjoin_merge_drag_drop_additional_files() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(3);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to merge tab
+                document.querySelector('[data-tab="merge"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Create test PDF bytes
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Add first file via file input (simulating initial drop)
+                const fileInput = document.getElementById('merge-file-input');
+                const dataTransfer1 = new DataTransfer();
+                const file1 = new File([pdfBytes], 'first.pdf', {{ type: 'application/pdf' }});
+                dataTransfer1.items.add(file1);
+                fileInput.files = dataTransfer1.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check state after first file
+                const dropZone = document.getElementById('merge-drop-zone');
+                const fileList = document.getElementById('merge-file-list');
+                const dropZoneHidden = dropZone.classList.contains('hidden');
+                const fileListVisible = !fileList.classList.contains('hidden');
+
+                // Now try to find a valid drop target for additional files
+                // It should be either the file list area or a dedicated drop zone
+                const fileListHasDropHandler = fileList.ondrop !== null ||
+                    fileList.getAttribute('ondrop') !== null;
+
+                // Check if there's any visible element that accepts drops
+                const visibleDropTargets = document.querySelectorAll('[class*="drop"]:not(.hidden)');
+                const hasVisibleDropTarget = visibleDropTargets.length > 0;
+
+                // Try to simulate a drop on the file list
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: new DataTransfer()
+                }});
+
+                // Create second file
+                const file2 = new File([pdfBytes], 'second.pdf', {{ type: 'application/pdf' }});
+                dropEvent.dataTransfer.items.add(file2);
+
+                // Count files before drop attempt
+                const fileCountBefore = document.querySelectorAll('#merge-files li').length;
+
+                // Dispatch drop event on file list
+                fileList.dispatchEvent(dropEvent);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Count files after drop attempt
+                const fileCountAfter = document.querySelectorAll('#merge-files li').length;
+
+                return {{
+                    success: true,
+                    dropZoneHidden: dropZoneHidden,
+                    fileListVisible: fileListVisible,
+                    hasVisibleDropTarget: hasVisibleDropTarget,
+                    fileCountBefore: fileCountBefore,
+                    fileCountAfter: fileCountAfter,
+                    dropWorked: fileCountAfter > fileCountBefore
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test merge drag-drop")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Merge drag-drop test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // The drop zone is hidden after first file - this is expected behavior
+    assert!(
+        result["dropZoneHidden"].as_bool().unwrap_or(false),
+        "Drop zone should be hidden after adding first file"
+    );
+
+    // But we should still be able to drop files somewhere
+    assert!(
+        result["dropWorked"].as_bool().unwrap_or(false),
+        "BUG: Cannot drag-and-drop additional files after the first one. \
+         The file list should accept drops, or a drop zone should remain visible. \
+         Files before: {}, after: {}",
+        result["fileCountBefore"],
+        result["fileCountAfter"]
+    );
+}
