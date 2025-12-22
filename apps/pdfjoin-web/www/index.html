@@ -19,6 +19,7 @@
     <link data-trunk rel="copy-file" href="robots.txt" />
     <link data-trunk rel="copy-file" href="sitemap.xml" />
     <link data-trunk rel="copy-file" href="404.html" />
+    <link data-trunk rel="copy-file" href="florida_purchase_contract.pdf" />
     <style>
         :root {
             --primary: #2563eb;
@@ -67,6 +68,11 @@
         .chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
         .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 0.25rem 0.75rem; font-size: 0.85rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
         .chip:hover { background: rgba(37, 99, 235, 0.1); border-color: var(--primary); }
+
+        /* Checkbox */
+        .checkbox-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+        .checkbox-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+        .checkbox-row label { font-size: 0.9rem; color: var(--text-muted); cursor: pointer; }
 
         /* Buttons */
         .primary-btn { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
@@ -151,6 +157,10 @@
                         <input type="text" id="page-range" placeholder="e.g., 1-3, 5, 8-10">
                         <small class="range-hint">Use commas for multiple ranges: 1-3, 5, 8-10</small>
                         <div id="range-chips" class="chips"></div>
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="split-multiple-files">
+                            <label for="split-multiple-files">Save each range as separate file</label>
+                        </div>
                     </div>
                     <button id="split-btn" class="primary-btn" disabled>Split PDF</button>
                 </div>

@@ -1062,3 +1062,394 @@ async fn test_pdfjoin_mobile_touch_targets() {
         );
     }
 }
+
+// ============================================================================
+// Multi-File Split Feature Tests
+// ============================================================================
+
+/// Feature test: A checkbox should exist to enable "split into separate files" mode
+/// When checked, each range (comma-separated) produces a separate PDF download.
+#[tokio::test]
+async fn test_pdfjoin_split_multiple_files_checkbox_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load a PDF to reveal the split editor
+    let pdf_b64 = test_pdf_base64(10);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Decode and load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('split-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Look for the multi-file checkbox
+                const checkbox = document.getElementById('split-multiple-files') ||
+                                 document.querySelector('input[name="split-multiple"]') ||
+                                 document.querySelector('input[type="checkbox"][id*="multiple"]') ||
+                                 document.querySelector('input[type="checkbox"][id*="separate"]');
+
+                // Also look for any label mentioning "separate" or "multiple"
+                const labels = Array.from(document.querySelectorAll('label'));
+                const relevantLabel = labels.find(l =>
+                    l.textContent?.toLowerCase().includes('separate') ||
+                    l.textContent?.toLowerCase().includes('multiple files') ||
+                    l.textContent?.toLowerCase().includes('one file per')
+                );
+
+                return {{
+                    success: true,
+                    hasCheckbox: !!checkbox,
+                    checkboxId: checkbox?.id || null,
+                    hasRelevantLabel: !!relevantLabel,
+                    labelText: relevantLabel?.textContent?.trim() || null
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should check for multi-file checkbox")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Multi-file checkbox test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["hasCheckbox"].as_bool().unwrap_or(false),
+        "FEATURE MISSING: No 'split into separate files' checkbox found. \
+         Users need a way to split multiple ranges into separate PDF files."
+    );
+}
+
+/// Feature test: When multi-file checkbox is checked and multiple ranges are entered,
+/// splitting should produce multiple separate PDF files (one per range).
+#[tokio::test]
+async fn test_pdfjoin_split_multiple_files_produces_multiple_downloads() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load PDF and test multi-file split
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Decode and load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('split-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check the multi-file checkbox
+                const checkbox = document.getElementById('split-multiple-files') ||
+                                 document.querySelector('input[name="split-multiple"]') ||
+                                 document.querySelector('input[type="checkbox"][id*="multiple"]') ||
+                                 document.querySelector('input[type="checkbox"][id*="separate"]');
+
+                if (!checkbox) {{
+                    return {{ success: false, error: 'Multi-file checkbox not found', needsCheckbox: true }};
+                }}
+
+                checkbox.checked = true;
+                checkbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Enter multiple ranges
+                const rangeInput = document.getElementById('page-range');
+                rangeInput.value = '1-3, 5-7, 10';
+                rangeInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 100));
+
+                // Intercept downloads by overriding the download function
+                const downloads = [];
+                const originalCreateElement = document.createElement.bind(document);
+                document.createElement = function(tagName) {{
+                    const el = originalCreateElement(tagName);
+                    if (tagName.toLowerCase() === 'a') {{
+                        const originalClick = el.click.bind(el);
+                        el.click = function() {{
+                            if (el.download) {{
+                                downloads.push({{
+                                    filename: el.download,
+                                    hasBlob: el.href?.startsWith('blob:')
+                                }});
+                            }}
+                            // Don't actually download in test
+                        }};
+                    }}
+                    return el;
+                }};
+
+                // Click split button
+                const splitBtn = document.getElementById('split-btn');
+                if (splitBtn.disabled) {{
+                    return {{ success: false, error: 'Split button is disabled', buttonDisabled: true }};
+                }}
+
+                splitBtn.click();
+
+                // Wait for split operations
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Restore original
+                document.createElement = originalCreateElement;
+
+                return {{
+                    success: true,
+                    downloadCount: downloads.length,
+                    downloads: downloads,
+                    expectedCount: 3 // "1-3", "5-7", "10" = 3 ranges
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test multi-file split")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Multi-file download test: {:?}", result);
+
+    // If checkbox doesn't exist yet, that's the first failure we need to fix
+    if result
+        .get("needsCheckbox")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        panic!(
+            "FEATURE MISSING: Multi-file checkbox not found. \
+             Add checkbox with id='split-multiple-files' first."
+        );
+    }
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let download_count = result["downloadCount"].as_i64().unwrap_or(0);
+    let expected_count = result["expectedCount"].as_i64().unwrap_or(3);
+
+    assert_eq!(
+        download_count, expected_count,
+        "FEATURE BUG: Expected {} separate PDF downloads for ranges '1-3, 5-7, 10', \
+         but got {}. Downloads: {:?}",
+        expected_count, download_count, result["downloads"]
+    );
+}
+
+/// Feature test: Each downloaded file should have a descriptive filename
+/// that includes the range it contains (e.g., "document-pages-1-3.pdf").
+#[tokio::test]
+async fn test_pdfjoin_split_multiple_files_have_correct_names() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(10);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('split-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'my-document.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Enable multi-file mode
+                const checkbox = document.getElementById('split-multiple-files');
+                if (!checkbox) {{
+                    return {{ success: false, error: 'Multi-file checkbox not found' }};
+                }}
+
+                checkbox.checked = true;
+                checkbox.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Enter ranges
+                const rangeInput = document.getElementById('page-range');
+                rangeInput.value = '1-3, 5';
+                rangeInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 100));
+
+                // Capture download filenames
+                const filenames = [];
+                const originalCreateElement = document.createElement.bind(document);
+                document.createElement = function(tagName) {{
+                    const el = originalCreateElement(tagName);
+                    if (tagName.toLowerCase() === 'a') {{
+                        const originalClick = el.click.bind(el);
+                        el.click = function() {{
+                            if (el.download) {{
+                                filenames.push(el.download);
+                            }}
+                        }};
+                    }}
+                    return el;
+                }};
+
+                // Execute split
+                const splitBtn = document.getElementById('split-btn');
+                if (!splitBtn.disabled) {{
+                    splitBtn.click();
+                    await new Promise(r => setTimeout(r, 1000));
+                }}
+
+                document.createElement = originalCreateElement;
+
+                // Check filenames include range info
+                const hasRangeInName = filenames.every(name =>
+                    name.includes('1-3') || name.includes('5') ||
+                    name.includes('pages') || name.includes('range')
+                );
+
+                const hasOriginalName = filenames.every(name =>
+                    name.includes('my-document') || name.includes('document')
+                );
+
+                return {{
+                    success: true,
+                    filenames: filenames,
+                    hasRangeInName: hasRangeInName,
+                    hasOriginalName: hasOriginalName
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test filename generation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Filename test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let filenames = result["filenames"].as_array();
+    if let Some(names) = filenames {
+        assert!(
+            !names.is_empty(),
+            "No files were downloaded - multi-file split may not be working"
+        );
+
+        // Each filename should contain the range it represents
+        for name in names {
+            let name_str = name.as_str().unwrap_or("");
+            assert!(
+                name_str.contains("1-3")
+                    || name_str.contains("5")
+                    || name_str.contains("pages")
+                    || name_str.contains("range"),
+                "Filename '{}' should indicate which pages it contains",
+                name_str
+            );
+        }
+    }
+}

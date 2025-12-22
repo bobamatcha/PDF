@@ -150,16 +150,51 @@ async function executeSplit() {
     const splitBtn = document.getElementById('split-btn');
     const progress = document.getElementById('split-progress');
     const rangeInput = document.getElementById('page-range');
+    const multiFileCheckbox = document.getElementById('split-multiple-files');
 
     splitBtn.disabled = true;
     progress.classList.remove('hidden');
 
     try {
-        const result = splitSession.execute();
-        // Smart filename: original-pages-1-3,5.pdf
-        const range = rangeInput.value.replace(/\s+/g, '').replace(/,/g, '_');
-        const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
-        downloadBlob(result, filename);
+        const isMultiFile = multiFileCheckbox?.checked;
+        const fullRange = rangeInput.value;
+
+        if (isMultiFile && fullRange.includes(',')) {
+            // Multi-file mode: split each comma-separated range into its own file
+            const ranges = fullRange.split(',').map(r => r.trim()).filter(r => r);
+
+            for (let i = 0; i < ranges.length; i++) {
+                const range = ranges[i];
+                // Update progress
+                const progressText = document.querySelector('#split-progress .progress-text');
+                if (progressText) {
+                    progressText.textContent = `Processing range ${i + 1} of ${ranges.length}...`;
+                }
+
+                // Set selection to just this range and execute
+                splitSession.setPageSelection(range);
+                const result = splitSession.execute();
+
+                // Download with range-specific filename
+                const rangeLabel = range.replace(/\s+/g, '');
+                const filename = `${splitOriginalFilename || 'split'}-pages-${rangeLabel}.pdf`;
+                downloadBlob(result, filename);
+
+                // Small delay between downloads to avoid browser issues
+                if (i < ranges.length - 1) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
+
+            // Restore original selection
+            splitSession.setPageSelection(fullRange);
+        } else {
+            // Single file mode (original behavior)
+            const result = splitSession.execute();
+            const range = fullRange.replace(/\s+/g, '').replace(/,/g, '_');
+            const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
+            downloadBlob(result, filename);
+        }
     } catch (e) {
         showError('split-error', 'Split failed: ' + e);
     } finally {
