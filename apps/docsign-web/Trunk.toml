@@ -18,8 +18,3 @@ port = 8081
 # Open browser on start
 open = false
 
-[[hooks]]
-# Copy static JS files to dist
-stage = "post_build"
-command = "sh"
-command_arguments = ["-c", "cp -r www/*.js www/dist/ 2>/dev/null || true"]

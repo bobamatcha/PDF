@@ -15,6 +15,23 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, RequestMode, Response};
 
+/// Session status for accept/decline flow (UX-002)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStatus {
+    /// Session is pending - waiting for recipient action
+    #[default]
+    Pending,
+    /// Recipient accepted and is signing
+    Accepted,
+    /// Recipient declined to sign
+    Declined,
+    /// All signatures completed
+    Completed,
+    /// Session has expired
+    Expired,
+}
+
 /// Session validation result
 #[wasm_bindgen]
 #[derive(Debug, Clone)]
@@ -115,6 +132,18 @@ pub struct SigningSessionData {
     pub fields: Vec<SigningField>,
     pub completed_fields: Vec<String>,
     pub created_at: f64,
+    /// Sender's name for consent landing page (UX-001)
+    #[serde(default)]
+    pub sender_name: String,
+    /// Sender's email for consent landing page (UX-001)
+    #[serde(default)]
+    pub sender_email: String,
+    /// When the document was sent (ISO 8601) (UX-001)
+    #[serde(default)]
+    pub sent_at: String,
+    /// Session status: pending, accepted, declined, completed, expired (UX-002)
+    #[serde(default)]
+    pub status: SessionStatus,
 }
 
 /// A field that needs to be signed
@@ -161,6 +190,12 @@ pub struct SigningSession {
     signatures: std::collections::HashMap<String, String>,
     completed_fields: std::collections::HashSet<String>,
     is_online: bool,
+    /// Whether electronic signature consent has been given (UX-001)
+    consent_given: bool,
+    /// Session status (UX-002)
+    status: SessionStatus,
+    /// Reason for decline if status is Declined (UX-002)
+    decline_reason_text: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -176,6 +211,69 @@ impl SigningSession {
             signatures: std::collections::HashMap::new(),
             completed_fields: std::collections::HashSet::new(),
             is_online: true,
+            consent_given: false,
+            status: SessionStatus::Pending,
+            decline_reason_text: None,
+        }
+    }
+
+    // ============================================================
+    // UX-001: Consent tracking methods
+    // ============================================================
+
+    /// Check if electronic signature consent has been given
+    #[wasm_bindgen]
+    pub fn has_consent(&self) -> bool {
+        self.consent_given
+    }
+
+    /// Record that electronic signature consent has been given
+    #[wasm_bindgen]
+    pub fn give_consent(&mut self) {
+        self.consent_given = true;
+        if self.status == SessionStatus::Pending {
+            self.status = SessionStatus::Accepted;
+        }
+    }
+
+    /// Check if signing can finish (requires consent and all required fields)
+    #[wasm_bindgen]
+    pub fn can_finish_with_consent(&self) -> bool {
+        self.consent_given && self.can_finish()
+    }
+
+    // ============================================================
+    // UX-002: Accept/Decline flow methods
+    // ============================================================
+
+    /// Decline the signing request with an optional reason
+    #[wasm_bindgen]
+    pub fn decline(&mut self, reason: Option<String>) {
+        self.status = SessionStatus::Declined;
+        self.decline_reason_text = reason;
+    }
+
+    /// Check if the session has been declined
+    #[wasm_bindgen]
+    pub fn is_declined(&self) -> bool {
+        self.status == SessionStatus::Declined
+    }
+
+    /// Get the decline reason if session was declined
+    #[wasm_bindgen]
+    pub fn decline_reason(&self) -> Option<String> {
+        self.decline_reason_text.clone()
+    }
+
+    /// Get the current session status
+    #[wasm_bindgen]
+    pub fn get_status(&self) -> String {
+        match self.status {
+            SessionStatus::Pending => "pending".to_string(),
+            SessionStatus::Accepted => "accepted".to_string(),
+            SessionStatus::Declined => "declined".to_string(),
+            SessionStatus::Completed => "completed".to_string(),
+            SessionStatus::Expired => "expired".to_string(),
         }
     }
 
@@ -244,9 +342,14 @@ impl SigningSession {
         self.completed_fields.contains(field_id)
     }
 
-    /// Check if all required fields are completed
+    /// Check if all required fields are completed and session is not declined
     #[wasm_bindgen]
     pub fn can_finish(&self) -> bool {
+        // Cannot finish if session is declined (UX-002)
+        if self.is_declined() {
+            return false;
+        }
+
         self.fields
             .iter()
             .filter(|f| f.required)
@@ -508,4 +611,189 @@ pub fn is_navigator_online() -> bool {
     web_sys::window()
         .map(|w| w.navigator().on_line())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================
+    // UX-001: Consent Landing Page Tests
+    // ============================================================
+
+    #[test]
+    fn test_session_validation_requires_all_params() {
+        // Valid params
+        let result = validate_session_params(
+            Some("sess_123".to_string()),
+            Some("r1".to_string()),
+            Some("key_abc".to_string()),
+        );
+        assert!(result.valid());
+        assert!(result.error_message().is_none());
+
+        // Missing session
+        let result =
+            validate_session_params(None, Some("r1".to_string()), Some("key_abc".to_string()));
+        assert!(!result.valid());
+        assert!(result.error_message().is_some());
+
+        // Missing recipient
+        let result = validate_session_params(
+            Some("sess_123".to_string()),
+            None,
+            Some("key_abc".to_string()),
+        );
+        assert!(!result.valid());
+        assert!(result.error_message().is_some());
+
+        // Missing key
+        let result =
+            validate_session_params(Some("sess_123".to_string()), Some("r1".to_string()), None);
+        assert!(!result.valid());
+        assert!(result.error_message().is_some());
+    }
+
+    #[test]
+    fn test_session_validation_format_checks() {
+        // Session ID too short
+        let result = validate_session_params(
+            Some("ab".to_string()),
+            Some("r1".to_string()),
+            Some("key_abc".to_string()),
+        );
+        assert!(!result.valid());
+        assert!(result
+            .error_message()
+            .unwrap()
+            .contains("Invalid session ID"));
+
+        // Signing key too short
+        let result = validate_session_params(
+            Some("sess_123".to_string()),
+            Some("r1".to_string()),
+            Some("ab".to_string()),
+        );
+        assert!(!result.valid());
+        assert!(result
+            .error_message()
+            .unwrap()
+            .contains("Invalid signing key"));
+    }
+
+    // ============================================================
+    // UX-001: These tests MUST FAIL until consent landing is implemented
+    // ============================================================
+
+    #[test]
+    fn test_session_data_has_sender_info() {
+        // UX-001: SigningSessionData must have sender_name, sender_email, sent_at
+        let data = SigningSessionData {
+            session_id: "sess_123".to_string(),
+            recipient_id: "r1".to_string(),
+            signing_key: "key_abc".to_string(),
+            document_name: "Contract.pdf".to_string(),
+            fields: vec![],
+            completed_fields: vec![],
+            created_at: 1234567890.0,
+            // UX-001: Consent landing page fields
+            sender_name: "Alice Smith".to_string(),
+            sender_email: "alice@example.com".to_string(),
+            sent_at: "2025-12-21T12:00:00Z".to_string(),
+            // UX-002: Status field
+            status: SessionStatus::Pending,
+        };
+
+        assert_eq!(data.sender_name, "Alice Smith");
+        assert_eq!(data.sender_email, "alice@example.com");
+        assert!(!data.sent_at.is_empty());
+        assert_eq!(data.status, SessionStatus::Pending);
+    }
+
+    #[test]
+    fn test_session_has_consent_tracking() {
+        // UX-001: SigningSession must track whether consent has been given
+        // This test will FAIL until consent_given field is added
+        let mut session = SigningSession::new("sess_123", "r1", "key_abc");
+
+        // Initially consent should not be given
+        assert!(!session.has_consent());
+
+        // After giving consent
+        session.give_consent();
+        assert!(session.has_consent());
+    }
+
+    #[test]
+    fn test_cannot_submit_without_consent() {
+        // UX-001: Signing should fail if consent hasn't been given
+        let session = SigningSession::new("sess_123", "r1", "key_abc");
+
+        // can_finish should return false without consent
+        assert!(!session.can_finish_with_consent());
+    }
+
+    // ============================================================
+    // UX-002: These tests MUST FAIL until accept/decline is implemented
+    // ============================================================
+
+    #[test]
+    fn test_session_has_status_field() {
+        // UX-002: SigningSessionData must have status field
+        let data = SigningSessionData {
+            session_id: "sess_123".to_string(),
+            recipient_id: "r1".to_string(),
+            signing_key: "key_abc".to_string(),
+            document_name: "Contract.pdf".to_string(),
+            fields: vec![],
+            completed_fields: vec![],
+            created_at: 1234567890.0,
+            sender_name: "Alice Smith".to_string(),
+            sender_email: "alice@example.com".to_string(),
+            sent_at: "2025-12-21T12:00:00Z".to_string(),
+            // Status field for accept/decline flow:
+            status: SessionStatus::Pending,
+        };
+
+        assert_eq!(data.status, SessionStatus::Pending);
+    }
+
+    #[test]
+    fn test_declined_session_blocks_signing() {
+        // UX-002: A declined session cannot be signed
+        let mut session = SigningSession::new("sess_123", "r1", "key_abc");
+
+        // Decline the session
+        session.decline(Some("Not ready to sign".to_string()));
+
+        // Should be marked as declined
+        assert!(session.is_declined());
+
+        // Cannot sign a declined session
+        assert!(!session.can_finish());
+    }
+
+    #[test]
+    fn test_decline_stores_reason() {
+        // UX-002: Decline reason should be stored
+        let mut session = SigningSession::new("sess_123", "r1", "key_abc");
+
+        session.decline(Some("Terms not acceptable".to_string()));
+
+        assert_eq!(
+            session.decline_reason(),
+            Some("Terms not acceptable".to_string())
+        );
+    }
+
+    // ============================================================
+    // Existing tests (keep working)
+    // ============================================================
+
+    #[test]
+    fn test_offline_queue_persists_across_sessions() {
+        // Verify offline queue works - this is existing functionality
+        let session = SigningSession::new("sess_123", "r1", "key_abc");
+        assert_eq!(session.completed_field_count(), 0);
+    }
 }

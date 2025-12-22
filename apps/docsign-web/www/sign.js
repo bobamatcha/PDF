@@ -32,6 +32,15 @@ const elements = {
     viewerContainer: document.querySelector('.viewer-container'),
     pdfPages: document.getElementById('pdf-pages'),
 
+    // Consent landing page
+    consentLanding: document.getElementById('consent-landing'),
+    senderName: document.getElementById('sender-name'),
+    senderEmail: document.getElementById('sender-email'),
+    documentName: document.getElementById('document-name'),
+    dateSent: document.getElementById('date-sent'),
+    btnReviewDocument: document.getElementById('btn-review-document'),
+    linkDecline: document.getElementById('link-decline'),
+
     // Toolbar buttons
     btnStart: document.getElementById('btn-start'),
     btnPrev: document.getElementById('btn-prev'),
@@ -57,7 +66,14 @@ const elements = {
     fontSelector: document.getElementById('font-selector'),
     cursivePreview: document.getElementById('cursive-preview'),
     cancelSignature: document.getElementById('cancel-signature'),
-    applySignature: document.getElementById('apply-signature')
+    applySignature: document.getElementById('apply-signature'),
+
+    // Decline modal
+    declineModal: document.getElementById('decline-modal'),
+    closeDeclineModal: document.getElementById('close-decline-modal'),
+    declineReason: document.getElementById('decline-reason'),
+    cancelDecline: document.getElementById('cancel-decline'),
+    confirmDecline: document.getElementById('confirm-decline')
 };
 
 /**
@@ -570,6 +586,12 @@ function canFinish() {
 function openSignatureModal() {
     elements.signatureModal.classList.remove('hidden');
 
+    // Add mobile bottom-sheet class if on mobile viewport
+    const modal = elements.signatureModal.querySelector('.modal');
+    if (modal && window.innerWidth < 768) {
+        modal.classList.add('bottom-sheet-mobile');
+    }
+
     // Initialize canvas
     const canvas = elements.signaturePad;
     if (canvas) {
@@ -976,11 +998,31 @@ async function queueOfflineSubmission(signedData) {
  * Initialize event listeners
  */
 function initializeEventListeners() {
+    // Consent landing page buttons
+    elements.btnReviewDocument?.addEventListener('click', handleReviewDocument);
+    elements.linkDecline?.addEventListener('click', (e) => {
+        e.preventDefault();
+        openDeclineModal();
+    });
+
     // Toolbar buttons
     elements.btnStart?.addEventListener('click', startGuidedFlow);
     elements.btnPrev?.addEventListener('click', prevField);
     elements.btnNext?.addEventListener('click', nextField);
     elements.btnFinish?.addEventListener('click', finishSigning);
+    elements.btnDecline?.addEventListener('click', openDeclineModal);
+
+    // Decline modal
+    elements.closeDeclineModal?.addEventListener('click', closeDeclineModal);
+    elements.cancelDecline?.addEventListener('click', closeDeclineModal);
+    elements.confirmDecline?.addEventListener('click', submitDecline);
+
+    // Decline modal overlay click to close
+    elements.declineModal?.addEventListener('click', (e) => {
+        if (e.target === elements.declineModal) {
+            closeDeclineModal();
+        }
+    });
 
     // Signature modal
     elements.closeSignatureModal?.addEventListener('click', closeSignatureModal);
@@ -1031,6 +1073,169 @@ function initializeEventListeners() {
             }
         }
     });
+
+    // Swipe gesture navigation for mobile (UX-005)
+    initSwipeGestures();
+}
+
+/**
+ * Initialize swipe gesture navigation for mobile
+ * Swipe left = next field, Swipe right = previous field
+ */
+function initSwipeGestures() {
+    const viewerContainer = elements.viewerContainer;
+    if (!viewerContainer) return;
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchEndX = 0;
+    let touchEndY = 0;
+
+    const minSwipeDistance = 50; // Minimum distance for swipe
+    const maxVerticalDistance = 100; // Maximum vertical movement to count as horizontal swipe
+
+    viewerContainer.addEventListener('touchstart', (e) => {
+        if (!state.active) return;
+
+        // Ignore if touching an input, button, or canvas
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'CANVAS') {
+            return;
+        }
+
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    viewerContainer.addEventListener('touchend', (e) => {
+        if (!state.active) return;
+
+        // Ignore if touching an input, button, or canvas
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'CANVAS') {
+            return;
+        }
+
+        touchEndX = e.changedTouches[0].screenX;
+        touchEndY = e.changedTouches[0].screenY;
+
+        const horizontalDistance = touchEndX - touchStartX;
+        const verticalDistance = Math.abs(touchEndY - touchStartY);
+
+        // Only process if mostly horizontal swipe
+        if (verticalDistance > maxVerticalDistance) {
+            return;
+        }
+
+        // Swipe left (next)
+        if (horizontalDistance < -minSwipeDistance) {
+            nextField();
+        }
+        // Swipe right (previous)
+        else if (horizontalDistance > minSwipeDistance) {
+            prevField();
+        }
+    }, { passive: true });
+
+    // Mark container as swipe-enabled for tests
+    viewerContainer.dataset.swipeEnabled = 'true';
+}
+
+/**
+ * Show consent landing page
+ */
+function showConsentLanding() {
+    const session = state.session;
+
+    // Populate session information
+    if (elements.senderName) {
+        elements.senderName.textContent = session.metadata?.created_by || 'Unknown Sender';
+    }
+    if (elements.senderEmail) {
+        // Use sender_email if available, otherwise show placeholder
+        elements.senderEmail.textContent = session.metadata?.sender_email || '-';
+    }
+    if (elements.documentName) {
+        elements.documentName.textContent = session.metadata?.filename || session.documentName || 'Document';
+    }
+    if (elements.dateSent) {
+        // Format the date nicely
+        const dateStr = session.metadata?.created_at;
+        if (dateStr) {
+            try {
+                const date = new Date(dateStr);
+                elements.dateSent.textContent = date.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch {
+                elements.dateSent.textContent = dateStr;
+            }
+        } else {
+            elements.dateSent.textContent = '-';
+        }
+    }
+
+    // Hide loading, show consent page
+    elements.loadingIndicator?.classList.add('hidden');
+    elements.consentLanding?.classList.remove('hidden');
+}
+
+/**
+ * Handle review document button click
+ */
+function handleReviewDocument() {
+    // Hide consent landing page
+    elements.consentLanding?.classList.add('hidden');
+
+    // Show signing interface
+    if (elements.signingToolbar) {
+        elements.signingToolbar.style.display = 'flex';
+    }
+    if (elements.viewerContainer) {
+        elements.viewerContainer.style.display = 'block';
+    }
+
+    // Initialize PDF viewing if needed
+    if (state.session?.pdfData && !state.pdfDoc) {
+        loadPdfFromSession();
+    } else if (!state.pdfDoc && state.fields.length > 0) {
+        // Show mock field overlays for testing (without PDF)
+        createMockPdfPage();
+        renderFieldOverlays();
+    } else if (state.pdfDoc) {
+        // PDF already loaded, just render field overlays
+        renderFieldOverlays();
+    }
+
+    // Update initial UI state
+    updateUI();
+}
+
+/**
+ * Load PDF from session data
+ */
+async function loadPdfFromSession() {
+    console.log('[LOCAL MODE] Loading PDF from session data');
+    // Convert base64 to Uint8Array
+    const binaryString = atob(state.session.pdfData);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    await loadPdf(bytes);
+}
+
+/**
+ * Create mock PDF page for testing
+ */
+function createMockPdfPage() {
+    const pageWrapper = document.createElement('div');
+    pageWrapper.className = 'pdf-page-wrapper';
+    pageWrapper.dataset.pageNumber = '1';
+    pageWrapper.style.cssText = 'position: relative; width: 612px; height: 792px; background: white; margin: 0 auto;';
+    elements.pdfPages.appendChild(pageWrapper);
 }
 
 /**
@@ -1058,48 +1263,108 @@ async function initialize() {
         console.log('Session loaded:', state.session);
         console.log('Fields for recipient:', state.fields);
 
-        // Hide loading, show UI
-        elements.loadingIndicator?.classList.add('hidden');
-        if (elements.signingToolbar) {
-            elements.signingToolbar.style.display = 'flex';
-        }
-        if (elements.viewerContainer) {
-            elements.viewerContainer.style.display = 'block';
-        }
-
-        // Load PDF if we have PDF data (local mode)
-        if (state.session?.pdfData && !state.pdfDoc) {
-            console.log('[LOCAL MODE] Loading PDF from session data');
-            // Convert base64 to Uint8Array
-            const binaryString = atob(state.session.pdfData);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            await loadPdf(bytes);
-        } else if (!state.pdfDoc && state.fields.length > 0) {
-            // Show mock field overlays for testing (without PDF)
-            // Create a placeholder page for testing
-            const pageWrapper = document.createElement('div');
-            pageWrapper.className = 'pdf-page-wrapper';
-            pageWrapper.dataset.pageNumber = '1';
-            pageWrapper.style.cssText = 'position: relative; width: 612px; height: 792px; background: white; margin: 0 auto;';
-            elements.pdfPages.appendChild(pageWrapper);
-
-            renderFieldOverlays();
-        } else if (state.pdfDoc) {
-            // PDF already loaded, just render field overlays
-            renderFieldOverlays();
-        }
-
-        // Update initial UI state
-        updateUI();
+        // Show consent landing page BEFORE signing interface
+        showConsentLanding();
 
     } catch (err) {
         console.error('Initialization failed:', err);
         // Show proper error message - NO mock data fallback
         showSessionError(err.message || 'Invalid or expired signing link');
     }
+}
+
+/**
+ * Open decline modal
+ */
+function openDeclineModal() {
+    elements.declineModal?.classList.remove('hidden');
+    // Clear previous reason
+    if (elements.declineReason) {
+        elements.declineReason.value = '';
+    }
+}
+
+/**
+ * Close decline modal
+ */
+function closeDeclineModal() {
+    elements.declineModal?.classList.add('hidden');
+}
+
+/**
+ * Submit decline to Worker API
+ */
+async function submitDecline() {
+    const reason = elements.declineReason?.value.trim() || null;
+    const { sessionId, recipientId, signingKey } = window.sessionParams;
+
+    // Disable buttons during submission
+    if (elements.confirmDecline) {
+        elements.confirmDecline.disabled = true;
+        elements.confirmDecline.textContent = 'Declining...';
+    }
+
+    try {
+        const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
+
+        const response = await fetch(`${WORKER_API}/session/${sessionId}/decline`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Recipient-Id': recipientId,
+                'X-Signing-Key': signingKey
+            },
+            body: JSON.stringify({
+                recipient_id: recipientId,
+                reason: reason
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to decline: ${response.status}`);
+        }
+
+        // Close modal and show confirmation
+        closeDeclineModal();
+        showDeclinedConfirmation();
+
+    } catch (err) {
+        console.error('Failed to submit decline:', err);
+        showToast('Failed to decline. Please try again.', 'error');
+
+        // Re-enable button
+        if (elements.confirmDecline) {
+            elements.confirmDecline.disabled = false;
+            elements.confirmDecline.textContent = 'Decline Document';
+        }
+    }
+}
+
+/**
+ * Show declined confirmation message
+ */
+function showDeclinedConfirmation() {
+    const modal = document.createElement('div');
+    modal.id = 'declined-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+        <div class="modal" style="text-align: center; padding: 2rem;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">✓</div>
+            <h2 style="margin-bottom: 1rem; color: var(--text-primary);">Document Declined</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+                The sender has been notified of your decision.
+            </p>
+            <button id="close-declined" class="btn btn-primary">
+                Close
+            </button>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('close-declined').addEventListener('click', () => {
+        modal.remove();
+    });
 }
 
 // Start initialization when DOM is ready

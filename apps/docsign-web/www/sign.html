@@ -360,6 +360,457 @@
             display: flex;
             gap: 0.5rem;
         }
+
+        /* Consent Landing Page */
+        .consent-landing {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background: var(--bg-tertiary);
+        }
+
+        .consent-container {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .consent-header {
+            padding: 2rem;
+            border-bottom: 1px solid var(--border-primary);
+            text-align: center;
+        }
+
+        .consent-header h2 {
+            margin: 0;
+            font-size: 1.75rem;
+            color: var(--text-primary);
+        }
+
+        .consent-body {
+            padding: 2rem;
+        }
+
+        .document-info {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .info-row {
+            display: flex;
+            margin-bottom: 0.75rem;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: var(--text-secondary);
+            min-width: 120px;
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .consent-text {
+            margin-bottom: 2rem;
+        }
+
+        .consent-text h3 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .consent-text p {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 1rem;
+        }
+
+        .consent-text ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .consent-text li {
+            color: var(--text-secondary);
+            line-height: 1.8;
+            margin-bottom: 0.5rem;
+        }
+
+        .consent-note {
+            font-size: 0.875rem;
+            color: var(--text-tertiary);
+            font-style: italic;
+        }
+
+        .consent-actions {
+            text-align: center;
+        }
+
+        .btn-large {
+            font-size: 1.125rem;
+            padding: 1rem 2.5rem;
+            min-width: 200px;
+        }
+
+        .link-decline {
+            display: block;
+            margin-top: 1.5rem;
+            color: var(--text-tertiary);
+            text-decoration: none;
+            font-size: 0.875rem;
+            transition: color 0.2s;
+        }
+
+        .link-decline:hover {
+            color: var(--text-secondary);
+            text-decoration: underline;
+        }
+
+        /* Mobile responsive for consent page */
+        @media (max-width: 768px) {
+            .consent-landing {
+                padding: 1rem;
+            }
+
+            .consent-container {
+                max-width: 100%;
+            }
+
+            .consent-header h2 {
+                font-size: 1.5rem;
+            }
+
+            .info-label {
+                min-width: 90px;
+                font-size: 0.875rem;
+            }
+
+            .info-value {
+                font-size: 0.875rem;
+            }
+
+            .btn-large {
+                width: 100%;
+                min-width: auto;
+            }
+        }
+
+        /* ===================================
+           MOBILE OPTIMIZATIONS (UX-005)
+           =================================== */
+
+        /* Mobile viewport: < 768px */
+        @media (max-width: 767px) {
+            /* Ensure all touch targets are minimum 44x44px */
+            .btn {
+                min-height: 44px;
+                min-width: 44px;
+                padding: 0.75rem 1.5rem;
+                font-size: 1rem;
+            }
+
+            .tab-btn {
+                min-height: 44px;
+                padding: 0.875rem 1.5rem;
+            }
+
+            .field-overlay {
+                min-height: 44px;
+                min-width: 44px;
+            }
+
+            /* Full-screen signature modal on mobile */
+            .modal-overlay {
+                padding: 0;
+                align-items: flex-end; /* Bottom sheet pattern */
+            }
+
+            .modal {
+                max-width: 100%;
+                max-height: 100vh;
+                width: 100%;
+                height: 100%;
+                border-radius: 0;
+                margin: 0;
+            }
+
+            /* Bottom sheet pattern for signature modal */
+            #signature-modal .modal {
+                height: auto;
+                max-height: 90vh;
+                border-radius: 16px 16px 0 0;
+                animation: slideUpFromBottom 0.3s ease-out;
+            }
+
+            #signature-modal .modal.bottom-sheet-mobile {
+                border-radius: 16px 16px 0 0;
+            }
+
+            @keyframes slideUpFromBottom {
+                from {
+                    transform: translateY(100%);
+                }
+                to {
+                    transform: translateY(0);
+                }
+            }
+
+            /* Signature canvas - full width on mobile */
+            #signature-pad {
+                width: 100%;
+                max-width: 100%;
+                height: 250px;
+                min-height: 200px;
+            }
+
+            /* Larger type input on mobile */
+            #typed-name {
+                font-size: 1.125rem;
+                padding: 1rem;
+                min-height: 44px;
+            }
+
+            .font-select {
+                font-size: 1rem;
+                padding: 0.75rem;
+                min-height: 44px;
+            }
+
+            /* Sticky toolbar on mobile */
+            .signing-toolbar {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            /* Reduce toolbar padding on mobile */
+            .signing-toolbar {
+                padding: 0.75rem 1rem;
+                flex-wrap: wrap;
+            }
+
+            .toolbar-left,
+            .toolbar-right {
+                gap: 0.5rem;
+            }
+
+            /* Progress indicator always visible on mobile */
+            .progress {
+                font-size: 1rem;
+                font-weight: 600;
+                order: -1; /* Move to top on wrapped toolbar */
+                width: 100%;
+                text-align: center;
+                padding-bottom: 0.5rem;
+            }
+
+            /* Stack buttons on small mobile screens */
+            @media (max-width: 375px) {
+                .toolbar-left,
+                .toolbar-right {
+                    width: 100%;
+                    justify-content: center;
+                }
+
+                .nav-buttons {
+                    width: 100%;
+                    justify-content: space-between;
+                }
+
+                .btn {
+                    flex: 1;
+                }
+            }
+
+            /* Larger modal close button */
+            .modal-close {
+                font-size: 2rem;
+                padding: 0.5rem;
+                min-width: 44px;
+                min-height: 44px;
+            }
+
+            /* Better canvas controls spacing */
+            .canvas-controls {
+                margin-top: 1.5rem;
+            }
+
+            .canvas-controls .btn {
+                flex: 1;
+            }
+
+            /* Larger cursive preview */
+            #cursive-preview {
+                font-size: 3rem;
+                padding: 2rem;
+                min-height: 150px;
+            }
+
+            /* Modal footer buttons full width on mobile */
+            .modal-footer {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .modal-footer .btn {
+                width: 100%;
+            }
+
+            /* Reduce header padding on mobile */
+            .header {
+                padding: 0.75rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.25rem;
+            }
+
+            /* Reduce viewer padding on mobile */
+            .viewer-container {
+                padding: 1rem 0.5rem;
+            }
+
+            /* Prevent zoom on input focus (iOS) */
+            input,
+            select,
+            textarea {
+                font-size: 16px !important;
+            }
+        }
+
+        /* Landscape mobile orientation */
+        @media (max-width: 767px) and (orientation: landscape) {
+            /* Signature modal takes more of screen in landscape */
+            #signature-modal .modal {
+                max-height: 95vh;
+            }
+
+            #signature-pad {
+                height: 180px;
+            }
+
+            #cursive-preview {
+                font-size: 2.5rem;
+                padding: 1.5rem;
+                min-height: 120px;
+            }
+
+            /* Reduce header size in landscape */
+            .header {
+                padding: 0.5rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.125rem;
+            }
+        }
+
+        /* Tablet viewport: 768px - 1024px */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            /* Touch-friendly but not full-screen */
+            .btn {
+                min-height: 44px;
+                padding: 0.75rem 1.5rem;
+            }
+
+            .modal {
+                max-width: 700px;
+            }
+
+            #signature-pad {
+                width: 100%;
+                max-width: 600px;
+            }
+        }
+
+        /* Add visual feedback for active field */
+        .field-overlay.current {
+            border-color: #1e40af;
+            border-width: 3px;
+            background: rgba(30, 64, 175, 0.2);
+            box-shadow: 0 0 0 4px rgba(30, 64, 175, 0.1);
+        }
+
+        /* Completed field styling */
+        .field-overlay.completed,
+        .field-overlay[data-signed="true"] {
+            border-color: #10b981;
+            border-style: solid;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .field-overlay.completed::after,
+        .field-overlay[data-signed="true"]::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.5rem;
+            color: #10b981;
+            font-weight: bold;
+        }
+
+        /* Touch target visual feedback */
+        @media (hover: none) and (pointer: coarse) {
+            /* Only on touch devices */
+            .btn:active {
+                transform: scale(0.97);
+                transition: transform 0.1s;
+            }
+
+            .field-overlay:active {
+                background: rgba(30, 64, 175, 0.25);
+            }
+
+            .tab-btn:active {
+                background: rgba(30, 64, 175, 0.1);
+            }
+        }
+
+        /* Prevent text selection on touch UI elements */
+        .btn,
+        .tab-btn,
+        .field-overlay,
+        .modal-close {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Smooth scrolling for better UX */
+        html {
+            scroll-behavior: smooth;
+        }
+
+        /* Loading indicator mobile optimization */
+        @media (max-width: 767px) {
+            #loading-indicator {
+                padding: 3rem 1rem;
+            }
+
+            .spinner {
+                width: 50px;
+                height: 50px;
+                border-width: 5px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -379,6 +830,108 @@
         <p>Loading document...</p>
     </div>
 
+    <!-- Email Verification Screen (UX-003) -->
+    <div id="verification-screen" class="consent-landing hidden">
+        <div style="max-width: 500px; width: 100%; background: var(--bg-secondary); border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 2rem;">
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">🔐</div>
+                <h2 style="font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary);">Verify Your Identity</h2>
+                <p style="color: var(--text-secondary); font-size: 0.875rem;">
+                    Please confirm you are the intended recipient
+                </p>
+            </div>
+
+            <div style="background: var(--bg-tertiary); padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                    Enter the last <strong>4 characters</strong> of your email address:
+                </p>
+                <p id="masked-email" style="font-size: 1.125rem; font-weight: 600; color: var(--accent-primary); margin-bottom: 1rem;">
+                    <!-- Will be filled by JS -->
+                </p>
+                <input
+                    type="text"
+                    id="email-suffix-input"
+                    placeholder="Last 4 characters"
+                    maxlength="4"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-size: 1rem; text-align: center; font-family: monospace; text-transform: lowercase;"
+                    autocomplete="off"
+                />
+            </div>
+
+            <div id="verification-error" class="hidden" style="background: #fee2e2; border-left: 4px solid #ef4444; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+                <p style="color: #991b1b; font-size: 0.875rem; margin: 0;">
+                    <strong id="error-message">Incorrect input. Please try again.</strong>
+                </p>
+                <p id="attempts-remaining" style="color: #991b1b; font-size: 0.75rem; margin: 0.5rem 0 0 0;">
+                    <!-- Will be filled by JS -->
+                </p>
+            </div>
+
+            <div id="lockout-message" class="hidden" style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
+                <p style="color: #92400e; font-size: 0.875rem; margin: 0;">
+                    <strong>Too many failed attempts.</strong><br>
+                    Please wait <span id="lockout-timer">15:00</span> before trying again.
+                </p>
+            </div>
+
+            <button id="verify-button" class="btn btn-primary" style="width: 100%; padding: 0.875rem; font-size: 1rem;">
+                Verify & Continue
+            </button>
+
+            <p style="text-align: center; margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-tertiary);">
+                This verification helps ensure the document reaches the intended recipient.
+            </p>
+        </div>
+    </div>
+
+    <!-- Consent Landing Page -->
+    <div id="consent-landing" class="consent-landing hidden">
+        <div class="consent-container">
+            <div class="consent-header">
+                <h2>Document Signature Request</h2>
+            </div>
+
+            <div class="consent-body">
+                <div class="document-info">
+                    <div class="info-row">
+                        <span class="info-label">From:</span>
+                        <span id="sender-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Email:</span>
+                        <span id="sender-email" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Document:</span>
+                        <span id="document-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Date Sent:</span>
+                        <span id="date-sent" class="info-value">-</span>
+                    </div>
+                </div>
+
+                <div class="consent-text">
+                    <h3>Electronic Signature Consent</h3>
+                    <p>By clicking "Review Document" below, you agree to:</p>
+                    <ul>
+                        <li>Use electronic signatures in place of handwritten signatures</li>
+                        <li>Electronically sign documents sent to you</li>
+                        <li>Conduct this transaction electronically</li>
+                    </ul>
+                    <p class="consent-note">Your electronic signature will have the same legal effect as a handwritten signature.</p>
+                </div>
+
+                <div class="consent-actions">
+                    <button id="btn-review-document" class="btn btn-primary btn-large">
+                        Review Document
+                    </button>
+                    <a href="#" id="link-decline" class="link-decline">Decline to Sign</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Signing Toolbar -->
     <div class="signing-toolbar" style="display: none;">
         <div class="toolbar-left">
@@ -392,6 +945,7 @@
             <span class="progress hidden">
                 <span id="current">0</span> of <span id="total">0</span>
             </span>
+            <button id="btn-decline" class="btn btn-secondary">Decline</button>
             <button id="btn-finish" class="btn btn-success hidden">Finish</button>
         </div>
     </div>
@@ -438,6 +992,34 @@
             <div class="modal-footer">
                 <button id="cancel-signature" class="btn btn-secondary">Cancel</button>
                 <button id="apply-signature" class="btn btn-primary">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Decline Modal -->
+    <div id="decline-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Decline to Sign</h3>
+                <button class="modal-close" id="close-decline-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    Are you sure you want to decline this document? The sender will be notified.
+                </p>
+                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+                    Reason (optional):
+                </label>
+                <textarea
+                    id="decline-reason"
+                    rows="4"
+                    placeholder="Provide a reason for declining (optional)"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical;"
+                ></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-decline" class="btn btn-secondary">Cancel</button>
+                <button id="confirm-decline" class="btn btn-primary" style="background: #ef4444;">Decline Document</button>
             </div>
         </div>
     </div>

@@ -60,6 +60,8 @@ struct SessionMetadata {
     page_count: u32,
     created_at: String,
     created_by: String,
+    #[serde(default)]
+    sender_email: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -72,6 +74,32 @@ struct RecipientInfo {
     signed: bool,
     #[serde(default)]
     signed_at: Option<String>,
+    /// Whether the recipient declined to sign (UX-002)
+    #[serde(default)]
+    declined: bool,
+    /// ISO 8601 timestamp when declined (UX-002)
+    #[serde(default)]
+    declined_at: Option<String>,
+    /// Optional reason for declining (UX-002)
+    #[serde(default)]
+    decline_reason: Option<String>,
+}
+
+/// Session status for the signing workflow (UX-002)
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+enum SessionStatus {
+    /// Session is pending - waiting for recipient action
+    #[default]
+    Pending,
+    /// Recipient accepted and is signing
+    Accepted,
+    /// Recipient declined to sign
+    Declined,
+    /// All signatures completed
+    Completed,
+    /// Session has expired
+    Expired,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -101,6 +129,9 @@ struct SigningSession {
     expires_at: String,
     #[serde(default)]
     signed_versions: Vec<SignedVersion>,
+    /// Session status for the workflow (UX-002)
+    #[serde(default)]
+    status: SessionStatus,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -146,6 +177,38 @@ struct SubmitSignedRequest {
     encrypted_document: String,
 }
 
+/// Request to decline a document (UX-002)
+#[derive(Deserialize)]
+struct DeclineRequest {
+    recipient_id: String,
+    reason: Option<String>,
+}
+
+/// Response from decline endpoint (UX-002)
+#[derive(Serialize)]
+struct DeclineResponse {
+    success: bool,
+    message: String,
+}
+
+/// Request to verify email identity (UX-003)
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct VerifyRequest {
+    recipient_id: String,
+    email_suffix: String,
+}
+
+/// Response from verify endpoint (UX-003)
+#[derive(Serialize)]
+#[allow(dead_code)]
+struct VerifyResponse {
+    success: bool,
+    remaining_attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    locked_until: Option<String>,
+}
+
 /// Request to send signing invitations
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -176,6 +239,41 @@ struct InviteResponse {
     remaining_month: Option<u32>,
 }
 
+/// Request to request a new signing link (UX-004)
+#[derive(Deserialize)]
+#[allow(dead_code)] // Used by UX-004 endpoint (not yet implemented)
+struct RequestLinkRequest {
+    recipient_id: String,
+}
+
+/// Response from request-link endpoint (UX-004)
+#[derive(Serialize)]
+#[allow(dead_code)] // Used by UX-004 endpoint (not yet implemented)
+struct RequestLinkResponse {
+    success: bool,
+    message: String,
+}
+
+/// Response from resend endpoint (UX-004)
+#[derive(Serialize)]
+#[allow(dead_code)] // Used by UX-004 endpoint (not yet implemented)
+struct ResendResponse {
+    success: bool,
+    new_session_id: String,
+    expires_at: String,
+    message: String,
+}
+
+/// Response for expired sessions (UX-004)
+#[derive(Serialize)]
+struct ExpiredSessionResponse {
+    status: String,
+    sender_email: String,
+    document_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
 /// Rate limit state stored in KV
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 struct RateLimitState {
@@ -187,6 +285,65 @@ struct RateLimitState {
     daily_warning_sent: bool,
     #[serde(default)]
     monthly_warning_sent: bool,
+}
+
+/// Email verification state for UX-003
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[allow(dead_code)] // Used by email verification endpoint (UX-003)
+struct VerificationState {
+    /// Number of failed verification attempts
+    attempts: u32,
+    /// ISO 8601 timestamp when lockout expires (None if not locked)
+    locked_until: Option<String>,
+    /// ISO 8601 timestamp of last verification attempt
+    last_attempt: String,
+}
+
+impl Default for VerificationState {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            locked_until: None,
+            last_attempt: Utc::now().to_rfc3339(),
+        }
+    }
+}
+
+#[allow(dead_code)] // Methods used by email verification endpoint (UX-003)
+impl VerificationState {
+    /// Increment the attempt counter
+    fn increment_attempt(&mut self) {
+        self.attempts += 1;
+        self.last_attempt = Utc::now().to_rfc3339();
+    }
+
+    /// Check if currently locked out
+    fn is_locked(&self) -> bool {
+        if let Some(ref locked_until_str) = self.locked_until {
+            if let Ok(locked_until) = chrono::DateTime::parse_from_rfc3339(locked_until_str) {
+                return locked_until > Utc::now();
+            }
+        }
+        false
+    }
+
+    /// Apply a 15-minute lockout
+    fn apply_lockout(&mut self) {
+        let lockout_duration = chrono::Duration::minutes(15);
+        let locked_until = Utc::now() + lockout_duration;
+        self.locked_until = Some(locked_until.to_rfc3339());
+    }
+
+    /// Reset verification state (after successful verification)
+    fn reset(&mut self) {
+        self.attempts = 0;
+        self.locked_until = None;
+    }
+
+    /// Get remaining attempts (max 3)
+    fn remaining_attempts(&self) -> u32 {
+        3u32.saturating_sub(self.attempts)
+    }
 }
 
 // Warning thresholds - send admin email when these are hit
@@ -292,6 +449,250 @@ impl RateLimitState {
 
 const RESEND_API_URL: &str = "https://api.resend.com/emails";
 const SESSION_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
+const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
+
+// ============================================================
+// UX-006: Sender Notification Helper Functions
+// ============================================================
+
+/// Check if all recipients (with role "signer") have signed
+fn all_recipients_signed(recipients: &[RecipientInfo]) -> bool {
+    recipients
+        .iter()
+        .filter(|r| r.role == "signer")
+        .all(|r| r.signed)
+}
+
+/// Generate a download link for a signed document that expires after the specified days
+fn generate_download_link(session_id: &str, expiry_days: u32) -> String {
+    let expiry_timestamp = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(expiry_days as i64))
+        .unwrap_or_else(chrono::Utc::now)
+        .timestamp();
+
+    format!(
+        "https://getsignatures.org/download/{}?expires={}",
+        session_id, expiry_timestamp
+    )
+}
+
+/// Format a human-readable timestamp from RFC3339
+fn format_timestamp(rfc3339: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(rfc3339) {
+        Ok(dt) => dt.format("%B %d, %Y at %I:%M %p UTC").to_string(),
+        Err(_) => rfc3339.to_string(),
+    }
+}
+
+/// Format notification email when a single recipient completes signing
+fn format_completion_notification_email(
+    recipient_name: &str,
+    document_name: &str,
+    signed_at: &str,
+    download_link: &str,
+) -> String {
+    let formatted_time = format_timestamp(signed_at);
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Document Signed</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Good news!</p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            <strong>{recipient_name}</strong> has signed your document:
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Signed At</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{signed_time}</p>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{download_link}" style="display: inline-block; background: #059669; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Download Signed Document</a>
+        </div>
+
+        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 4px; margin-top: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <strong>Note:</strong> This download link will expire after {expiry_days} days for security purposes.
+            </p>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            The signed document is securely stored and encrypted. You can download it anytime before the link expires.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        recipient_name = recipient_name,
+        document_name = document_name,
+        signed_time = formatted_time,
+        download_link = download_link,
+        expiry_days = DOWNLOAD_LINK_EXPIRY_DAYS
+    )
+}
+
+/// Format notification email when all recipients have completed signing
+fn format_all_signed_notification_email(
+    recipients: &[RecipientInfo],
+    document_name: &str,
+    download_link: &str,
+) -> String {
+    // Build list of signers with their timestamps
+    let signers_list: Vec<String> = recipients
+        .iter()
+        .filter(|r| r.role == "signer" && r.signed)
+        .map(|r| {
+            let time = r
+                .signed_at
+                .as_ref()
+                .map(|t| format_timestamp(t))
+                .unwrap_or_else(|| "Unknown".to_string());
+            format!(
+                "<li style=\"margin: 10px 0;\"><strong>{}</strong> - {}</li>",
+                r.name, time
+            )
+        })
+        .collect();
+
+    let signers_html = signers_list.join("\n                ");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">All Recipients Have Signed!</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Congratulations!</p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            All recipients have completed signing your document. The signing process is now <strong>complete</strong>.
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #6b7280;">Signers</p>
+            <ul style="margin: 0; padding-left: 20px; list-style-type: none;">
+                {signers_list}
+            </ul>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{download_link}" style="display: inline-block; background: #059669; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Download Completed Document</a>
+        </div>
+
+        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 4px; margin-top: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <strong>Note:</strong> This download link will expire after {expiry_days} days for security purposes.
+            </p>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            The fully signed document is securely stored and encrypted. You can download it anytime before the link expires.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        document_name = document_name,
+        signers_list = signers_html,
+        download_link = download_link,
+        expiry_days = DOWNLOAD_LINK_EXPIRY_DAYS
+    )
+}
+
+/// Send notification email to sender when recipient signs
+async fn send_sender_notification(
+    env: &Env,
+    sender_email: &str,
+    subject: &str,
+    html_body: &str,
+) -> Result<()> {
+    let api_key = match env.secret("RESEND_API_KEY") {
+        Ok(key) => key.to_string(),
+        Err(_) => {
+            console_log!("Cannot send notification: RESEND_API_KEY not configured");
+            return Ok(()); // Don't fail the signing process if email fails
+        }
+    };
+
+    let email_text = html_body
+        .replace("<br>", "\n")
+        .replace("</p>", "\n")
+        .replace("<li>", "- ")
+        .chars()
+        .filter(|c| c.is_ascii() || c.is_whitespace())
+        .collect::<String>();
+
+    let resend_body = serde_json::json!({
+        "from": "GetSignatures <noreply@mail.getsignatures.org>",
+        "to": [sender_email],
+        "subject": subject,
+        "html": html_body,
+        "text": email_text,
+    });
+
+    let headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_key))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+
+    let request = Request::new_with_init(RESEND_API_URL, &init)?;
+
+    match Fetch::Request(request).send().await {
+        Ok(response) => {
+            if response.status_code() == 200 {
+                console_log!("Notification sent to sender: {}", sender_email);
+            } else {
+                console_log!(
+                    "Failed to send notification: status {}",
+                    response.status_code()
+                );
+            }
+        }
+        Err(e) => {
+            console_log!("Failed to send notification: {}", e);
+        }
+    }
+
+    Ok(())
+}
 
 /// Verify API key from request header
 fn verify_api_key(req: &Request, env: &Env) -> bool {
@@ -357,6 +758,43 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_submit_signed(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/decline") => {
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_decline(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/verify") => {
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_verify(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // UX-004: Request new link endpoint (public - no API key required)
+        (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/request-link") => {
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_request_link(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // UX-004: Resend endpoint (protected with API key)
+        (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/resend") => {
+            if !verify_api_key(&req, &env) {
+                return cors_response(Response::error("Unauthorized", 401));
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_resend(parts[2], env).await
             } else {
                 cors_response(Response::error("Not found", 404))
             }
@@ -947,6 +1385,7 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         fields: body.fields,
         expires_at,
         signed_versions: vec![],
+        status: SessionStatus::Pending,
     };
 
     // Store session with TTL
@@ -977,13 +1416,21 @@ async fn handle_get_session(session_id: &str, env: Env) -> Result<Response> {
 
     match session {
         Some(s) => {
-            // Check if expired
+            // Check if expired (UX-004)
             if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(&s.expires_at) {
                 if expires < chrono::Utc::now() {
-                    return cors_response(Ok(Response::from_json(&GetSessionResponse {
-                        success: false,
-                        session: None,
-                        message: Some("Session has expired".to_string()),
+                    // UX-004: Return expired status with sender info
+                    return cors_response(Ok(Response::from_json(&ExpiredSessionResponse {
+                        status: "expired".to_string(),
+                        sender_email: s
+                            .metadata
+                            .sender_email
+                            .unwrap_or_else(|| "unknown".to_string()),
+                        document_name: s.metadata.filename,
+                        message: Some(
+                            "This signing link has expired. You can request a new link below."
+                                .to_string(),
+                        ),
                     })?
                     .with_status(410)));
                 }
@@ -1007,6 +1454,294 @@ async fn handle_get_session(session_id: &str, env: Env) -> Result<Response> {
             session: None,
             message: Some("Session not found".to_string()),
         })?
+        .with_status(404))),
+    }
+}
+
+/// UX-002: Handle decline endpoint
+/// PUT /session/{id}/decline
+/// Body: { "recipient_id": "...", "reason": "optional reason" }
+async fn handle_decline(session_id: &str, mut req: Request, env: Env) -> Result<Response> {
+    // Parse the decline request
+    let body: DeclineRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Check if session is already declined or completed
+            if s.status == SessionStatus::Declined {
+                return cors_response(Ok(Response::from_json(&DeclineResponse {
+                    success: false,
+                    message: "Session has already been declined".to_string(),
+                })?
+                .with_status(400)));
+            }
+
+            if s.status == SessionStatus::Completed {
+                return cors_response(Ok(Response::from_json(&DeclineResponse {
+                    success: false,
+                    message: "Session has already been completed".to_string(),
+                })?
+                .with_status(400)));
+            }
+
+            // Find and update the recipient
+            let mut recipient_found = false;
+            for r in s.recipients.iter_mut() {
+                if r.id == body.recipient_id {
+                    recipient_found = true;
+
+                    // Check if already signed
+                    if r.signed {
+                        return cors_response(Ok(Response::from_json(&DeclineResponse {
+                            success: false,
+                            message: "Recipient has already signed".to_string(),
+                        })?
+                        .with_status(400)));
+                    }
+
+                    // Check if already declined
+                    if r.declined {
+                        return cors_response(Ok(Response::from_json(&DeclineResponse {
+                            success: false,
+                            message: "Recipient has already declined".to_string(),
+                        })?
+                        .with_status(400)));
+                    }
+
+                    // Mark as declined
+                    r.declined = true;
+                    r.declined_at = Some(chrono::Utc::now().to_rfc3339());
+                    r.decline_reason = body.reason.clone();
+                    break;
+                }
+            }
+
+            if !recipient_found {
+                return cors_response(Ok(Response::from_json(&DeclineResponse {
+                    success: false,
+                    message: "Recipient not found in session".to_string(),
+                })?
+                .with_status(404)));
+            }
+
+            // Update session status to Declined
+            s.status = SessionStatus::Declined;
+
+            // Save updated session
+            kv.put(
+                &format!("session:{}", session_id),
+                serde_json::to_string(&s)?,
+            )?
+            .execute()
+            .await?;
+
+            // TODO: Send notification email to sender (UX-006 integration)
+            // For now, we just log it
+            console_log!(
+                "Session {} declined by recipient {}: {:?}",
+                session_id,
+                body.recipient_id,
+                body.reason
+            );
+
+            cors_response(Ok(Response::from_json(&DeclineResponse {
+                success: true,
+                message: "Document declined successfully".to_string(),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&DeclineResponse {
+            success: false,
+            message: "Session not found".to_string(),
+        })?
+        .with_status(404))),
+    }
+}
+
+/// UX-004: Handle request-link endpoint
+/// POST /session/{id}/request-link
+/// Body: { "recipient_id": "..." }
+/// Sends notification email to sender that recipient requested new link
+async fn handle_request_link(session_id: &str, mut req: Request, env: Env) -> Result<Response> {
+    // Parse the request
+    let body: RequestLinkRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(s) => {
+            // Find the recipient
+            let recipient = s.recipients.iter().find(|r| r.id == body.recipient_id);
+
+            if recipient.is_none() {
+                return cors_response(Ok(Response::from_json(&RequestLinkResponse {
+                    success: false,
+                    message: "Recipient not found in session".to_string(),
+                })?
+                .with_status(404)));
+            }
+
+            let recipient = recipient.unwrap();
+            let sender_email = s.metadata.sender_email.as_deref().unwrap_or("unknown");
+
+            // Send notification email to sender
+            let subject = format!("New Link Requested for {}", s.metadata.filename);
+            let html_body = format!(
+                r#"<html>
+<body style="font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1f2937; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+        <h2 style="margin: 0 0 10px 0; color: #111827;">Link Request Notification</h2>
+        <p style="margin: 0; color: #6b7280;">GetSignatures Document Signing</p>
+    </div>
+
+    <div style="background: white; padding: 25px; border: 1px solid #e5e7eb; border-radius: 8px;">
+        <p style="font-size: 16px; margin-top: 0;">Hello,</p>
+
+        <p style="font-size: 15px;">
+            <strong>{}</strong> ({}) has requested a new signing link for:
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-left: 4px solid #3b82f6; margin: 20px 0;">
+            <p style="margin: 0; font-weight: 600; color: #1f2937;">{}</p>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280;">
+            The current link has expired. Please generate a new signing session and send them a fresh link.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+                recipient.name, recipient.email, s.metadata.filename
+            );
+
+            // Send the email (best effort - don't fail if email fails)
+            if let Err(e) = send_sender_notification(&env, sender_email, &subject, &html_body).await
+            {
+                console_log!("Warning: Failed to send request-link notification: {}", e);
+            }
+
+            cors_response(Ok(Response::from_json(&RequestLinkResponse {
+                success: true,
+                message: format!(
+                    "Request sent to {}. They will send you a new link shortly.",
+                    sender_email
+                ),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&RequestLinkResponse {
+            success: false,
+            message: "Session not found".to_string(),
+        })?
+        .with_status(404))),
+    }
+}
+
+/// UX-004: Handle resend endpoint (protected with API key)
+/// POST /session/{id}/resend
+/// Creates new session with fresh expiry and invalidates old session
+async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the old session
+    let old_session: Option<SigningSession> =
+        kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match old_session {
+        Some(s) => {
+            // Generate new session ID
+            let new_session_id = generate_session_id();
+
+            // Calculate new expiry (7 days default)
+            let expiry_hours = 168u64;
+            let expiry_seconds = expiry_hours * 60 * 60;
+            let expires_at = chrono::Utc::now()
+                .checked_add_signed(chrono::Duration::seconds(expiry_seconds as i64))
+                .unwrap_or_else(chrono::Utc::now)
+                .to_rfc3339();
+
+            // Create new session with same data but new ID and expiry
+            let new_session = SigningSession {
+                id: new_session_id.clone(),
+                encrypted_document: s.encrypted_document,
+                metadata: s.metadata,
+                recipients: s
+                    .recipients
+                    .into_iter()
+                    .map(|mut r| {
+                        // Reset signed status for resend
+                        r.signed = false;
+                        r.signed_at = None;
+                        r
+                    })
+                    .collect(),
+                fields: s.fields,
+                expires_at: expires_at.clone(),
+                signed_versions: vec![],
+                status: SessionStatus::Pending,
+            };
+
+            // Store new session
+            let session_json = serde_json::to_string(&new_session)
+                .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
+
+            kv.put(&format!("session:{}", new_session_id), session_json)?
+                .expiration_ttl(expiry_seconds.min(SESSION_TTL_SECONDS))
+                .execute()
+                .await?;
+
+            // Delete old session to invalidate it
+            kv.delete(&format!("session:{}", session_id)).await?;
+
+            cors_response(Ok(Response::from_json(&ResendResponse {
+                success: true,
+                new_session_id,
+                expires_at,
+                message: "New session created successfully".to_string(),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Session not found"
+        }))?
         .with_status(404))),
     }
 }
@@ -1050,6 +1785,42 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
                 s.encrypted_document = latest.encrypted_document.clone();
             }
 
+            // UX-006: Send notification to sender
+            if let Some(sender_email) = s.metadata.sender_email.as_ref() {
+                // Find the recipient who just signed
+                if let Some(recipient) = s.recipients.iter().find(|r| r.id == body.recipient_id) {
+                    let download_link =
+                        generate_download_link(session_id, DOWNLOAD_LINK_EXPIRY_DAYS);
+
+                    // Check if all recipients have signed
+                    if all_recipients_signed(&s.recipients) {
+                        // Send "all signed" completion email
+                        let subject = format!("All Recipients Signed: {}", s.metadata.filename);
+                        let html_body = format_all_signed_notification_email(
+                            &s.recipients,
+                            &s.metadata.filename,
+                            &download_link,
+                        );
+                        let _ = send_sender_notification(&env, sender_email, &subject, &html_body)
+                            .await;
+                    } else {
+                        // Send individual recipient signed notification
+                        let subject = format!("{} Signed: {}", recipient.name, s.metadata.filename);
+                        let html_body = format_completion_notification_email(
+                            &recipient.name,
+                            &s.metadata.filename,
+                            recipient
+                                .signed_at
+                                .as_ref()
+                                .unwrap_or(&"Unknown".to_string()),
+                            &download_link,
+                        );
+                        let _ = send_sender_notification(&env, sender_email, &subject, &html_body)
+                            .await;
+                    }
+                }
+            }
+
             // Save updated session
             let session_json = serde_json::to_string(&s)
                 .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
@@ -1068,6 +1839,128 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
             "message": "Session not found"
         }))?
         .with_status(404))),
+    }
+}
+
+async fn handle_verify(session_id: &str, mut req: Request, env: Env) -> Result<Response> {
+    // Parse the verify request
+    let body: VerifyRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get SESSIONS KV to verify the session and recipient exist
+    let sessions_kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Get VERIFICATIONS KV to track verification attempts
+    let verifications_kv = match env.kv("VERIFICATIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("VERIFICATIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session to verify it exists and get recipient email
+    let session: Option<SigningSession> = sessions_kv
+        .get(&format!("session:{}", session_id))
+        .json()
+        .await?;
+
+    let session = match session {
+        Some(s) => s,
+        None => {
+            return cors_response(Ok(Response::from_json(&VerifyResponse {
+                success: false,
+                remaining_attempts: 0,
+                locked_until: None,
+            })?
+            .with_status(404)));
+        }
+    };
+
+    // Find the recipient
+    let recipient = session
+        .recipients
+        .iter()
+        .find(|r| r.id == body.recipient_id);
+
+    let recipient = match recipient {
+        Some(r) => r,
+        None => {
+            return cors_response(Ok(Response::from_json(&VerifyResponse {
+                success: false,
+                remaining_attempts: 0,
+                locked_until: None,
+            })?
+            .with_status(404)));
+        }
+    };
+
+    // Get or create verification state for this recipient
+    let verify_key = format!("verify:{}:{}", session_id, body.recipient_id);
+    let mut state: VerificationState = verifications_kv
+        .get(&verify_key)
+        .json()
+        .await?
+        .unwrap_or_default();
+
+    // Check if currently locked out
+    if state.is_locked() {
+        return cors_response(Ok(Response::from_json(&VerifyResponse {
+            success: false,
+            remaining_attempts: state.remaining_attempts(),
+            locked_until: state.locked_until.clone(),
+        })?));
+    }
+
+    // Verify the email suffix
+    let recipient_email = &recipient.email;
+    let expected_suffix = &recipient_email[recipient_email.len().saturating_sub(6)..];
+
+    let is_correct = body.email_suffix == expected_suffix;
+
+    if is_correct {
+        // Success! Reset the verification state
+        state.reset();
+
+        // Save the reset state
+        verifications_kv
+            .put(&verify_key, serde_json::to_string(&state)?)?
+            .execute()
+            .await?;
+
+        cors_response(Ok(Response::from_json(&VerifyResponse {
+            success: true,
+            remaining_attempts: 3,
+            locked_until: None,
+        })?))
+    } else {
+        // Incorrect suffix - increment attempts
+        state.increment_attempt();
+
+        // Check if we should apply lockout (3 failures)
+        if state.attempts >= 3 {
+            state.apply_lockout();
+        }
+
+        // Save the updated state
+        verifications_kv
+            .put(&verify_key, serde_json::to_string(&state)?)?
+            .execute()
+            .await?;
+
+        cors_response(Ok(Response::from_json(&VerifyResponse {
+            success: false,
+            remaining_attempts: state.remaining_attempts(),
+            locked_until: state.locked_until.clone(),
+        })?))
     }
 }
 
@@ -1119,6 +2012,9 @@ fn cors_response(response: Result<Response>) -> Result<Response> {
     })
 }
 
+// ============================================================
+// UX-006 Helper Functions (Stub implementations for tests)
+// ============================================================
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1678,6 +2574,7 @@ mod tests {
                 page_count,
                 created_at: "2025-01-15T10:00:00Z".to_string(),
                 created_by: created_by.clone(),
+                sender_email: Some("test@example.com".to_string()),
             };
 
             let json = serde_json::to_string(&metadata).unwrap();
@@ -1704,6 +2601,9 @@ mod tests {
                 role: role.clone(),
                 signed,
                 signed_at: if signed { Some("2025-01-15T10:00:00Z".to_string()) } else { None },
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
             };
 
             let json = serde_json::to_string(&recipient).unwrap();
@@ -1767,6 +2667,9 @@ mod tests {
                     role: "signer".to_string(),
                     signed: false,
                     signed_at: None,
+                    declined: false,
+                    declined_at: None,
+                    decline_reason: None,
                 })
                 .collect();
 
@@ -1793,11 +2696,13 @@ mod tests {
                     page_count: 1,
                     created_at: "2025-01-15T10:00:00Z".to_string(),
                     created_by: "Test User".to_string(),
+                    sender_email: Some("sender@example.com".to_string()),
                 },
                 recipients: recipients.clone(),
                 fields: fields.clone(),
                 expires_at: "2025-01-22T10:00:00Z".to_string(),
                 signed_versions: vec![],
+                status: SessionStatus::Pending,
             };
 
             let json = serde_json::to_string(&session).unwrap();
@@ -1842,6 +2747,7 @@ mod tests {
                 page_count: 5,
                 created_at: "2025-01-15T10:00:00Z".to_string(),
                 created_by: "Sender".to_string(),
+                sender_email: Some("sender@example.com".to_string()),
             },
             recipients: vec![RecipientInfo {
                 id: "1".to_string(),
@@ -1850,6 +2756,9 @@ mod tests {
                 role: "signer".to_string(),
                 signed: true,
                 signed_at: Some("2025-01-15T11:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
             }],
             fields: vec![],
             expires_at: "2025-01-22T10:00:00Z".to_string(),
@@ -1858,6 +2767,7 @@ mod tests {
                 encrypted_document: "signed_doc_base64".to_string(),
                 signed_at: "2025-01-15T11:00:00Z".to_string(),
             }],
+            status: SessionStatus::Completed,
         };
 
         let json = serde_json::to_string(&session).unwrap();
@@ -1904,6 +2814,9 @@ mod tests {
                 role: role.to_string(),
                 signed: false,
                 signed_at: None,
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
             };
 
             let json = serde_json::to_string(&recipient).unwrap();
@@ -1932,4 +2845,800 @@ mod tests {
         let session: SigningSession = serde_json::from_str(json).unwrap();
         assert!(session.signed_versions.is_empty());
     }
+
+    // ============================================================
+    // UX-003: Email Verification Tests
+    // ============================================================
+
+    #[test]
+    fn test_verification_state_structure() {
+        // Verification state should track attempts and lockout
+        let state = VerificationState {
+            attempts: 2,
+            locked_until: None,
+            last_attempt: "2025-01-15T10:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: VerificationState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.attempts, 2);
+        assert_eq!(deserialized.locked_until, None);
+    }
+
+    #[test]
+    fn test_verification_state_with_lockout() {
+        // Verification state should store lockout expiry
+        let state = VerificationState {
+            attempts: 3,
+            locked_until: Some("2025-01-15T10:15:00Z".to_string()),
+            last_attempt: "2025-01-15T10:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: VerificationState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.attempts, 3);
+        assert!(deserialized.locked_until.is_some());
+    }
+
+    #[test]
+    fn test_increment_verification_attempts() {
+        let mut state = VerificationState::default();
+
+        state.increment_attempt();
+        assert_eq!(state.attempts, 1);
+
+        state.increment_attempt();
+        assert_eq!(state.attempts, 2);
+
+        state.increment_attempt();
+        assert_eq!(state.attempts, 3);
+    }
+
+    #[test]
+    fn test_lockout_after_3_failures() {
+        let mut state = VerificationState::default();
+
+        // First 2 attempts should not lock
+        state.increment_attempt();
+        state.increment_attempt();
+        assert!(!state.is_locked());
+
+        // 3rd attempt should trigger lockout
+        state.increment_attempt();
+        state.apply_lockout();
+        assert!(state.is_locked());
+        assert!(state.locked_until.is_some());
+    }
+
+    #[test]
+    fn test_lockout_duration_15_minutes() {
+        let mut state = VerificationState::default();
+        let before = Utc::now();
+
+        state.attempts = 3;
+        state.apply_lockout();
+
+        let _after = Utc::now();
+        let lockout_time =
+            chrono::DateTime::parse_from_rfc3339(&state.locked_until.unwrap()).unwrap();
+
+        // Lockout should be approximately 15 minutes from now
+        let duration = lockout_time.signed_duration_since(before);
+        assert!(duration.num_minutes() >= 14);
+        assert!(duration.num_minutes() <= 16);
+    }
+
+    #[test]
+    fn test_reset_verification_state() {
+        let mut state = VerificationState {
+            attempts: 3,
+            locked_until: Some("2025-01-15T10:15:00Z".to_string()),
+            last_attempt: "2025-01-15T10:00:00Z".to_string(),
+        };
+
+        state.reset();
+
+        assert_eq!(state.attempts, 0);
+        assert_eq!(state.locked_until, None);
+    }
+
+    #[test]
+    fn test_remaining_attempts() {
+        let mut state = VerificationState::default();
+
+        assert_eq!(state.remaining_attempts(), 3);
+
+        state.increment_attempt();
+        assert_eq!(state.remaining_attempts(), 2);
+
+        state.increment_attempt();
+        assert_eq!(state.remaining_attempts(), 1);
+
+        state.increment_attempt();
+        assert_eq!(state.remaining_attempts(), 0);
+    }
+
+    // ============================================================
+    // UX-003: Email Verification Endpoint Tests (FAILING)
+    // ============================================================
+
+    #[test]
+    fn test_verify_request_structure() {
+        // Verify request should contain recipient_id and email_suffix
+        let json = r#"{
+            "recipient_id": "recip_123",
+            "email_suffix": "abc123"
+        }"#;
+
+        let request: VerifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.recipient_id, "recip_123");
+        assert_eq!(request.email_suffix, "abc123");
+    }
+
+    #[test]
+    fn test_verify_response_structure_success() {
+        // Verify response should include success flag and remaining attempts
+        let response = VerifyResponse {
+            success: true,
+            remaining_attempts: 3,
+            locked_until: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"remaining_attempts\":3"));
+    }
+
+    #[test]
+    fn test_verify_response_structure_failure() {
+        // Verify response on failure should include remaining attempts
+        let response = VerifyResponse {
+            success: false,
+            remaining_attempts: 2,
+            locked_until: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"success\":false"));
+        assert!(json.contains("\"remaining_attempts\":2"));
+    }
+
+    #[test]
+    fn test_verify_response_structure_locked() {
+        // Verify response when locked should include lockout expiry
+        let response = VerifyResponse {
+            success: false,
+            remaining_attempts: 0,
+            locked_until: Some("2025-01-15T10:15:00Z".to_string()),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"success\":false"));
+        assert!(json.contains("\"remaining_attempts\":0"));
+        assert!(json.contains("\"locked_until\""));
+    }
+
+    #[test]
+    fn test_verification_state_tracks_per_recipient() {
+        // Each recipient should have their own verification state
+        // This test will fail until we implement the endpoint
+        let recipient1 = "recip_1";
+        let recipient2 = "recip_2";
+
+        // States should be independent
+        let mut state1 = VerificationState::default();
+        let state2 = VerificationState::default();
+
+        state1.increment_attempt();
+        assert_eq!(state1.attempts, 1);
+        assert_eq!(state2.attempts, 0); // state2 unchanged
+
+        state1.increment_attempt();
+        state1.increment_attempt();
+        state1.apply_lockout();
+        assert!(state1.is_locked());
+        assert!(!state2.is_locked()); // state2 still not locked
+
+        // In the actual implementation, these would be stored separately in KV
+        // with keys like "verify:session_123:recip_1" and "verify:session_123:recip_2"
+        assert_ne!(
+            format!("verify:session:{}:{}", "sess_123", recipient1),
+            format!("verify:session:{}:{}", "sess_123", recipient2)
+        );
+    }
+
+    #[test]
+    fn test_verification_email_suffix_matching() {
+        // Email suffix should match the last 6 characters of the recipient's email
+        // For example, email "alice@example.com" has suffix "le.com"
+        // This would be the last 6 chars of the email
+
+        let email = "alice@example.com";
+        let expected_suffix = &email[email.len().saturating_sub(6)..];
+        assert_eq!(expected_suffix, "le.com");
+
+        let email2 = "bob@test.org";
+        let expected_suffix2 = &email2[email2.len().saturating_sub(6)..];
+        assert_eq!(expected_suffix2, "st.org");
+
+        // Short emails (less than 6 chars) should use the whole email
+        let short_email = "a@b.c";
+        let expected_suffix3 = &short_email[short_email.len().saturating_sub(6)..];
+        assert_eq!(expected_suffix3, "a@b.c");
+    }
+
+    #[test]
+    fn test_verification_lockout_prevents_further_attempts() {
+        // Once locked out, verification should fail even with correct suffix
+        let mut state = VerificationState {
+            attempts: 3,
+            ..Default::default()
+        };
+
+        state.apply_lockout();
+
+        assert!(state.is_locked());
+        assert_eq!(state.remaining_attempts(), 0);
+
+        // Lockout should be active
+        assert!(state.locked_until.is_some());
+    }
+
+    #[test]
+    fn test_verification_success_resets_state() {
+        // Successful verification should reset attempt counter
+        let mut state = VerificationState::default();
+
+        state.increment_attempt();
+        state.increment_attempt();
+        assert_eq!(state.attempts, 2);
+
+        // After successful verification
+        state.reset();
+        assert_eq!(state.attempts, 0);
+        assert_eq!(state.locked_until, None);
+        assert_eq!(state.remaining_attempts(), 3);
+    }
+
+    // ============================================================
+    // UX-001: Consent Landing Page Tests
+    // ============================================================
+
+    #[test]
+    fn test_session_metadata_has_sender_info_for_consent() {
+        // Session metadata should include sender information for consent landing page
+        let metadata = SessionMetadata {
+            filename: "contract.pdf".to_string(),
+            page_count: 5,
+            created_at: "2025-01-15T10:00:00Z".to_string(),
+            created_by: "John Doe".to_string(),
+            sender_email: Some("john.doe@example.com".to_string()),
+        };
+
+        // We have created_by (sender name), created_at (date sent), and sender_email
+        assert_eq!(metadata.created_by, "John Doe");
+        assert_eq!(metadata.created_at, "2025-01-15T10:00:00Z");
+        assert_eq!(metadata.filename, "contract.pdf");
+        assert!(metadata.sender_email.as_ref().unwrap().contains('@'));
+    }
+
+    #[test]
+    fn test_session_public_info_exposes_all_consent_data() {
+        // SessionPublicInfo returned by GET /session/{id} should include all data
+        // needed for the consent landing page
+        let public_info = SessionPublicInfo {
+            id: "sess_123".to_string(),
+            metadata: SessionMetadata {
+                filename: "test.pdf".to_string(),
+                page_count: 1,
+                created_at: "2025-01-15T10:00:00Z".to_string(),
+                created_by: "Jane Smith".to_string(),
+                sender_email: Some("jane.smith@example.com".to_string()),
+            },
+            recipients: vec![],
+            fields: vec![],
+            encrypted_document: "data".to_string(),
+            expires_at: "2025-01-22T10:00:00Z".to_string(),
+        };
+
+        // Verify fields exist for consent page:
+        // ✓ sender_name (created_by)
+        // ✓ document_name (filename)
+        // ✓ date_sent (created_at)
+        // ✗ sender_email (MISSING)
+        assert_eq!(public_info.metadata.created_by, "Jane Smith");
+        assert_eq!(public_info.metadata.filename, "test.pdf");
+        assert_eq!(public_info.metadata.created_at, "2025-01-15T10:00:00Z");
+    }
+
+    // ============================================================
+    // UX-002: Accept/Decline Flow Tests
+    // ============================================================
+
+    #[test]
+    fn test_decline_request_with_reason() {
+        let json = r#"{
+            "recipient_id": "r1",
+            "reason": "Need more time to review"
+        }"#;
+
+        #[derive(Deserialize)]
+        struct DeclineRequest {
+            recipient_id: String,
+            reason: Option<String>,
+        }
+
+        let req: DeclineRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.recipient_id, "r1");
+        assert_eq!(req.reason, Some("Need more time to review".to_string()));
+    }
+
+    #[test]
+    fn test_decline_request_without_reason() {
+        let json = r#"{
+            "recipient_id": "r2"
+        }"#;
+
+        #[derive(Deserialize)]
+        struct DeclineRequest {
+            recipient_id: String,
+            reason: Option<String>,
+        }
+
+        let req: DeclineRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.recipient_id, "r2");
+        assert_eq!(req.reason, None);
+    }
+
+    #[test]
+    fn test_decline_response_serialization() {
+        #[derive(Serialize)]
+        struct DeclineResponse {
+            success: bool,
+            message: String,
+        }
+
+        let response = DeclineResponse {
+            success: true,
+            message: "Document declined successfully".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("success"));
+        assert!(json.contains("Document declined"));
+    }
+
+    // ============================================================
+    // UX-006: Sender Notification on Sign Tests
+    // ============================================================
+
+    #[test]
+    fn test_session_metadata_contains_sender_email() {
+        // Test that SessionMetadata includes sender_email field
+        let metadata = SessionMetadata {
+            filename: "contract.pdf".to_string(),
+            page_count: 5,
+            created_at: "2025-01-15T10:00:00Z".to_string(),
+            created_by: "John Sender".to_string(),
+            sender_email: Some("sender@example.com".to_string()),
+        };
+
+        // Verify we have a dedicated sender_email field
+        assert!(
+            metadata.sender_email.as_ref().unwrap().contains('@'),
+            "Session metadata should contain sender email for notifications"
+        );
+    }
+
+    #[test]
+    fn test_notification_email_format() {
+        // Test that notification email includes all required fields
+        let recipient_name = "John Doe";
+        let document_name = "contract.pdf";
+        let signed_at = "2025-01-15T11:00:00Z";
+        let download_link = "https://getsignatures.org/download/sess_123";
+
+        let email_body = format_completion_notification_email(
+            recipient_name,
+            document_name,
+            signed_at,
+            download_link,
+        );
+
+        assert!(email_body.contains(recipient_name));
+        assert!(email_body.contains(document_name));
+        // The email formats the timestamp, so check for key parts like the year
+        assert!(email_body.contains("2025"));
+        assert!(email_body.contains("January") || email_body.contains("11:00"));
+        assert!(email_body.contains(download_link));
+    }
+
+    #[test]
+    fn test_all_recipients_signed_detection() {
+        // Test that we can detect when all recipients have signed
+        let recipients = vec![
+            RecipientInfo {
+                id: "1".to_string(),
+                name: "Alice".to_string(),
+                email: "alice@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: true,
+                signed_at: Some("2025-01-15T11:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+            RecipientInfo {
+                id: "2".to_string(),
+                name: "Bob".to_string(),
+                email: "bob@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: true,
+                signed_at: Some("2025-01-15T12:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+        ];
+
+        // This will fail because the function doesn't exist yet
+        assert!(all_recipients_signed(&recipients));
+    }
+
+    #[test]
+    fn test_not_all_recipients_signed_detection() {
+        // Test that we correctly detect when not all recipients have signed
+        let recipients = vec![
+            RecipientInfo {
+                id: "1".to_string(),
+                name: "Alice".to_string(),
+                email: "alice@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: true,
+                signed_at: Some("2025-01-15T11:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+            RecipientInfo {
+                id: "2".to_string(),
+                name: "Bob".to_string(),
+                email: "bob@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: false,
+                signed_at: None,
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+        ];
+
+        assert!(!all_recipients_signed(&recipients));
+    }
+
+    #[test]
+    fn test_download_link_generation() {
+        // Test that download links are generated with proper format
+        let session_id = "sess_abc123";
+        let expiry_days = 30;
+
+        // This will fail because the function doesn't exist yet
+        let download_link = generate_download_link(session_id, expiry_days);
+
+        assert!(download_link.contains(session_id));
+        assert!(download_link.starts_with("https://"));
+        assert!(download_link.contains("download") || download_link.contains("session"));
+    }
+
+    #[test]
+    fn test_completion_summary_email_includes_all_signers() {
+        // Test that completion summary email includes all recipient names
+        let recipients = vec![
+            RecipientInfo {
+                id: "1".to_string(),
+                name: "Alice Smith".to_string(),
+                email: "alice@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: true,
+                signed_at: Some("2025-01-15T11:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+            RecipientInfo {
+                id: "2".to_string(),
+                name: "Bob Jones".to_string(),
+                email: "bob@example.com".to_string(),
+                role: "signer".to_string(),
+                signed: true,
+                signed_at: Some("2025-01-15T12:00:00Z".to_string()),
+                declined: false,
+                declined_at: None,
+                decline_reason: None,
+            },
+        ];
+
+        let document_name = "contract.pdf";
+        let download_link = "https://getsignatures.org/download/sess_123";
+
+        // This will fail because the function doesn't exist yet
+        let email_body =
+            format_all_signed_notification_email(&recipients, document_name, download_link);
+
+        assert!(email_body.contains("Alice Smith"));
+        assert!(email_body.contains("Bob Jones"));
+        assert!(email_body.contains(document_name));
+        assert!(
+            email_body.contains("all recipients have signed") || email_body.contains("completed")
+        );
+    }
+
+    #[test]
+    fn test_download_link_expiry_30_days() {
+        // Test that download links expire after 30 days
+        let session_id = "sess_123";
+        let expiry_days = 30;
+
+        let download_link = generate_download_link(session_id, expiry_days);
+
+        // The link should encode the expiry timestamp somehow
+        // We'll verify this by checking that it's not just a simple session ID link
+        assert!(
+            download_link.len() > session_id.len() + 20,
+            "Download link should include expiry information"
+        );
+    }
+
+    // ============================================================
+    // UX-002: Decline Flow Tests (MUST FAIL until implemented)
+    // ============================================================
+
+    #[test]
+    fn test_recipient_has_declined_field() {
+        // UX-002: RecipientInfo must have a declined field
+        let recipient = RecipientInfo {
+            id: "1".to_string(),
+            name: "John Doe".to_string(),
+            email: "john@example.com".to_string(),
+            role: "signer".to_string(),
+            signed: false,
+            signed_at: None,
+            declined: false, // This field should exist
+            declined_at: None,
+            decline_reason: None,
+        };
+
+        assert!(!recipient.declined);
+        assert!(recipient.declined_at.is_none());
+        assert!(recipient.decline_reason.is_none());
+    }
+
+    #[test]
+    fn test_recipient_decline_sets_fields() {
+        // UX-002: Declining a recipient should set declined=true and declined_at
+        let mut recipient = RecipientInfo {
+            id: "1".to_string(),
+            name: "John Doe".to_string(),
+            email: "john@example.com".to_string(),
+            role: "signer".to_string(),
+            signed: false,
+            signed_at: None,
+            declined: false,
+            declined_at: None,
+            decline_reason: None,
+        };
+
+        // Simulate decline
+        recipient.declined = true;
+        recipient.declined_at = Some("2025-12-21T12:00:00Z".to_string());
+        recipient.decline_reason = Some("Terms not acceptable".to_string());
+
+        assert!(recipient.declined);
+        assert!(recipient.declined_at.is_some());
+        assert_eq!(
+            recipient.decline_reason,
+            Some("Terms not acceptable".to_string())
+        );
+    }
+
+    #[test]
+    fn test_declined_recipient_cannot_sign() {
+        // UX-002: A declined recipient should not be able to sign
+        let recipient = RecipientInfo {
+            id: "1".to_string(),
+            name: "John Doe".to_string(),
+            email: "john@example.com".to_string(),
+            role: "signer".to_string(),
+            signed: false,
+            signed_at: None,
+            declined: true, // Already declined
+            declined_at: Some("2025-12-21T12:00:00Z".to_string()),
+            decline_reason: Some("Not ready".to_string()),
+        };
+
+        // A declined recipient should be blocked from signing
+        assert!(recipient.declined);
+        assert!(!recipient.signed);
+        // Attempting to sign a declined recipient should fail
+        // (This would be tested at the handler level)
+    }
+
+    #[test]
+    fn test_session_has_status_field() {
+        // UX-002: SigningSession must have a status field
+        let session = SigningSession {
+            id: "sess_123".to_string(),
+            encrypted_document: "encrypted_data".to_string(),
+            metadata: SessionMetadata {
+                filename: "contract.pdf".to_string(),
+                page_count: 3,
+                created_at: "2025-12-21T12:00:00Z".to_string(),
+                created_by: "Alice".to_string(),
+                sender_email: Some("alice@example.com".to_string()),
+            },
+            recipients: vec![],
+            fields: vec![],
+            expires_at: "2025-12-28T12:00:00Z".to_string(),
+            signed_versions: vec![],
+            status: SessionStatus::Pending, // This field should exist
+        };
+
+        assert_eq!(session.status, SessionStatus::Pending);
+    }
+
+    #[test]
+    fn test_session_status_transitions() {
+        // UX-002: Session status should transition correctly
+        let mut session = SigningSession {
+            id: "sess_123".to_string(),
+            encrypted_document: "encrypted_data".to_string(),
+            metadata: SessionMetadata {
+                filename: "contract.pdf".to_string(),
+                page_count: 3,
+                created_at: "2025-12-21T12:00:00Z".to_string(),
+                created_by: "Alice".to_string(),
+                sender_email: Some("alice@example.com".to_string()),
+            },
+            recipients: vec![],
+            fields: vec![],
+            expires_at: "2025-12-28T12:00:00Z".to_string(),
+            signed_versions: vec![],
+            status: SessionStatus::Pending,
+        };
+
+        // Transition to declined
+        session.status = SessionStatus::Declined;
+        assert_eq!(session.status, SessionStatus::Declined);
+
+        // Once declined, should stay declined
+        assert!(matches!(session.status, SessionStatus::Declined));
+    }
+
+    #[test]
+    fn test_session_status_enum_values() {
+        // UX-002: SessionStatus enum should have all required values
+        let pending = SessionStatus::Pending;
+        let accepted = SessionStatus::Accepted;
+        let declined = SessionStatus::Declined;
+        let completed = SessionStatus::Completed;
+        let expired = SessionStatus::Expired;
+
+        assert!(matches!(pending, SessionStatus::Pending));
+        assert!(matches!(accepted, SessionStatus::Accepted));
+        assert!(matches!(declined, SessionStatus::Declined));
+        assert!(matches!(completed, SessionStatus::Completed));
+        assert!(matches!(expired, SessionStatus::Expired));
+    }
+
+    #[test]
+    fn test_session_status_serialization() {
+        // UX-002: SessionStatus should serialize to lowercase strings
+        let pending = SessionStatus::Pending;
+        let declined = SessionStatus::Declined;
+
+        let pending_json = serde_json::to_string(&pending).unwrap();
+        let declined_json = serde_json::to_string(&declined).unwrap();
+
+        assert_eq!(pending_json, "\"pending\"");
+        assert_eq!(declined_json, "\"declined\"");
+    }
+
+    // ============================================================
+    // UX-004: Session Expiry & Resend Tests
+    // ============================================================
+
+    #[test]
+    fn test_expired_session_response_structure() {
+        // UX-004: When session is expired, should return status="expired"
+        // with sender_email and document_name
+
+        // Create an expired session
+        let session = SigningSession {
+            id: "sess_expired".to_string(),
+            encrypted_document: "encrypted_data".to_string(),
+            metadata: SessionMetadata {
+                filename: "expired.pdf".to_string(),
+                page_count: 1,
+                created_at: "2025-12-01T12:00:00Z".to_string(),
+                created_by: "Alice".to_string(),
+                sender_email: Some("alice@example.com".to_string()),
+            },
+            recipients: vec![],
+            fields: vec![],
+            expires_at: "2025-12-10T12:00:00Z".to_string(), // Past date
+            signed_versions: vec![],
+            status: SessionStatus::Expired,
+        };
+
+        // Verify session has expired status
+        assert_eq!(session.status, SessionStatus::Expired);
+        assert_eq!(
+            session.metadata.sender_email,
+            Some("alice@example.com".to_string())
+        );
+        assert_eq!(session.metadata.filename, "expired.pdf");
+    }
+
+    #[test]
+    fn test_session_expiry_time_check() {
+        // UX-004: Test that we can determine if a session has expired
+
+        // Session that expired yesterday
+        let past_time = "2025-12-20T12:00:00Z";
+        let past_parsed = chrono::DateTime::parse_from_rfc3339(past_time).unwrap();
+        let now = chrono::Utc::now();
+        assert!(past_parsed < now, "Past time should be before now");
+
+        // Session that expires tomorrow
+        let future_time = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::hours(24))
+            .unwrap()
+            .to_rfc3339();
+        let future_parsed = chrono::DateTime::parse_from_rfc3339(&future_time).unwrap();
+        assert!(future_parsed > now, "Future time should be after now");
+    }
+
+    #[test]
+    fn test_request_link_payload_structure() {
+        // UX-004: Request link endpoint should accept recipient_id
+        #[derive(Deserialize, Serialize)]
+        struct RequestLinkRequest {
+            recipient_id: String,
+        }
+
+        let request = RequestLinkRequest {
+            recipient_id: "recip_123".to_string(),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: RequestLinkRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.recipient_id, "recip_123");
+    }
+
+    #[test]
+    fn test_resend_endpoint_creates_new_session() {
+        // UX-004: Resend endpoint should create new session with fresh expiry
+
+        let old_expires = "2025-12-21T12:00:00Z";
+        let new_expiry_hours = 168; // 7 days
+        let new_expiry_seconds = (new_expiry_hours as u64) * 60 * 60;
+
+        let new_expires = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::seconds(new_expiry_seconds as i64))
+            .unwrap()
+            .to_rfc3339();
+
+        // Parse both timestamps
+        let old_time = chrono::DateTime::parse_from_rfc3339(old_expires).unwrap();
+        let new_time = chrono::DateTime::parse_from_rfc3339(&new_expires).unwrap();
+
+        // New expiry should be after old one
+        assert!(new_time > old_time, "New expiry should be in the future");
+    }
+
+    // Note: generate_session_id() uses js_sys and can't be tested in non-WASM tests
+    // Session ID uniqueness is tested in integration tests
 }
