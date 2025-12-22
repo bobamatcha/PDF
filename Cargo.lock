@@ -332,6 +332,7 @@ name = "benchmark-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chromiumoxide",
  "chrono",
  "futures",
@@ -2816,6 +2817,7 @@ dependencies = [
  "lopdf 0.33.0",
  "pretty_assertions",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

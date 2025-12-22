@@ -12,3 +12,5 @@ ignore = ["www/dist"]
 [serve]
 port = 8082
 open = false
+
+# Test PDFs are symlinked in www/ and copied via index.html copy-file directives

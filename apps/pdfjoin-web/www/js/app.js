@@ -110,9 +110,12 @@ async function handleSplitFile(file) {
         document.getElementById('split-file-details').textContent =
             `${info.page_count} pages - ${format_bytes(info.size_bytes)}`;
 
-        // Set default range
-        document.getElementById('page-range').value = `1-${info.page_count}`;
-        document.getElementById('split-btn').disabled = !splitSession.canExecute();
+        // Update example chips with page count
+        updateExampleChips(info.page_count);
+
+        // Don't auto-fill range - let placeholder show syntax examples
+        document.getElementById('page-range').value = '';
+        document.getElementById('split-btn').disabled = true;
     } catch (e) {
         showError('split-error', e.toString());
     }
@@ -147,16 +150,51 @@ async function executeSplit() {
     const splitBtn = document.getElementById('split-btn');
     const progress = document.getElementById('split-progress');
     const rangeInput = document.getElementById('page-range');
+    const multiFileCheckbox = document.getElementById('split-multiple-files');
 
     splitBtn.disabled = true;
     progress.classList.remove('hidden');
 
     try {
-        const result = splitSession.execute();
-        // Smart filename: original-pages-1-3,5.pdf
-        const range = rangeInput.value.replace(/\s+/g, '').replace(/,/g, '_');
-        const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
-        downloadBlob(result, filename);
+        const isMultiFile = multiFileCheckbox?.checked;
+        const fullRange = rangeInput.value;
+
+        if (isMultiFile && fullRange.includes(',')) {
+            // Multi-file mode: split each comma-separated range into its own file
+            const ranges = fullRange.split(',').map(r => r.trim()).filter(r => r);
+
+            for (let i = 0; i < ranges.length; i++) {
+                const range = ranges[i];
+                // Update progress
+                const progressText = document.querySelector('#split-progress .progress-text');
+                if (progressText) {
+                    progressText.textContent = `Processing range ${i + 1} of ${ranges.length}...`;
+                }
+
+                // Set selection to just this range and execute
+                splitSession.setPageSelection(range);
+                const result = splitSession.execute();
+
+                // Download with range-specific filename
+                const rangeLabel = range.replace(/\s+/g, '');
+                const filename = `${splitOriginalFilename || 'split'}-pages-${rangeLabel}.pdf`;
+                downloadBlob(result, filename);
+
+                // Small delay between downloads to avoid browser issues
+                if (i < ranges.length - 1) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
+
+            // Restore original selection
+            splitSession.setPageSelection(fullRange);
+        } else {
+            // Single file mode (original behavior)
+            const result = splitSession.execute();
+            const range = fullRange.replace(/\s+/g, '').replace(/,/g, '_');
+            const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
+            downloadBlob(result, filename);
+        }
     } catch (e) {
         showError('split-error', 'Split failed: ' + e);
     } finally {
@@ -172,6 +210,44 @@ function onSplitProgress(current, total, message) {
     if (progressText) progressText.textContent = message;
 }
 
+function updateExampleChips(pageCount) {
+    const container = document.getElementById('range-chips');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // Generate dynamic chips based on page count
+    const chips = [];
+
+    if (pageCount >= 1) {
+        chips.push({ label: 'First page', range: '1' });
+    }
+    if (pageCount >= 5) {
+        chips.push({ label: 'First 5', range: '1-5' });
+    }
+    if (pageCount >= 3) {
+        const last3Start = pageCount - 2;
+        chips.push({ label: 'Last 3', range: `${last3Start}-${pageCount}` });
+    }
+    if (pageCount >= 1) {
+        chips.push({ label: 'All pages', range: `1-${pageCount}` });
+    }
+
+    chips.forEach(({ label, range }) => {
+        const chip = document.createElement('button');
+        chip.className = 'chip';
+        chip.type = 'button';
+        chip.textContent = label;
+        chip.dataset.range = range;
+        chip.addEventListener('click', () => {
+            const rangeInput = document.getElementById('page-range');
+            rangeInput.value = range;
+            validateRange();
+        });
+        container.appendChild(chip);
+    });
+}
+
 // ============ Merge View ============
 
 function setupMergeView() {
@@ -180,6 +256,7 @@ function setupMergeView() {
     const browseBtn = document.getElementById('merge-browse-btn');
     const addBtn = document.getElementById('merge-add-btn');
     const mergeBtn = document.getElementById('merge-btn');
+    const fileList = document.getElementById('merge-file-list');
 
     browseBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -195,6 +272,18 @@ function setupMergeView() {
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropZone.classList.remove('drag-over');
+        handleMergeFiles(e.dataTransfer.files);
+    });
+
+    // Also allow drag-and-drop on the file list for adding more files
+    fileList.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        fileList.classList.add('drag-over');
+    });
+    fileList.addEventListener('dragleave', () => fileList.classList.remove('drag-over'));
+    fileList.addEventListener('drop', (e) => {
+        e.preventDefault();
+        fileList.classList.remove('drag-over');
         handleMergeFiles(e.dataTransfer.files);
     });
 

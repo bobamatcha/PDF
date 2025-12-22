@@ -440,14 +440,34 @@ fn extract_kids_refs(bytes: &[u8]) -> Result<Vec<ObjRef>, PdfJoinError> {
     Ok(extract_all_refs(array_bytes))
 }
 
+/// Check if a byte is a valid predecessor for an object reference
+/// Object references should follow whitespace, delimiters, or be at start
+#[inline]
+fn is_valid_ref_predecessor(b: u8) -> bool {
+    matches!(b, b' ' | b'\n' | b'\r' | b'\t' | b'[' | b'<' | b'(' | b'/')
+}
+
 /// Extract all "N G R" references from bytes (binary-safe)
-fn extract_all_refs(bytes: &[u8]) -> Vec<ObjRef> {
+/// This function correctly handles PDF names with embedded digits like "/F0", "/Font1"
+/// by only starting to parse a reference when the digit follows valid predecessors.
+pub fn extract_all_refs(bytes: &[u8]) -> Vec<ObjRef> {
     let mut refs = Vec::new();
     let mut i = 0;
 
     while i < bytes.len() {
-        // Look for digit
+        // Look for digit that could start an object reference
+        // Key fix: only consider digits that follow valid predecessors
+        // This prevents parsing "/F0 21 0 R" as "0 21" instead of "21 0 R"
         if bytes[i].is_ascii_digit() {
+            // Check if previous char allows this to be a reference start
+            let valid_start = i == 0 || is_valid_ref_predecessor(bytes[i - 1]);
+
+            if !valid_start {
+                // This digit is part of a name like "/F0", skip it
+                i += 1;
+                continue;
+            }
+
             let num_start = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
@@ -482,9 +502,14 @@ fn extract_all_refs(bytes: &[u8]) -> Vec<ObjRef> {
 
                 // Check for 'R'
                 if i < bytes.len() && bytes[i] == b'R' {
-                    refs.push(ObjRef(obj_num, gen));
-                    i += 1;
-                    continue;
+                    // Additional check: 'R' should be followed by non-alphanumeric
+                    // to avoid matching things like "R" in the middle of a name
+                    let valid_end = i + 1 >= bytes.len() || !bytes[i + 1].is_ascii_alphanumeric();
+                    if valid_end {
+                        refs.push(ObjRef(obj_num, gen));
+                        i += 1;
+                        continue;
+                    }
                 }
             }
         }
@@ -530,14 +555,14 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     // Collect all needed object IDs
     let mut needed_objects: HashSet<u32> = HashSet::new();
 
-    // Always need catalog
-    needed_objects.insert(pdf.trailer.root.0);
-
-    // Get pages ref and add it
+    // Get the original catalog and pages refs so we can EXCLUDE them
+    // We create fresh Catalog and Pages objects at the end, so including
+    // the originals would result in duplicate /Count entries which corrupts the PDF
+    let catalog_ref = pdf.trailer.root.0;
     let pages_obj_bytes = pdf.read_object(pdf.trailer.root)?;
-    if let Some(pages_ref) = extract_ref_after(&pages_obj_bytes, b"/Pages") {
-        needed_objects.insert(pages_ref.0);
-    }
+    let original_pages_ref = extract_ref_after(&pages_obj_bytes, b"/Pages")
+        .map(|r| r.0)
+        .unwrap_or(0);
 
     // For each wanted page, collect dependencies
     let pages_to_keep_set: HashSet<u32> = pages_to_keep.iter().copied().collect();
@@ -552,6 +577,10 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
         }
     }
 
+    // Remove the original Catalog and Pages objects - we create new ones
+    needed_objects.remove(&catalog_ref);
+    needed_objects.remove(&original_pages_ref);
+
     // Build new PDF
     let mut output = Vec::new();
 
@@ -562,24 +591,42 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     // Track new object offsets
     let mut new_xref: Vec<(u32, usize)> = Vec::new();
     let mut id_mapping: HashMap<u32, u32> = HashMap::new();
-    let mut next_id = 1u32;
 
-    // Write needed objects with new IDs
+    // First pass: assign new IDs to all objects so we know the Pages ID upfront
     let mut sorted_ids: Vec<u32> = needed_objects.iter().copied().collect();
     sorted_ids.sort();
 
-    for old_id in sorted_ids {
+    // Build id_mapping for all objects - use counter, not enumerate index
+    let mut new_id_counter = 1u32;
+    for &old_id in &sorted_ids {
         if let Some(entry) = pdf.xref.get(&old_id) {
             if entry.in_use {
-                let new_id = next_id;
-                id_mapping.insert(old_id, new_id);
-                next_id += 1;
+                id_mapping.insert(old_id, new_id_counter);
+                new_id_counter += 1;
+            }
+        }
+    }
+
+    // The new Pages object ID (we'll write it after all other objects)
+    // new_id_counter is now (num_objects + 1), which is perfect for Pages
+    let pages_id = new_id_counter;
+
+    // Map the original Pages ref to our new Pages ID so /Parent refs get updated
+    // This mapping is critical - all pages have /Parent pointing to the original Pages object,
+    // and we need to update them to point to our new Pages object
+    id_mapping.insert(original_pages_ref, pages_id);
+
+    // Write needed objects with new IDs
+    for &old_id in &sorted_ids {
+        if let Some(entry) = pdf.xref.get(&old_id) {
+            if entry.in_use {
+                let new_id = *id_mapping.get(&old_id).unwrap();
 
                 new_xref.push((new_id, output.len()));
 
                 // Read and rewrite object with new ID
                 if let Ok(obj_bytes) = pdf.read_object(ObjRef(old_id, entry.generation)) {
-                    // Replace object header
+                    // Replace object header and update all references including /Parent
                     let rewritten = rewrite_object_refs(&obj_bytes, old_id, new_id, &id_mapping);
                     output.extend_from_slice(&rewritten);
                     output.push(b'\n');
@@ -589,8 +636,6 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     }
 
     // Write new Pages object with updated Kids
-    let pages_id = next_id;
-    next_id += 1;
     new_xref.push((pages_id, output.len()));
 
     output.extend_from_slice(format!("{} 0 obj\n", pages_id).as_bytes());
@@ -605,7 +650,7 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     output.extend_from_slice(b" ]\n>>\nendobj\n");
 
     // Update catalog to point to new Pages
-    let catalog_id = next_id;
+    let catalog_id = pages_id + 1;
     new_xref.push((catalog_id, output.len()));
 
     output.extend_from_slice(format!("{} 0 obj\n", catalog_id).as_bytes());
@@ -614,9 +659,11 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     output.extend_from_slice(b">>\nendobj\n");
 
     // Write xref
+    // Total objects = catalog_id (since catalog is the last object)
+    let total_objects = catalog_id + 1; // +1 for the free object 0
     let xref_offset = output.len();
     output.extend_from_slice(b"xref\n");
-    output.extend_from_slice(format!("0 {}\n", next_id + 1).as_bytes());
+    output.extend_from_slice(format!("0 {}\n", total_objects).as_bytes());
     output.extend_from_slice(b"0000000000 65535 f \n");
 
     // Sort xref by ID
@@ -627,7 +674,7 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
 
     // Write trailer
     output.extend_from_slice(b"trailer\n<<\n");
-    output.extend_from_slice(format!("/Size {}\n", next_id + 1).as_bytes());
+    output.extend_from_slice(format!("/Size {}\n", total_objects).as_bytes());
     output.extend_from_slice(format!("/Root {} 0 R\n", catalog_id).as_bytes());
     output.extend_from_slice(b">>\n");
     output.extend_from_slice(format!("startxref\n{}\n%%EOF\n", xref_offset).as_bytes());
@@ -650,14 +697,44 @@ fn rewrite_object_refs(
     let mut result = replace_bytes(obj_bytes, &old_header, &new_header);
 
     // Replace all references "X 0 R" with mapped IDs
-    // Process in order from largest to smallest to avoid partial replacements
-    let mut mappings: Vec<_> = id_mapping.iter().collect();
-    mappings.sort_by(|a, b| b.0.cmp(a.0)); // Sort by old ID descending
+    // CRITICAL: We must avoid replacing refs that were already replaced.
+    // If old ID A maps to new ID B, and old ID B maps to new ID C,
+    // then after replacing A->B, we'd incorrectly replace B->C.
+    //
+    // Solution: Do all replacements in a single pass by finding all refs first,
+    // then replacing them from end to start (so positions don't shift).
+    let refs_in_object = extract_all_refs(&result);
 
-    for (&old, &new) in mappings {
-        let old_ref = format!("{} 0 R", old).into_bytes();
-        let new_ref = format!("{} 0 R", new).into_bytes();
-        result = replace_bytes(&result, &old_ref, &new_ref);
+    // Build list of replacements (position, old_len, new_bytes)
+    let mut replacements: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+
+    for obj_ref in &refs_in_object {
+        if let Some(&new_ref_id) = id_mapping.get(&obj_ref.0) {
+            // Find this ref in result
+            let old_ref = format!("{} {} R", obj_ref.0, obj_ref.1);
+            let new_ref = format!("{} {} R", new_ref_id, obj_ref.1);
+
+            // Find all occurrences
+            let old_ref_bytes = old_ref.as_bytes();
+            let mut search_start = 0;
+            while let Some(pos) = find_pattern(&result[search_start..], old_ref_bytes) {
+                let abs_pos = search_start + pos;
+                replacements.push((abs_pos, old_ref_bytes.len(), new_ref.clone().into_bytes()));
+                search_start = abs_pos + old_ref_bytes.len();
+            }
+        }
+    }
+
+    // Sort by position descending so we can replace from end to start
+    replacements.sort_by(|a, b| b.0.cmp(&a.0));
+
+    // Apply replacements
+    for (pos, old_len, new_bytes) in replacements {
+        let mut new_result = Vec::with_capacity(result.len() - old_len + new_bytes.len());
+        new_result.extend_from_slice(&result[..pos]);
+        new_result.extend_from_slice(&new_bytes);
+        new_result.extend_from_slice(&result[pos + old_len..]);
+        result = new_result;
     }
 
     result
@@ -903,5 +980,246 @@ mod tests {
         let pages = pdf.get_page_refs().expect("Should get pages");
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].obj_ref.0, 3); // Page is object 3
+    }
+
+    // =========================================================================
+    // Property tests for extract_all_refs
+    // =========================================================================
+
+    /// Test that simple refs are found
+    #[test]
+    fn test_extract_refs_simple() {
+        let input = b"1 0 R";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0], ObjRef(1, 0));
+    }
+
+    /// Test multiple refs
+    #[test]
+    fn test_extract_refs_multiple() {
+        let input = b"1 0 R 2 0 R 3 0 R";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0], ObjRef(1, 0));
+        assert_eq!(refs[1], ObjRef(2, 0));
+        assert_eq!(refs[2], ObjRef(3, 0));
+    }
+
+    /// Test refs in array
+    #[test]
+    fn test_extract_refs_in_array() {
+        let input = b"[1 0 R 2 0 R]";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 2);
+    }
+
+    /// Test refs in dictionary
+    #[test]
+    fn test_extract_refs_in_dict() {
+        let input = b"<< /Key 1 0 R /Other 2 0 R >>";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 2);
+    }
+
+    /// CRITICAL: Test that font names like /F0, /F1 don't break ref parsing
+    #[test]
+    fn test_extract_refs_with_font_names() {
+        // This is the exact pattern that was broken before
+        let input = b"/Font << /F0 21 0 R /F1 26 0 R /F2 31 0 R >>";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 3, "Should find 3 font refs");
+        assert_eq!(refs[0], ObjRef(21, 0));
+        assert_eq!(refs[1], ObjRef(26, 0));
+        assert_eq!(refs[2], ObjRef(31, 0));
+    }
+
+    /// Test various PDF name patterns with embedded digits
+    #[test]
+    fn test_extract_refs_ignores_digits_in_names() {
+        // Various PDF names that contain digits but aren't refs
+        let inputs = vec![
+            (b"/Font1 5 0 R".as_slice(), vec![ObjRef(5, 0)]),
+            (b"/F0 5 0 R".as_slice(), vec![ObjRef(5, 0)]),
+            (b"/Image42 5 0 R".as_slice(), vec![ObjRef(5, 0)]),
+            (b"/GS0 5 0 R".as_slice(), vec![ObjRef(5, 0)]),
+            (
+                b"/XObject << /Im0 10 0 R >>".as_slice(),
+                vec![ObjRef(10, 0)],
+            ),
+        ];
+
+        for (input, expected) in inputs {
+            let refs = extract_all_refs(input);
+            assert_eq!(
+                refs,
+                expected,
+                "Failed for input: {:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    /// Test refs with various whitespace patterns
+    #[test]
+    fn test_extract_refs_whitespace_variations() {
+        let inputs = vec![
+            b"1 0 R".as_slice(),       // single space
+            b"1  0  R".as_slice(),     // double space
+            b"1\n0\nR".as_slice(),     // newlines
+            b"1\r\n0\r\nR".as_slice(), // CRLF
+            b"1 \n 0 \n R".as_slice(), // mixed
+        ];
+
+        for input in inputs {
+            let refs = extract_all_refs(input);
+            assert_eq!(
+                refs.len(),
+                1,
+                "Should find 1 ref in: {:?}",
+                String::from_utf8_lossy(input)
+            );
+            assert_eq!(refs[0], ObjRef(1, 0));
+        }
+    }
+
+    /// Test that refs at boundaries are found
+    #[test]
+    fn test_extract_refs_at_boundaries() {
+        // Start of input
+        let refs = extract_all_refs(b"1 0 R rest");
+        assert_eq!(refs.len(), 1);
+
+        // After newline (common in PDF)
+        let refs = extract_all_refs(b"stuff\n1 0 R");
+        assert_eq!(refs.len(), 1);
+
+        // After [ (array start)
+        let refs = extract_all_refs(b"[1 0 R");
+        assert_eq!(refs.len(), 1);
+
+        // After << (dict start)
+        let refs = extract_all_refs(b"<<1 0 R");
+        assert_eq!(refs.len(), 1);
+    }
+
+    /// Test large object numbers (real PDFs can have hundreds of objects)
+    #[test]
+    fn test_extract_refs_large_numbers() {
+        let input = b"999 0 R 1000 0 R 12345 0 R";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0], ObjRef(999, 0));
+        assert_eq!(refs[1], ObjRef(1000, 0));
+        assert_eq!(refs[2], ObjRef(12345, 0));
+    }
+
+    /// Test non-zero generation numbers
+    #[test]
+    fn test_extract_refs_with_generation() {
+        let input = b"1 1 R 2 5 R 3 99 R";
+        let refs = extract_all_refs(input);
+        assert_eq!(refs.len(), 3);
+        assert_eq!(refs[0], ObjRef(1, 1));
+        assert_eq!(refs[1], ObjRef(2, 5));
+        assert_eq!(refs[2], ObjRef(3, 99));
+    }
+
+    /// Test realistic Resources dictionary (the exact pattern that was broken)
+    #[test]
+    fn test_extract_refs_realistic_resources() {
+        let input = br#"20 0 obj
+<<
+  /XObject 64 0 R
+  /Pattern 65 0 R
+  /ExtGState 66 0 R
+  /ColorSpace 67 0 R
+  /Font <<
+    /F0 21 0 R
+    /F1 26 0 R
+    /F2 31 0 R
+    /F3 36 0 R
+    /F4 41 0 R
+  >>
+>>
+endobj"#;
+
+        let refs = extract_all_refs(input);
+
+        // Should find: 64, 65, 66, 67, 21, 26, 31, 36, 41 = 9 refs
+        assert_eq!(refs.len(), 9, "Should find all 9 refs in Resources dict");
+
+        // Verify the font refs specifically (these were the ones being missed)
+        let font_refs: Vec<u32> = refs.iter().map(|r| r.0).collect();
+        assert!(font_refs.contains(&21), "Should find font ref 21");
+        assert!(font_refs.contains(&26), "Should find font ref 26");
+        assert!(font_refs.contains(&31), "Should find font ref 31");
+        assert!(font_refs.contains(&36), "Should find font ref 36");
+        assert!(font_refs.contains(&41), "Should find font ref 41");
+    }
+}
+
+// Property tests using proptest
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: extract_all_refs never panics on arbitrary input
+        #[test]
+        fn extract_refs_never_panics(input in prop::collection::vec(any::<u8>(), 0..1000)) {
+            let _ = extract_all_refs(&input);
+        }
+
+        /// Property: a properly formatted ref "N G R" is always found when preceded by valid char
+        #[test]
+        fn valid_ref_is_found(obj_num in 1u32..10000, gen in 0u16..100) {
+            let input = format!(" {} {} R", obj_num, gen);
+            let refs = extract_all_refs(input.as_bytes());
+            prop_assert_eq!(refs.len(), 1);
+            prop_assert_eq!(refs[0], ObjRef(obj_num, gen));
+        }
+
+        /// Property: refs in arrays are found
+        #[test]
+        fn refs_in_array_found(
+            obj_nums in prop::collection::vec(1u32..1000, 1..10)
+        ) {
+            let refs_str: Vec<String> = obj_nums.iter()
+                .map(|n| format!("{} 0 R", n))
+                .collect();
+            let input = format!("[{}]", refs_str.join(" "));
+            let refs = extract_all_refs(input.as_bytes());
+            prop_assert_eq!(refs.len(), obj_nums.len());
+        }
+
+        /// Property: digit after letter should not start a ref
+        /// e.g., "/F0 5 0 R" should only find ref 5, not misparse "/F0"
+        #[test]
+        fn digit_after_letter_not_ref(
+            name in "[A-Za-z]+[0-9]+",
+            obj_num in 1u32..1000
+        ) {
+            let input = format!("/{} {} 0 R", name, obj_num);
+            let refs = extract_all_refs(input.as_bytes());
+            // Should only find the actual ref, not the name
+            prop_assert_eq!(refs.len(), 1);
+            prop_assert_eq!(refs[0].0, obj_num);
+        }
+
+        /// Property: multiple refs separated by various whitespace are all found
+        #[test]
+        fn multiple_refs_with_whitespace(
+            obj_nums in prop::collection::vec(1u32..1000, 2..5),
+            sep in "[ \n\r\t]+"
+        ) {
+            let refs_str: Vec<String> = obj_nums.iter()
+                .map(|n| format!("{} 0 R", n))
+                .collect();
+            let input = refs_str.join(&sep);
+            let refs = extract_all_refs(input.as_bytes());
+            prop_assert_eq!(refs.len(), obj_nums.len());
+        }
     }
 }

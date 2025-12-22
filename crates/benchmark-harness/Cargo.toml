@@ -36,3 +36,4 @@ reqwest = "0.12"
 regex = "1"
 pdfjoin-core = { path = "../pdfjoin-core" }
 lopdf = { workspace = true }
+base64 = "0.22"
