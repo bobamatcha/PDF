@@ -530,14 +530,14 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     // Collect all needed object IDs
     let mut needed_objects: HashSet<u32> = HashSet::new();
 
-    // Always need catalog
-    needed_objects.insert(pdf.trailer.root.0);
-
-    // Get pages ref and add it
+    // Get the original catalog and pages refs so we can EXCLUDE them
+    // We create fresh Catalog and Pages objects at the end, so including
+    // the originals would result in duplicate /Count entries which corrupts the PDF
+    let catalog_ref = pdf.trailer.root.0;
     let pages_obj_bytes = pdf.read_object(pdf.trailer.root)?;
-    if let Some(pages_ref) = extract_ref_after(&pages_obj_bytes, b"/Pages") {
-        needed_objects.insert(pages_ref.0);
-    }
+    let original_pages_ref = extract_ref_after(&pages_obj_bytes, b"/Pages")
+        .map(|r| r.0)
+        .unwrap_or(0);
 
     // For each wanted page, collect dependencies
     let pages_to_keep_set: HashSet<u32> = pages_to_keep.iter().copied().collect();
@@ -551,6 +551,10 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
             needed_objects.extend(deps);
         }
     }
+
+    // Remove the original Catalog and Pages objects - we create new ones
+    needed_objects.remove(&catalog_ref);
+    needed_objects.remove(&original_pages_ref);
 
     // Build new PDF
     let mut output = Vec::new();

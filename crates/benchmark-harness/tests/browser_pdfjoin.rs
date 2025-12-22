@@ -325,6 +325,108 @@ async fn test_pdfjoin_mobile_viewport() {
     );
 }
 
+// ============================================================================
+// Split Functionality Regression Tests
+// ============================================================================
+
+/// Regression test: Split output must not have duplicate Pages objects
+/// Bug: The streaming split was including original Catalog and Pages objects
+/// AND creating new ones, resulting in two /Count entries which corrupts the PDF.
+/// macOS Preview and other strict PDF readers reject such files.
+#[tokio::test]
+async fn test_pdfjoin_split_no_duplicate_pages_objects() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load the test PDF and perform split via WASM bindings directly
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(async () => {
+                try {
+                    // Fetch test PDF from output directory
+                    const response = await fetch('/florida_purchase_contract.pdf');
+                    if (!response.ok) {
+                        return { success: false, error: 'PDF not found - copy to www/dist for testing' };
+                    }
+                    const pdfBytes = new Uint8Array(await response.arrayBuffer());
+
+                    const { PdfJoinSession, SessionMode } = window.wasmBindings;
+                    const session = new PdfJoinSession(SessionMode.Split);
+
+                    // Add document
+                    const info = session.addDocument('test.pdf', pdfBytes);
+                    if (info.page_count !== 17) {
+                        return { success: false, error: 'Expected 17 pages, got ' + info.page_count };
+                    }
+
+                    // Select pages 5-17
+                    session.setPageSelection('5-17');
+
+                    // Execute split
+                    const result = session.execute();
+                    const resultBytes = new Uint8Array(result);
+
+                    // Convert to string to count /Count occurrences
+                    const decoder = new TextDecoder('utf-8', { fatal: false });
+                    const pdfText = decoder.decode(resultBytes);
+
+                    // Count /Count entries
+                    const countMatches = pdfText.match(/\/Count \d+/g) || [];
+
+                    return {
+                        success: true,
+                        outputSize: resultBytes.length,
+                        countOccurrences: countMatches.length,
+                        countValues: countMatches,
+                        startsWithPdf: pdfText.startsWith('%PDF-')
+                    };
+                } catch (err) {
+                    return { success: false, error: err.toString() };
+                }
+            })()"#,
+        )
+        .await
+        .expect("Should execute split test")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Split regression test result: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Split should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["startsWithPdf"].as_bool().unwrap_or(false),
+        "Output should be valid PDF"
+    );
+
+    let count_occurrences = result["countOccurrences"].as_i64().unwrap_or(0);
+    assert_eq!(
+        count_occurrences, 1,
+        "REGRESSION: Found {} /Count entries, expected 1. Values: {:?}. \
+         Duplicate Pages objects cause PDF corruption in macOS Preview.",
+        count_occurrences, result["countValues"]
+    );
+}
+
 #[tokio::test]
 async fn test_pdfjoin_mobile_touch_targets() {
     skip_if_no_chrome!();

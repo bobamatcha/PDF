@@ -203,4 +203,147 @@ mod tests {
         let result = split_document(&pdf, vec![0]); // Pages are 1-indexed
         assert!(result.is_err());
     }
+
+    /// Regression test: splitting a range from a larger PDF must produce valid output
+    /// This specifically tests the streaming implementation which had a bug where
+    /// the xref table was malformed.
+    #[test]
+    fn test_split_range_from_larger_pdf_produces_valid_output() {
+        // Create a 17-page PDF (similar to florida_purchase_contract.pdf)
+        let pdf = create_test_pdf(17);
+
+        // Split pages 5-17 (the exact range that failed in production)
+        let pages: Vec<u32> = (5..=17).collect();
+        let result = split_document(&pdf, pages.clone()).expect("split should succeed");
+
+        // The output must be parseable by lopdf
+        let doc = Document::load_mem(&result).expect("output PDF must be valid and parseable");
+
+        // Verify correct page count
+        assert_eq!(
+            doc.get_pages().len(),
+            13,
+            "split output should have 13 pages (5-17)"
+        );
+    }
+
+    /// Integration test with real PDF file (if available)
+    /// This tests the actual bug: splitting pages 5-17 from florida_purchase_contract.pdf
+    #[test]
+    fn test_split_real_pdf_produces_valid_output() {
+        use std::path::PathBuf;
+
+        // Find project root
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let pdf_path = project_root.join("output/florida_purchase_contract.pdf");
+
+        if !pdf_path.exists() {
+            eprintln!("SKIP: Real PDF not found at {:?}", pdf_path);
+            return;
+        }
+
+        let pdf_bytes = std::fs::read(&pdf_path).expect("read PDF");
+        eprintln!("Loaded real PDF: {} bytes", pdf_bytes.len());
+
+        // Get page count
+        let page_count = crate::get_page_count(&pdf_bytes).expect("get page count");
+        eprintln!("Page count: {}", page_count);
+        assert_eq!(
+            page_count, 17,
+            "florida_purchase_contract should have 17 pages"
+        );
+
+        // Split pages 5-17 (the exact operation that failed)
+        let pages: Vec<u32> = (5..=17).collect();
+        let result = split_document(&pdf_bytes, pages).expect("split should succeed");
+        eprintln!("Split result: {} bytes", result.len());
+
+        // The critical test: output must be parseable by lopdf
+        let doc = Document::load_mem(&result)
+            .expect("REGRESSION: split output is corrupt and cannot be parsed");
+
+        assert_eq!(
+            doc.get_pages().len(),
+            13,
+            "split should produce 13 pages (5-17)"
+        );
+
+        eprintln!(
+            "SUCCESS: Split output is valid PDF with {} pages",
+            doc.get_pages().len()
+        );
+    }
+
+    /// Test streaming split with real PDF (the actual implementation being tested)
+    #[test]
+    fn test_streaming_split_real_pdf() {
+        use crate::streaming;
+        use std::path::PathBuf;
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let pdf_path = project_root.join("output/florida_purchase_contract.pdf");
+
+        if !pdf_path.exists() {
+            eprintln!("SKIP: Real PDF not found");
+            return;
+        }
+
+        let pdf_bytes = std::fs::read(&pdf_path).expect("read PDF");
+
+        // This is the streaming implementation that's used by default
+        let pages: Vec<u32> = (5..=17).collect();
+        let result = streaming::split_streaming(&pdf_bytes, pages)
+            .expect("streaming split should work for real PDFs");
+
+        // Write to temp file for manual inspection if needed
+        let temp_path = std::env::temp_dir().join("pdfjoin_test_streaming_split.pdf");
+        std::fs::write(&temp_path, &result).expect("write temp file");
+        eprintln!("Wrote streaming output to: {:?}", temp_path);
+
+        // Output MUST be valid
+        let doc = Document::load_mem(&result).expect("REGRESSION: streaming output is corrupt");
+
+        assert_eq!(doc.get_pages().len(), 13);
+    }
+
+    /// Regression test: streaming split must NOT produce duplicate Pages objects
+    /// Bug: The streaming split was including the original Catalog and Pages objects
+    /// AND creating new ones, resulting in two /Count entries which corrupts the PDF.
+    /// macOS Preview and other strict PDF readers reject such files.
+    #[test]
+    fn test_streaming_split_no_duplicate_pages_objects() {
+        use crate::streaming;
+        use std::path::PathBuf;
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let pdf_path = project_root.join("output/florida_purchase_contract.pdf");
+
+        if !pdf_path.exists() {
+            eprintln!("SKIP: Real PDF not found");
+            return;
+        }
+
+        let pdf_bytes = std::fs::read(&pdf_path).expect("read PDF");
+        let pages: Vec<u32> = (5..=17).collect();
+        let result =
+            streaming::split_streaming(&pdf_bytes, pages).expect("streaming split should succeed");
+
+        // Convert to string for pattern matching (safe for this test)
+        let result_str = String::from_utf8_lossy(&result);
+
+        // Count occurrences of "/Count " pattern (the Pages object marker)
+        let count_occurrences = result_str.matches("/Count ").count();
+
+        // There should be exactly ONE /Count entry (our new Pages object)
+        // If there are multiple, the original Pages object was incorrectly included
+        assert_eq!(
+            count_occurrences, 1,
+            "REGRESSION: Found {} /Count entries, expected 1. \
+             Duplicate Pages objects cause PDF corruption.",
+            count_occurrences
+        );
+    }
 }
