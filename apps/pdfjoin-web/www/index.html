@@ -14,8 +14,11 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
     <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
     <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
-    <!-- Trunk: Copy static JS files -->
+    <!-- Trunk: Copy static files -->
     <link data-trunk rel="copy-dir" href="js" />
+    <link data-trunk rel="copy-file" href="robots.txt" />
+    <link data-trunk rel="copy-file" href="sitemap.xml" />
+    <link data-trunk rel="copy-file" href="404.html" />
     <style>
         :root {
             --primary: #2563eb;
@@ -92,6 +95,11 @@
         footer { text-align: center; margin-top: 3rem; color: var(--text-muted); }
         .privacy-note { font-size: 0.85rem; }
 
+        /* Error Message */
+        .error-msg { background: #fef2f2; border: 1px solid var(--error); color: #b91c1c; padding: 0.75rem 1rem; border-radius: 8px; margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+        .error-msg::before { content: "!"; background: var(--error); color: white; width: 1.25rem; height: 1.25rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: bold; flex-shrink: 0; }
+        .error-msg .dismiss { margin-left: auto; background: none; border: none; color: #b91c1c; cursor: pointer; font-size: 1.25rem; line-height: 1; }
+
         /* Utilities */
         .hidden { display: none !important; }
 
@@ -124,6 +132,7 @@
                     <p class="drop-hint">Extract specific pages from your document</p>
                 </div>
             </div>
+            <div id="split-error" class="error-msg hidden"><span class="error-text"></span><button class="dismiss">&times;</button></div>
 
             <div id="split-editor" class="editor hidden">
                 <div class="file-info">
@@ -157,6 +166,7 @@
                     <p class="drop-hint">Add 2 or more files to combine</p>
                 </div>
             </div>
+            <div id="merge-error" class="error-msg hidden"><span class="error-text"></span><button class="dismiss">&times;</button></div>
 
             <div id="merge-file-list" class="file-list hidden">
                 <h3>Files to merge <span id="merge-count">(0)</span></h3>

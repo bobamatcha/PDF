@@ -114,7 +114,7 @@ async function handleSplitFile(file) {
         document.getElementById('page-range').value = `1-${info.page_count}`;
         document.getElementById('split-btn').disabled = !splitSession.canExecute();
     } catch (e) {
-        alert('Error: ' + e);
+        showError('split-error', e.toString());
     }
 }
 
@@ -158,7 +158,7 @@ async function executeSplit() {
         const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
         downloadBlob(result, filename);
     } catch (e) {
-        alert('Split failed: ' + e);
+        showError('split-error', 'Split failed: ' + e);
     } finally {
         splitBtn.disabled = false;
         setTimeout(() => progress.classList.add('hidden'), 500);
@@ -222,7 +222,7 @@ async function handleMergeFiles(files) {
             const bytes = new Uint8Array(await file.arrayBuffer());
             mergeSession.addDocument(file.name, bytes);
         } catch (e) {
-            alert(`Error loading ${file.name}: ${e}`);
+            showError('merge-error', `${file.name}: ${e}`);
         }
     }
 
@@ -334,7 +334,7 @@ async function executeMerge() {
         const filename = `merged-${count}-files.pdf`;
         downloadBlob(result, filename);
     } catch (e) {
-        alert('Merge failed: ' + e);
+        showError('merge-error', 'Merge failed: ' + e);
     } finally {
         mergeBtn.disabled = false;
         setTimeout(() => progress.classList.add('hidden'), 500);
@@ -349,6 +349,24 @@ function onMergeProgress(current, total, message) {
 }
 
 // ============ Utilities ============
+
+function showError(containerId, message) {
+    const container = document.getElementById(containerId);
+    const textEl = container.querySelector('.error-text');
+    const dismissBtn = container.querySelector('.dismiss');
+
+    textEl.textContent = message;
+    container.classList.remove('hidden');
+
+    // Auto-dismiss after 8 seconds
+    const timer = setTimeout(() => container.classList.add('hidden'), 8000);
+
+    // Manual dismiss
+    dismissBtn.onclick = () => {
+        clearTimeout(timer);
+        container.classList.add('hidden');
+    };
+}
 
 function downloadBlob(data, filename) {
     const blob = new Blob([data], { type: 'application/pdf' });
