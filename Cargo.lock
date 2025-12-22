@@ -335,6 +335,8 @@ dependencies = [
  "chromiumoxide",
  "chrono",
  "futures",
+ "lopdf 0.33.0",
+ "pdfjoin-core",
  "proptest",
  "regex",
  "reqwest",

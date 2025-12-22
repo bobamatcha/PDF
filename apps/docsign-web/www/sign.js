@@ -73,7 +73,16 @@ const elements = {
     closeDeclineModal: document.getElementById('close-decline-modal'),
     declineReason: document.getElementById('decline-reason'),
     cancelDecline: document.getElementById('cancel-decline'),
-    confirmDecline: document.getElementById('confirm-decline')
+    confirmDecline: document.getElementById('confirm-decline'),
+
+    // UX-004: Expiry page elements
+    expiryPage: document.getElementById('expiry-page'),
+    expiredDocumentName: document.getElementById('expired-document-name'),
+    expiredSenderName: document.getElementById('expired-sender-name'),
+    expiredSenderEmail: document.getElementById('expired-sender-email'),
+    expiredSenderEmailLink: document.getElementById('expired-sender-email-link'),
+    btnRequestNewLink: document.getElementById('btn-request-new-link'),
+    requestSentSuccess: document.getElementById('request-sent-success')
 };
 
 /**
@@ -156,6 +165,143 @@ function showSessionError(message) {
     if (elements.btnStart) elements.btnStart.style.display = 'none';
     if (elements.btnFinish) elements.btnFinish.style.display = 'none';
 }
+
+// ============================================================
+// UX-004: Expiry Page Functions
+// ============================================================
+
+/**
+ * Show the session expiry page with document and sender info
+ * @param {Object} sessionData - Session data from API with status: "expired"
+ */
+function showExpiryPage(sessionData) {
+    console.log('[UX-004] Showing expiry page for session:', sessionData);
+
+    // Hide loading indicator
+    if (elements.loadingIndicator) {
+        elements.loadingIndicator.classList.add('hidden');
+    }
+
+    // Hide other pages
+    if (elements.consentLanding) {
+        elements.consentLanding.classList.add('hidden');
+    }
+    if (elements.signingToolbar) {
+        elements.signingToolbar.style.display = 'none';
+    }
+    if (elements.viewerContainer) {
+        elements.viewerContainer.style.display = 'none';
+    }
+
+    // Populate expiry page with session data
+    const metadata = sessionData.metadata || {};
+    const documentName = metadata.filename || sessionData.document_name || 'Document';
+    const senderName = metadata.created_by || sessionData.sender_name || 'Unknown Sender';
+    const senderEmail = metadata.sender_email || sessionData.sender_email || '';
+
+    if (elements.expiredDocumentName) {
+        elements.expiredDocumentName.textContent = documentName;
+    }
+    if (elements.expiredSenderName) {
+        elements.expiredSenderName.textContent = senderName;
+    }
+    if (elements.expiredSenderEmail) {
+        elements.expiredSenderEmail.textContent = senderEmail || '-';
+    }
+    if (elements.expiredSenderEmailLink) {
+        if (senderEmail) {
+            elements.expiredSenderEmailLink.href = `mailto:${senderEmail}`;
+            elements.expiredSenderEmailLink.textContent = senderEmail;
+            elements.expiredSenderEmailLink.parentElement.style.display = 'block';
+        } else {
+            elements.expiredSenderEmailLink.parentElement.style.display = 'none';
+        }
+    }
+
+    // Show expiry page
+    if (elements.expiryPage) {
+        elements.expiryPage.classList.remove('hidden');
+    }
+
+    // Reset success message
+    if (elements.requestSentSuccess) {
+        elements.requestSentSuccess.classList.add('hidden');
+    }
+    if (elements.btnRequestNewLink) {
+        elements.btnRequestNewLink.disabled = false;
+        elements.btnRequestNewLink.textContent = 'Request New Link';
+    }
+}
+
+/**
+ * Handle request for new signing link
+ * Calls the worker API to notify sender
+ */
+async function handleRequestNewLink() {
+    const { sessionId, recipientId } = window.sessionParams;
+
+    if (!sessionId) {
+        console.error('[UX-004] No session ID available');
+        return;
+    }
+
+    // Disable button and show loading state
+    if (elements.btnRequestNewLink) {
+        elements.btnRequestNewLink.disabled = true;
+        elements.btnRequestNewLink.textContent = 'Sending...';
+    }
+
+    const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
+
+    try {
+        const response = await fetch(`${WORKER_API}/session/${sessionId}/request-link`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                recipient_id: recipientId
+            })
+        });
+
+        if (response.ok) {
+            console.log('[UX-004] Request new link sent successfully');
+
+            // Show success message
+            if (elements.requestSentSuccess) {
+                elements.requestSentSuccess.classList.remove('hidden');
+            }
+            if (elements.btnRequestNewLink) {
+                elements.btnRequestNewLink.textContent = 'Request Sent';
+            }
+        } else {
+            const errorData = await response.json().catch(() => ({}));
+            console.error('[UX-004] Failed to request new link:', errorData);
+
+            // Re-enable button on error
+            if (elements.btnRequestNewLink) {
+                elements.btnRequestNewLink.disabled = false;
+                elements.btnRequestNewLink.textContent = 'Request New Link';
+            }
+
+            alert(errorData.message || 'Failed to send request. Please try again or contact the sender directly.');
+        }
+    } catch (err) {
+        console.error('[UX-004] Error requesting new link:', err);
+
+        // Re-enable button on error
+        if (elements.btnRequestNewLink) {
+            elements.btnRequestNewLink.disabled = false;
+            elements.btnRequestNewLink.textContent = 'Request New Link';
+        }
+
+        alert('Failed to send request. Please try again or contact the sender directly.');
+    }
+}
+
+// Expose functions globally for testing
+window.showExpiryPage = showExpiryPage;
+window.handleRequestNewLink = handleRequestNewLink;
 
 /**
  * Get test mock data - ONLY used when session=test for automated testing
@@ -307,6 +453,15 @@ async function fetchSession() {
         }
 
         const session = await response.json();
+
+        // UX-004: Check if session is expired
+        if (session.status === 'expired') {
+            console.log('[UX-004] Session is expired');
+            showExpiryPage(session);
+            // Return a special marker so caller knows not to continue with normal flow
+            return { ...session, _isExpired: true };
+        }
+
         state.session = session;
 
         // Extract fields for this recipient only
@@ -1024,6 +1179,9 @@ function initializeEventListeners() {
         }
     });
 
+    // UX-004: Expiry page - Request New Link button
+    elements.btnRequestNewLink?.addEventListener('click', handleRequestNewLink);
+
     // Signature modal
     elements.closeSignatureModal?.addEventListener('click', closeSignatureModal);
     elements.cancelSignature?.addEventListener('click', closeSignatureModal);
@@ -1253,7 +1411,13 @@ async function initialize() {
         initializeEventListeners();
 
         // Fetch session (or use mock data)
-        await fetchSession();
+        const session = await fetchSession();
+
+        // UX-004: If session is expired, expiry page is already shown
+        if (session && session._isExpired) {
+            console.log('[UX-004] Session expired, skipping normal initialization');
+            return;
+        }
 
         // Update total count
         if (elements.totalSpan) {

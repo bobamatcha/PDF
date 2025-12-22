@@ -1,16 +1,22 @@
 //! PDF Split and Merge operations
 //!
 //! This crate provides client-side PDF manipulation using lopdf.
+//!
+//! Two implementations are available:
+//! - `split_document` / `merge_documents`: Full parse using lopdf (slower, more compatible)
+//! - `streaming::split_streaming` / `streaming::merge_streaming`: Byte-level (faster, experimental)
 
 pub mod command;
 pub mod error;
 pub mod merge;
 pub mod split;
+pub mod streaming;
 
 pub use command::{PdfCommand, ProcessMetrics, ProcessResult};
 pub use error::PdfJoinError;
 pub use merge::merge_documents;
 pub use split::split_document;
+pub use streaming::{merge_streaming, split_streaming};
 
 /// Parse PDF bytes and return page count
 pub fn get_page_count(bytes: &[u8]) -> Result<u32, PdfJoinError> {

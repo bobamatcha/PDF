@@ -479,6 +479,172 @@
             text-decoration: underline;
         }
 
+        /* UX-004: Expiry Page Styles */
+        .expiry-page {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background: var(--bg-tertiary);
+        }
+
+        .expiry-container {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .expiry-header {
+            padding: 2rem 2rem 1rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .expiry-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1rem;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .expiry-icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+
+        .expiry-header h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--text-primary);
+        }
+
+        .expiry-body {
+            padding: 2rem;
+        }
+
+        .expiry-message {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+
+        .expiry-document-info {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .expiry-document-info .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .expiry-document-info .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .expiry-document-info .info-label {
+            color: var(--text-tertiary);
+            font-size: 0.875rem;
+        }
+
+        .expiry-document-info .info-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .expiry-actions {
+            margin-top: 1.5rem;
+        }
+
+        #btn-request-new-link {
+            font-size: 1rem;
+            padding: 0.875rem 2rem;
+            min-height: 44px;
+            min-width: 200px;
+            background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%) !important;
+            color: white !important;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #btn-request-new-link:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        #btn-request-new-link:active {
+            transform: scale(0.98);
+        }
+
+        .expiry-contact {
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border-primary);
+            font-size: 0.875rem;
+            color: var(--text-tertiary);
+        }
+
+        .expiry-contact a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .expiry-contact a:hover {
+            text-decoration: underline;
+        }
+
+        .request-sent-message {
+            background: #dcfce7;
+            color: #166534;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+
+        /* Mobile responsive for expiry page */
+        @media (max-width: 768px) {
+            .expiry-page {
+                padding: 1rem;
+            }
+
+            .expiry-container {
+                max-width: 100%;
+            }
+
+            .expiry-header,
+            .expiry-body {
+                padding: 1.5rem;
+            }
+
+            .expiry-icon {
+                width: 64px;
+                height: 64px;
+            }
+
+            .expiry-icon svg {
+                width: 32px;
+                height: 32px;
+            }
+
+            #btn-request-new-link {
+                width: 100%;
+                min-width: unset;
+            }
+        }
+
         /* Mobile responsive for consent page */
         @media (max-width: 768px) {
             .consent-landing {
@@ -927,6 +1093,59 @@
                         Review Document
                     </button>
                     <a href="#" id="link-decline" class="link-decline">Decline to Sign</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UX-004: Expiry Page -->
+    <div id="expiry-page" class="expiry-page hidden">
+        <div class="expiry-container">
+            <div class="expiry-header">
+                <div class="expiry-icon clock-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                </div>
+                <h2>Signing Link Expired</h2>
+            </div>
+
+            <div class="expiry-body">
+                <p class="expiry-message">
+                    This signing link has expired. Don't worry - you can request a new link
+                    from the sender to complete your signature.
+                </p>
+
+                <div class="expiry-document-info">
+                    <div class="info-row">
+                        <span class="info-label">Document:</span>
+                        <span id="expired-document-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">From:</span>
+                        <span id="expired-sender-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Sender Email:</span>
+                        <span id="expired-sender-email" class="info-value">-</span>
+                    </div>
+                </div>
+
+                <div class="expiry-actions">
+                    <button id="btn-request-new-link" class="btn btn-primary">
+                        Request New Link
+                    </button>
+                    <div id="request-sent-success" class="request-sent-message hidden">
+                        Your request has been sent. The sender will receive an email
+                        and can send you a new signing link.
+                    </div>
+                </div>
+
+                <div class="expiry-contact">
+                    <p>Or contact the sender directly at
+                        <a id="expired-sender-email-link" href="mailto:"></a>
+                    </p>
                 </div>
             </div>
         </div>

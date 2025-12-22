@@ -1,10 +1,15 @@
-// PDF Tools - Single Page App
+// PDFJoin - Single Page App
 // Uses window.wasmBindings from Trunk-injected WASM loader
 
 const { PdfJoinSession, SessionMode, format_bytes } = window.wasmBindings;
 
+// Size thresholds
+const LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024; // 50 MB
+const VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024; // 100 MB
+
 let splitSession = null;
 let mergeSession = null;
+let splitOriginalFilename = null; // Track original filename for smart naming
 
 export function init() {
     // Initialize WASM sessions
@@ -20,7 +25,7 @@ export function init() {
     setupSplitView();
     setupMergeView();
 
-    console.log('PDF Tools initialized (WASM-first architecture)');
+    console.log('PDFJoin initialized (WASM-first architecture)');
 }
 
 // ============ Tab Navigation ============
@@ -82,8 +87,20 @@ function setupSplitView() {
 
 async function handleSplitFile(file) {
     try {
+        // Check file size and warn if large
+        if (file.size > VERY_LARGE_FILE_WARNING_BYTES) {
+            if (!confirm(`This file is ${format_bytes(file.size)} which is very large. Processing may be slow or fail on some devices. Continue?`)) {
+                return;
+            }
+        } else if (file.size > LARGE_FILE_WARNING_BYTES) {
+            console.warn(`Large file: ${format_bytes(file.size)} - processing may take longer`);
+        }
+
         const bytes = new Uint8Array(await file.arrayBuffer());
         const info = splitSession.addDocument(file.name, bytes);
+
+        // Store original filename for smart output naming
+        splitOriginalFilename = file.name.replace(/\.pdf$/i, '');
 
         // Update UI
         document.getElementById('split-drop-zone').classList.add('hidden');
@@ -103,6 +120,7 @@ async function handleSplitFile(file) {
 
 function resetSplitView() {
     splitSession.removeDocument(0);
+    splitOriginalFilename = null;
 
     document.getElementById('split-drop-zone').classList.remove('hidden');
     document.getElementById('split-editor').classList.add('hidden');
@@ -128,13 +146,17 @@ function validateRange() {
 async function executeSplit() {
     const splitBtn = document.getElementById('split-btn');
     const progress = document.getElementById('split-progress');
+    const rangeInput = document.getElementById('page-range');
 
     splitBtn.disabled = true;
     progress.classList.remove('hidden');
 
     try {
         const result = splitSession.execute();
-        downloadBlob(result, 'split.pdf');
+        // Smart filename: original-pages-1-3,5.pdf
+        const range = rangeInput.value.replace(/\s+/g, '').replace(/,/g, '_');
+        const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
+        downloadBlob(result, filename);
     } catch (e) {
         alert('Split failed: ' + e);
     } finally {
@@ -189,6 +211,13 @@ async function handleMergeFiles(files) {
     for (const file of files) {
         if (file.type !== 'application/pdf') continue;
 
+        // Check file size and warn if large
+        if (file.size > VERY_LARGE_FILE_WARNING_BYTES) {
+            if (!confirm(`"${file.name}" is ${format_bytes(file.size)} which is very large. Processing may be slow. Continue?`)) {
+                continue;
+            }
+        }
+
         try {
             const bytes = new Uint8Array(await file.arrayBuffer());
             mergeSession.addDocument(file.name, bytes);
@@ -209,8 +238,10 @@ function updateMergeFileList() {
     document.getElementById('merge-drop-zone').classList.toggle('hidden', hasFiles);
     document.getElementById('merge-file-list').classList.toggle('hidden', !hasFiles);
 
-    // Update count
-    document.getElementById('merge-count').textContent = `(${count})`;
+    // Update count and total size
+    const totalSize = infos.reduce((sum, info) => sum + info.size_bytes, 0);
+    const totalPages = infos.reduce((sum, info) => sum + info.page_count, 0);
+    document.getElementById('merge-count').textContent = `(${count} files, ${totalPages} pages, ${format_bytes(totalSize)})`;
 
     // Update file list
     const ul = document.getElementById('merge-files');
@@ -298,7 +329,10 @@ async function executeMerge() {
 
     try {
         const result = mergeSession.execute();
-        downloadBlob(result, 'merged.pdf');
+        // Smart filename: merged-3-files.pdf
+        const count = mergeSession.getDocumentCount();
+        const filename = `merged-${count}-files.pdf`;
+        downloadBlob(result, filename);
     } catch (e) {
         alert('Merge failed: ' + e);
     } finally {

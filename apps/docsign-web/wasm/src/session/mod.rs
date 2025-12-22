@@ -277,6 +277,22 @@ impl SigningSession {
         }
     }
 
+    // ============================================================
+    // UX-004: Session Expiry methods
+    // ============================================================
+
+    /// Mark the session as expired
+    #[wasm_bindgen]
+    pub fn set_expired(&mut self) {
+        self.status = SessionStatus::Expired;
+    }
+
+    /// Check if the session has expired
+    #[wasm_bindgen]
+    pub fn is_expired(&self) -> bool {
+        self.status == SessionStatus::Expired
+    }
+
     /// Get session ID
     #[wasm_bindgen(getter)]
     pub fn session_id(&self) -> String {
@@ -342,11 +358,16 @@ impl SigningSession {
         self.completed_fields.contains(field_id)
     }
 
-    /// Check if all required fields are completed and session is not declined
+    /// Check if all required fields are completed and session is not declined or expired
     #[wasm_bindgen]
     pub fn can_finish(&self) -> bool {
         // Cannot finish if session is declined (UX-002)
         if self.is_declined() {
+            return false;
+        }
+
+        // Cannot finish if session is expired (UX-004)
+        if self.is_expired() {
             return false;
         }
 
@@ -795,5 +816,72 @@ mod tests {
         // Verify offline queue works - this is existing functionality
         let session = SigningSession::new("sess_123", "r1", "key_abc");
         assert_eq!(session.completed_field_count(), 0);
+    }
+
+    // ============================================================
+    // UX-004: Session Expiry & Resend Tests
+    // ============================================================
+
+    #[test]
+    fn test_session_status_includes_expired() {
+        // UX-004: SessionStatus must include Expired variant
+        let status = SessionStatus::Expired;
+        assert_eq!(
+            match status {
+                SessionStatus::Expired => "expired",
+                _ => "other",
+            },
+            "expired"
+        );
+    }
+
+    #[test]
+    fn test_expired_session_data_serialization() {
+        // UX-004: SigningSessionData with expired status should serialize correctly
+        let data = SigningSessionData {
+            session_id: "sess_123".to_string(),
+            recipient_id: "r1".to_string(),
+            signing_key: "key_abc".to_string(),
+            document_name: "Contract.pdf".to_string(),
+            fields: vec![],
+            completed_fields: vec![],
+            created_at: 1234567890.0,
+            sender_name: "Alice Smith".to_string(),
+            sender_email: "alice@example.com".to_string(),
+            sent_at: "2025-12-21T12:00:00Z".to_string(),
+            status: SessionStatus::Expired,
+        };
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&data).expect("Should serialize");
+        assert!(json.contains("\"status\":\"expired\""));
+
+        let deserialized: SigningSessionData =
+            serde_json::from_str(&json).expect("Should deserialize");
+        assert_eq!(deserialized.status, SessionStatus::Expired);
+    }
+
+    #[test]
+    fn test_expired_session_blocks_signing() {
+        // UX-004: An expired session cannot be signed
+        let mut session = SigningSession::new("sess_123", "r1", "key_abc");
+
+        // Manually set status to expired
+        session.set_expired();
+
+        // Should be marked as expired
+        assert!(session.is_expired());
+
+        // Cannot sign an expired session
+        assert!(!session.can_finish());
+    }
+
+    #[test]
+    fn test_get_status_returns_expired() {
+        // UX-004: get_status() should return "expired" for expired sessions
+        let mut session = SigningSession::new("sess_123", "r1", "key_abc");
+        session.set_expired();
+
+        assert_eq!(session.get_status(), "expired");
     }
 }
