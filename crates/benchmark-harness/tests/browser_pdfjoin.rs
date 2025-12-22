@@ -1592,3 +1592,123 @@ async fn test_pdfjoin_merge_drag_drop_additional_files() {
         result["fileCountAfter"]
     );
 }
+
+/// Bug test: When using the browse button and selecting multiple files at once
+/// (e.g., Cmd+click or Shift+click in the file picker), ALL selected files
+/// should be added to the merge list, not just the last one.
+/// Bug: Currently only the last selected PDF is added when selecting multiple files.
+#[tokio::test]
+async fn test_pdfjoin_merge_browse_multiple_files() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Create three test PDFs with different page counts to distinguish them
+    let pdf1_b64 = test_pdf_base64(1);
+    let pdf2_b64 = test_pdf_base64(2);
+    let pdf3_b64 = test_pdf_base64(3);
+
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to merge tab
+                document.querySelector('[data-tab="merge"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Create test PDF bytes for 3 different files
+                function decodeB64(b64) {{
+                    const binary = atob(b64);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let i = 0; i < binary.length; i++) {{
+                        bytes[i] = binary.charCodeAt(i);
+                    }}
+                    return bytes;
+                }}
+
+                const pdf1Bytes = decodeB64("{}");
+                const pdf2Bytes = decodeB64("{}");
+                const pdf3Bytes = decodeB64("{}");
+
+                // Simulate selecting multiple files at once via file input
+                // This is what happens when user uses Cmd+click or Shift+click
+                const fileInput = document.getElementById('merge-file-input');
+                const dataTransfer = new DataTransfer();
+
+                // Add all 3 files to the DataTransfer (simulating multi-select)
+                const file1 = new File([pdf1Bytes], 'first.pdf', {{ type: 'application/pdf' }});
+                const file2 = new File([pdf2Bytes], 'second.pdf', {{ type: 'application/pdf' }});
+                const file3 = new File([pdf3Bytes], 'third.pdf', {{ type: 'application/pdf' }});
+
+                dataTransfer.items.add(file1);
+                dataTransfer.items.add(file2);
+                dataTransfer.items.add(file3);
+
+                // Set the files and trigger change event
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for UI to update
+                await new Promise(r => setTimeout(r, 500));
+
+                // Count how many files were added to the merge list
+                const fileListItems = document.querySelectorAll('#merge-files li');
+                const fileCount = fileListItems.length;
+
+                // Get the file names that were added
+                const fileNames = Array.from(fileListItems).map(li =>
+                    li.querySelector('.file-name')?.textContent || ''
+                );
+
+                return {{
+                    success: true,
+                    filesSelected: 3,
+                    filesAdded: fileCount,
+                    fileNames: fileNames,
+                    allFilesAdded: fileCount === 3
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf1_b64, pdf2_b64, pdf3_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test multi-file browse")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Multi-file browse test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let files_selected = result["filesSelected"].as_i64().unwrap_or(0);
+    let files_added = result["filesAdded"].as_i64().unwrap_or(0);
+
+    assert_eq!(
+        files_added, files_selected,
+        "BUG: Selected {} files via browse button but only {} were added to merge list. \
+         File names added: {:?}. All selected files should be added.",
+        files_selected, files_added, result["fileNames"]
+    );
+}

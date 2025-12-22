@@ -297,7 +297,10 @@ function setupMergeView() {
 }
 
 async function handleMergeFiles(files) {
-    for (const file of files) {
+    // Convert FileList to array to ensure proper iteration
+    // FileList is a live collection and for...of may not iterate all items
+    const fileArray = Array.from(files);
+    for (const file of fileArray) {
         if (file.type !== 'application/pdf') continue;
 
         // Check file size and warn if large
