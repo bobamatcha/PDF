@@ -81,6 +81,70 @@ export class GuidedSigningFlow {
                 }
             }
         });
+
+        // Swipe gesture navigation (UX-005 mobile optimization)
+        this._initSwipeGestures();
+    }
+
+    /**
+     * Initialize swipe gesture navigation for mobile
+     * Swipe left = next field, Swipe right = previous field
+     */
+    _initSwipeGestures() {
+        const viewerContainer = document.querySelector('.viewer-container');
+        if (!viewerContainer) return;
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchEndX = 0;
+        let touchEndY = 0;
+
+        const minSwipeDistance = 50; // Minimum distance for swipe
+        const maxVerticalDistance = 100; // Maximum vertical movement to count as horizontal swipe
+
+        viewerContainer.addEventListener('touchstart', (e) => {
+            if (!this.active) return;
+
+            // Ignore if touching an input or button
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'CANVAS') {
+                return;
+            }
+
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        }, { passive: true });
+
+        viewerContainer.addEventListener('touchend', (e) => {
+            if (!this.active) return;
+
+            // Ignore if touching an input or button
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.tagName === 'CANVAS') {
+                return;
+            }
+
+            touchEndX = e.changedTouches[0].screenX;
+            touchEndY = e.changedTouches[0].screenY;
+
+            const horizontalDistance = touchEndX - touchStartX;
+            const verticalDistance = Math.abs(touchEndY - touchStartY);
+
+            // Only process if mostly horizontal swipe
+            if (verticalDistance > maxVerticalDistance) {
+                return;
+            }
+
+            // Swipe left (next)
+            if (horizontalDistance < -minSwipeDistance) {
+                this.next();
+            }
+            // Swipe right (previous)
+            else if (horizontalDistance > minSwipeDistance) {
+                this.back();
+            }
+        }, { passive: true });
+
+        // Mark container as swipe-enabled for tests
+        viewerContainer.dataset.swipeEnabled = 'true';
     }
 
     _setupFieldClickHandlers() {

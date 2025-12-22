@@ -11,11 +11,13 @@ members = [
     "crates/docsign-core",
     "crates/typst-engine",
     "crates/benchmark-harness",
+    "crates/pdfjoin-core",
 
     # Apps
     "apps/agentpdf-web/wasm",
     "apps/docsign-web/wasm",
     "apps/docsign-web/worker",
+    "apps/pdfjoin-web/wasm",
     # "apps/corpus-api",         # Blocked: depends on corpus-core
     "apps/mcp-server",
 ]
@@ -142,6 +144,7 @@ corpus-core = { path = "crates/corpus-core" }
 docsign-core = { path = "crates/docsign-core" }
 typst-engine = { path = "crates/typst-engine" }
 benchmark-harness = { path = "crates/benchmark-harness" }
+pdfjoin-core = { path = "crates/pdfjoin-core" }
 
 [profile.release]
 opt-level = "z"  # Smallest size (was "s")

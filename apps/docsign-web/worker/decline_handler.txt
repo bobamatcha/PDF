@@ -1,0 +1,55 @@
+async fn handle_decline(session_id: &str, mut req: Request, env: Env) -> Result<Response> {
+    let body: DeclineRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Mark recipient as declined
+            for r in s.recipients.iter_mut() {
+                if r.id == body.recipient_id {
+                    // Mark as "declined" using signed_at field with special prefix
+                    r.signed = false;
+                    r.signed_at = Some(format!("DECLINED:{}", chrono::Utc::now().to_rfc3339()));
+                }
+            }
+
+            // Log decline event
+            console_log!(
+                "Document declined by recipient {} with reason: {}",
+                body.recipient_id,
+                body.reason.as_deref().unwrap_or("No reason provided")
+            );
+
+            // Save updated session
+            let session_json = serde_json::to_string(&s)
+                .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
+
+            kv.put(&format!("session:{}", session_id), session_json)?
+                .execute()
+                .await?;
+
+            cors_response(Response::from_json(&DeclineResponse {
+                success: true,
+                message: "Document declined successfully".to_string(),
+            }))
+        }
+        None => cors_response(Ok(Response::from_json(&DeclineResponse {
+            success: false,
+            message: "Session not found".to_string(),
+        })?
+        .with_status(404))),
+    }
+}

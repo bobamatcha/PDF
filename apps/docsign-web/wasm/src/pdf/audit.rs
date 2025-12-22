@@ -31,6 +31,9 @@ pub struct AuditEvent {
     pub previous_hash: Option<String>,
     pub details: Option<String>,
     pub signature: Option<String>,
+    /// Reason for decline (only populated for Decline actions)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decline_reason: Option<String>,
 }
 
 impl AuditEvent {
@@ -52,6 +55,28 @@ impl AuditEvent {
             previous_hash,
             details,
             signature: None,
+            decline_reason: None,
+        }
+    }
+
+    /// Create a new decline event with optional reason
+    pub fn new_decline(
+        actor_email: &str,
+        document_hash: &str,
+        previous_hash: Option<String>,
+        reason: Option<String>,
+    ) -> Self {
+        Self {
+            event_id: Uuid::new_v4().to_string(),
+            timestamp: Utc::now().to_rfc3339(),
+            action: AuditAction::Decline,
+            actor_email: actor_email.to_string(),
+            actor_ip_hash: None,
+            document_hash: document_hash.to_string(),
+            previous_hash,
+            details: reason.as_ref().map(|r| format!("Document declined: {}", r)),
+            signature: None,
+            decline_reason: reason,
         }
     }
 
@@ -197,6 +222,81 @@ mod tests {
 
         // Chain should now fail verification
         assert!(chain.verify().is_err());
+    }
+
+    // UX-002: Accept/Decline Flow Tests
+    #[test]
+    fn test_decline_event_includes_reason() {
+        let event = AuditEvent::new_decline(
+            "alice@example.com",
+            "hash1",
+            None,
+            Some("Not ready to sign yet".to_string()),
+        );
+
+        assert_eq!(event.action, AuditAction::Decline);
+        assert_eq!(
+            event.decline_reason,
+            Some("Not ready to sign yet".to_string())
+        );
+        assert!(event.details.is_some());
+        assert!(event
+            .details
+            .as_ref()
+            .unwrap()
+            .contains("Document declined"));
+    }
+
+    #[test]
+    fn test_decline_event_without_reason() {
+        let event = AuditEvent::new_decline("bob@example.com", "hash2", None, None);
+
+        assert_eq!(event.action, AuditAction::Decline);
+        assert_eq!(event.decline_reason, None);
+    }
+
+    #[test]
+    fn test_decline_event_serialization() {
+        let event = AuditEvent::new_decline(
+            "charlie@example.com",
+            "hash3",
+            None,
+            Some("Terms are not acceptable".to_string()),
+        );
+
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: AuditEvent = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.action, AuditAction::Decline);
+        assert_eq!(
+            deserialized.decline_reason,
+            Some("Terms are not acceptable".to_string())
+        );
+    }
+
+    #[test]
+    fn test_decline_in_audit_chain() {
+        let mut chain = AuditChain::new("test-doc-decline");
+
+        chain.append(AuditAction::Upload, "sender@example.com", "hash1", None);
+        chain.append(AuditAction::Send, "sender@example.com", "hash1", None);
+
+        // Add decline event with reason
+        let decline_event = AuditEvent::new_decline(
+            "recipient@example.com",
+            "hash1",
+            chain.last_hash(),
+            Some("I need more time to review".to_string()),
+        );
+        chain.events.push(decline_event);
+
+        assert!(chain.verify().is_ok());
+        assert_eq!(chain.events.len(), 3);
+        assert_eq!(chain.events[2].action, AuditAction::Decline);
+        assert_eq!(
+            chain.events[2].decline_reason,
+            Some("I need more time to review".to_string())
+        );
     }
 }
 

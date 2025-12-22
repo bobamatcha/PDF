@@ -34,3 +34,5 @@ proptest = { workspace = true }
 tracing-subscriber = "0.3"
 reqwest = "0.12"
 regex = "1"
+pdfjoin-core = { path = "../pdfjoin-core" }
+lopdf = { workspace = true }

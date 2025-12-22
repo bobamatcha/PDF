@@ -6,6 +6,281 @@
 
 ---
 
+## 🔧 PDF SPLIT/MERGE TOOLS (Priority Feature)
+
+> **Research Foundation**: See [PDFJOIN_RESEARCH.md](./PDFJOIN_RESEARCH.md) for full architectural details.
+
+### Overview
+
+Add client-side PDF Split and Merge capabilities as a new `pdfjoin-web` app, exposed at:
+- `agentpdf.org/split` - Extract pages from PDFs
+- `agentpdf.org/merge` - Combine multiple PDFs
+
+**Key Principles:**
+- All processing in-browser via Rust/WASM (zero server costs, total privacy)
+- Web Worker architecture (non-blocking UI)
+- Generic Command Pattern (extensible for future tools: rotate, watermark, compress)
+- Isolated analytics for spin-off evaluation
+
+### Test-First Implementation Flow
+
+Following [CLAUDE.md](./CLAUDE.md) guidelines, each feature follows the test-first approach:
+
+1. **Write Failing Tests** - Prove the feature is missing
+2. **Confirm Failure** - Run `cargo test --all-features --workspace`
+3. **Implement** - Minimal code to pass tests
+4. **Confirm Pass** - All tests green
+5. **Verify with Puppeteer** - Browser validation
+6. **Fix Tests if Needed** - If Puppeteer reveals bugs, tests were wrong
+
+### Implementation Phases (Parallelizable Tasks Marked with ⚡)
+
+#### Phase 1: Foundation (Parallel Subagents Possible)
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| ⚡ Create `apps/pdfjoin-web/` scaffold | Structure | Yes | N/A |
+| ⚡ Create `crates/pdfjoin-core/` with lopdf integration | Rust | Yes | Yes |
+| ⚡ Design command protocol types | Types | Yes | Yes |
+| Wire up Trunk.toml and WASM build | Build | No (depends on scaffold) | N/A |
+
+**Phase 1 Tests (Write First):**
+```rust
+// crates/pdfjoin-core/src/lib.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_pdf_returns_page_count() {
+        let bytes = include_bytes!("../fixtures/sample-3page.pdf");
+        let doc = parse_pdf(bytes).unwrap();
+        assert_eq!(doc.page_count(), 3);
+    }
+
+    #[test]
+    fn test_command_deserializes_merge() {
+        let json = r#"{"type":"Merge","files":[]}"#;
+        let cmd: PdfCommand = serde_json::from_str(json).unwrap();
+        assert!(matches!(cmd, PdfCommand::Merge { .. }));
+    }
+}
+```
+
+#### Phase 2: Merge Engine
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| Implement ID renumbering algorithm | Core | No | Yes |
+| Implement page tree grafting | Core | No | Yes |
+| ⚡ Add stream compression | Optimization | Yes | Yes |
+| ⚡ Add standard font deduplication | Optimization | Yes | Yes |
+
+**Phase 2 Tests (Write First):**
+```rust
+#[test]
+fn test_merge_two_documents_combines_pages() {
+    let doc_a = load_fixture("2page.pdf"); // 2 pages
+    let doc_b = load_fixture("3page.pdf"); // 3 pages
+    let merged = merge_documents(vec![doc_a, doc_b]).unwrap();
+    assert_eq!(merged.page_count(), 5);
+}
+
+#[test]
+fn test_merge_preserves_content() {
+    let doc_a = load_fixture("text-hello.pdf");
+    let doc_b = load_fixture("text-world.pdf");
+    let merged = merge_documents(vec![doc_a, doc_b]).unwrap();
+    let text = extract_text(&merged);
+    assert!(text.contains("Hello"));
+    assert!(text.contains("World"));
+}
+
+#[test]
+fn test_merge_no_id_collisions() {
+    let doc_a = load_fixture("complex-a.pdf");
+    let doc_b = load_fixture("complex-b.pdf");
+    let merged = merge_documents(vec![doc_a, doc_b]).unwrap();
+    // Verify no duplicate ObjectIds
+    assert!(merged.validate_object_ids().is_ok());
+}
+```
+
+#### Phase 3: Split Engine
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| Implement dependency graph traversal | Core | No | Yes |
+| Implement "Construction by Whitelist" | Core | No | Yes |
+| ⚡ Range parsing (e.g., "1-3, 5, 8-10") | Utility | Yes | Yes |
+| ⚡ Page tree rebuilding | Core | Yes | Yes |
+
+**Phase 3 Tests (Write First):**
+```rust
+#[test]
+fn test_split_extracts_single_page() {
+    let doc = load_fixture("5page.pdf");
+    let split = split_document(doc, vec![3]).unwrap();
+    assert_eq!(split.page_count(), 1);
+}
+
+#[test]
+fn test_split_extracts_range() {
+    let doc = load_fixture("10page.pdf");
+    let split = split_document(doc, vec![2, 3, 4, 5]).unwrap();
+    assert_eq!(split.page_count(), 4);
+}
+
+#[test]
+fn test_split_removes_unused_resources() {
+    let doc = load_fixture("large-with-fonts.pdf");
+    let original_size = doc.to_bytes().len();
+    let split = split_document(doc, vec![1]).unwrap(); // First page only
+    let split_size = split.to_bytes().len();
+    // Split should be significantly smaller
+    assert!(split_size < original_size / 2);
+}
+
+#[test]
+fn test_range_parsing() {
+    let ranges = parse_ranges("1-3, 5, 8-10").unwrap();
+    assert_eq!(ranges, vec![1, 2, 3, 5, 8, 9, 10]);
+}
+```
+
+#### Phase 4: WASM & Web Worker Integration
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| WASM bindings for `process_pdf` | WASM | No | Yes |
+| ⚡ Web Worker message protocol | JS | Yes | Yes |
+| ⚡ Progress event emission | JS | Yes | Yes |
+| Transferable Objects optimization | JS | No | Manual test |
+
+**Phase 4 Tests:**
+```rust
+// WASM-level tests
+#[wasm_bindgen_test]
+fn test_process_pdf_merge_command() {
+    let cmd = r#"{"type":"Merge","files":["base64...", "base64..."]}"#;
+    let result = process_pdf(cmd);
+    let parsed: ProcessResult = serde_wasm_bindgen::from_value(result).unwrap();
+    assert!(parsed.success);
+}
+```
+
+#### Phase 5: UI Implementation (Parallel Subagents Possible)
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| ⚡ Split UI with PDF.js thumbnails | Frontend | Yes | Puppeteer |
+| ⚡ Merge UI with drag-drop reorder | Frontend | Yes | Puppeteer |
+| ⚡ Progress bar component | Frontend | Yes | Puppeteer |
+| ⚡ Cross-links between /split and /merge | Frontend | Yes | Puppeteer |
+| Unified drop zone logic | Frontend | No | Puppeteer |
+
+#### Phase 6: Analytics & Polish
+
+| Task | Type | Parallelizable | Test First |
+|------|------|----------------|------------|
+| ⚡ Implement isolated analytics namespace | Analytics | Yes | Unit test |
+| ⚡ Add processing metrics collection | Analytics | Yes | Unit test |
+| ⚡ Add error tracking (OOM detection) | Analytics | Yes | Unit test |
+| Integration with agentpdf.org routing | Deploy | No | E2E |
+
+### Crate Structure
+
+```
+apps/
+├── agentpdf-web/          # Existing
+├── docsign-web/           # Existing
+└── pdfjoin-web/           # NEW
+    ├── Cargo.toml
+    ├── Trunk.toml
+    ├── wasm/
+    │   ├── Cargo.toml
+    │   └── src/lib.rs
+    └── www/
+        ├── split.html     # /split route
+        ├── merge.html     # /merge route
+        └── js/worker.js
+
+crates/
+├── ...existing...
+└── pdfjoin-core/          # NEW - lopdf-based manipulation
+    ├── Cargo.toml
+    └── src/
+        ├── lib.rs
+        ├── merge.rs
+        ├── split.rs
+        └── command.rs
+```
+
+### Dependencies
+
+```toml
+# crates/pdfjoin-core/Cargo.toml
+[dependencies]
+lopdf = { version = "0.32", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+
+# apps/pdfjoin-web/wasm/Cargo.toml
+[dependencies]
+pdfjoin-core = { path = "../../../crates/pdfjoin-core" }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1.7"
+```
+
+### Subagent Delegation Guide
+
+When implementing with Claude Code, delegate these task groups to parallel subagents:
+
+**Subagent Group A: Core Library**
+- Create `crates/pdfjoin-core/`
+- Implement merge algorithm with tests
+- Implement split algorithm with tests
+
+**Subagent Group B: WASM Bindings**
+- Create `apps/pdfjoin-web/wasm/`
+- Implement `process_pdf` entry point
+- Add WASM-specific tests
+
+**Subagent Group C: Web UI**
+- Create `apps/pdfjoin-web/www/`
+- Implement Split UI with PDF.js
+- Implement Merge UI with drag-drop
+
+**Subagent Group D: Integration**
+- Configure Trunk.toml
+- Set up routing
+- Add analytics hooks
+
+### Quick Reference Commands
+
+```bash
+# Run all pdfjoin tests
+cargo test -p pdfjoin-core --all-features
+
+# Build WASM
+cd apps/pdfjoin-web && trunk build
+
+# Serve for development
+cd apps/pdfjoin-web && trunk serve --port 8082
+
+# Full workspace check
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features --workspace
+```
+
+---
+
 ## 🎯 TAMPA DEMO PRIORITY (January 2026)
 
 > **Goal:** Ship a comprehensive, featureful demo for Tampa Bay real estate meetups covering all three contract types: **Lease**, **Purchase**, and **Listing**.

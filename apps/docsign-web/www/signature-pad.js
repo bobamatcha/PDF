@@ -29,13 +29,33 @@ export class SignaturePad {
         // Set canvas size to match display size
         const rect = this.canvas.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
-        this.canvas.width = rect.width * dpr;
-        this.canvas.height = rect.height * dpr;
+
+        // Mobile optimization (UX-005): Adjust height based on viewport
+        let width = rect.width;
+        let height = rect.height;
+
+        // On mobile devices, ensure proper dimensions
+        if (window.innerWidth < 768) {
+            width = rect.width || window.innerWidth - 32; // Account for padding
+            height = Math.max(height, 250); // Minimum height on mobile
+
+            // Update canvas element size if needed
+            if (this.canvas.style.width === '') {
+                this.canvas.style.width = '100%';
+            }
+            if (this.canvas.style.height === '') {
+                this.canvas.style.height = height + 'px';
+            }
+        }
+
+        this.canvas.width = width * dpr;
+        this.canvas.height = height * dpr;
         this.ctx.scale(dpr, dpr);
 
-        // Style
+        // Style - thicker pen on mobile for better touch input
+        const isMobile = window.innerWidth < 768;
         this.ctx.strokeStyle = this.penColor;
-        this.ctx.lineWidth = this.penWidth;
+        this.ctx.lineWidth = isMobile ? Math.max(this.penWidth, 3) : this.penWidth;
         this.ctx.lineCap = 'round';
         this.ctx.lineJoin = 'round';
 
@@ -83,9 +103,11 @@ export class SignaturePad {
         this.lastY = pos.y;
         this.points = [pos];
 
-        // Draw a dot for single clicks
+        // Draw a dot for single clicks (larger on mobile)
+        const isMobile = window.innerWidth < 768;
+        const dotRadius = isMobile ? Math.max(this.penWidth, 3) / 2 : this.penWidth / 2;
         this.ctx.beginPath();
-        this.ctx.arc(pos.x, pos.y, this.penWidth / 2, 0, Math.PI * 2);
+        this.ctx.arc(pos.x, pos.y, dotRadius, 0, Math.PI * 2);
         this.ctx.fill();
     }
 

@@ -335,6 +335,8 @@ dependencies = [
  "chromiumoxide",
  "chrono",
  "futures",
+ "lopdf 0.33.0",
+ "pdfjoin-core",
  "proptest",
  "regex",
  "reqwest",
@@ -2805,6 +2807,35 @@ dependencies = [
  "tiff",
  "ttf-parser",
  "weezl",
+]
+
+[[package]]
+name = "pdfjoin-core"
+version = "0.1.0"
+dependencies = [
+ "lopdf 0.33.0",
+ "pretty_assertions",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "pdfjoin-wasm"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "lopdf 0.33.0",
+ "pdfjoin-core",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
 ]
 
 [[package]]

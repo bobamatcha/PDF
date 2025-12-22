@@ -2,7 +2,55 @@
 
 > **Development Guidelines**: See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
 
-Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with two deployable web applications.
+Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with three deployable web applications.
+
+<!-- BENCHMARK_RESULTS_START -->
+## Performance Benchmarks
+
+> **Last updated**: 2025-12-21 19:36 UTC
+>
+> Run `./scripts/update-benchmarks.sh` to refresh these results.
+
+### WASM Bundle Sizes
+
+| App | Bundle Size | Description |
+|-----|-------------|-------------|
+| **pdfjoin-web** | **327 KB** | PDF split/merge only |
+| docsign-web | 3.0 MB | Document signing + crypto |
+| agentpdf-web | 75 MB | Full Typst template engine |
+
+### Core Web Vitals
+
+| App | LCP (p95) | CLS | INP | Status |
+|-----|-----------|-----|-----|--------|
+| **pdfjoin-web** | **80ms** | 0.000 | 24ms | PASS |
+| agentpdf-web | 396ms | 0.050 | — | PASS |
+| docsign-web | — | — | — | Not tested |
+
+**Thresholds**: LCP < 500ms, CLS < 0.1, INP < 100ms
+
+### Running Benchmarks
+
+```bash
+# Build all apps first
+cd apps/agentpdf-web && trunk build --release && cd ../..
+cd apps/docsign-web && trunk build --release && cd ../..
+cd apps/pdfjoin-web && trunk build --release && cd ../..
+
+# Start servers (in separate terminals)
+cd apps/agentpdf-web && trunk serve --port 8080
+cd apps/docsign-web && trunk serve --port 8081
+cd apps/pdfjoin-web && trunk serve --port 8082
+
+# Update README with latest results
+./scripts/update-benchmarks.sh
+
+# Or run individual benchmarks manually
+cargo run -p benchmark-harness --example run_benchmark -- crates/benchmark-harness/scenarios/pdfjoin.toml
+cargo run -p benchmark-harness --example run_benchmark -- crates/benchmark-harness/scenarios/agentpdf.toml
+```
+
+<!-- BENCHMARK_RESULTS_END -->
 
 ## Documentation
 
@@ -26,10 +74,11 @@ cargo test --all-features --workspace
 
 ## Deployable Sites
 
-| Domain | Purpose | Source |
-|--------|---------|--------|
-| **agentPDF.org** | Compliance checking + template population | agentPDF-web + corpus-server |
-| **getsignatures.org** | Standalone digital signatures | docsign-web |
+| Domain | Purpose | Bundle Size | Source |
+|--------|---------|-------------|--------|
+| **agentPDF.org** | Compliance checking + template population | 75 MB | agentpdf-web |
+| **getsignatures.org** | Standalone digital signatures | 3.0 MB | docsign-web |
+| **pdfjoin** | PDF split & merge tools | 327 KB | pdfjoin-web |
 
 ## Crate Structure
 
@@ -40,15 +89,20 @@ crates/                     # Shared libraries
 ├── shared-crypto/          # ECDSA P-256, CMS/PKCS#7, certificates, TSA
 ├── compliance-engine/      # 16-state landlord-tenant rules (227 tests)
 ├── docsign-core/           # PAdES signing, audit chain
-└── typst-engine/           # Typst rendering + 3 embedded templates
+├── pdfjoin-core/           # PDF split/merge algorithms
+├── typst-engine/           # Typst rendering + 3 embedded templates
+└── benchmark-harness/      # Performance benchmarking framework
 
 apps/                       # Deployable applications
-├── agentpdf-web/           # agentPDF.org (WASM + static site)
+├── agentpdf-web/           # agentPDF.org (WASM 75MB - full Typst engine)
 │   ├── wasm/               # WASM bindings
 │   └── www/                # Static assets
-├── docsign-web/            # getsignatures.org (WASM + static site)
+├── docsign-web/            # getsignatures.org (WASM 3MB - signing + crypto)
 │   ├── wasm/               # WASM bindings
 │   └── www/                # Static assets
+├── pdfjoin-web/            # PDF tools (WASM 327KB - split/merge only)
+│   ├── wasm/               # WASM bindings (session, validation, page_info)
+│   └── www/                # Static assets (SPA with tabs)
 └── mcp-server/             # Claude Desktop MCP (stdio + HTTP transport)
 ```
 
@@ -126,13 +180,17 @@ Trunk handles WASM compilation, bundling, and serving with hot reload.
 # Install trunk (if not already installed)
 cargo install trunk
 
-# agentPDF.org (port 8080)
+# agentPDF.org (port 8080) - 75MB WASM
 cd apps/agentpdf-web
 trunk serve --port 8080
 
-# getsignatures.org (port 8081)
+# getsignatures.org (port 8081) - 3MB WASM
 cd apps/docsign-web
 trunk serve --port 8081
+
+# PDF Tools (port 8082) - 327KB WASM
+cd apps/pdfjoin-web
+trunk serve --port 8082
 ```
 
 **Note**: Trunk reads `Trunk.toml` for configuration. The `target` field points to the input HTML file (`www/index.html`), and `dist` specifies the output directory (`www/dist`). Static files like `tampa.html` are copied via post-build hooks.
@@ -140,13 +198,18 @@ trunk serve --port 8081
 ### Build for Production
 
 ```bash
-# agentPDF.org
+# agentPDF.org (75MB WASM)
 cd apps/agentpdf-web
 trunk build --release
 # Output in www/dist/ (includes tampa.html landing page)
 
-# getsignatures.org
+# getsignatures.org (3MB WASM)
 cd apps/docsign-web
+trunk build --release
+# Output in www/dist/
+
+# PDF Tools (327KB WASM)
+cd apps/pdfjoin-web
 trunk build --release
 # Output in www/dist/
 ```
@@ -486,14 +549,15 @@ See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
 
 | Check | Status |
 |-------|--------|
-| **Tests** | ✅ 460+ passing (including property tests) |
+| **Tests** | ✅ 540+ passing (including property tests) |
 | **Clippy** | ✅ Clean (`-D warnings`) |
 | **Format** | ✅ Formatted |
-| **WASM** | ✅ Both apps compile (wasm-opt disabled) |
+| **WASM** | ✅ All 3 apps compile (agentpdf 75MB, docsign 3MB, pdfjoin 327KB) |
 | **Worker** | ✅ docsign-worker compiles (worker 0.7) |
-| **Demos** | ✅ Both verified with Puppeteer |
+| **Benchmarks** | ✅ All apps pass Core Web Vitals thresholds |
+| **Parity Tests** | ✅ wasm-opt config, viewport meta, optimization level |
 
-### Test Results: 510+ Tests Passing
+### Test Results: 540+ Tests Passing
 
 | Crate | Tests | Description |
 |-------|-------|-------------|
@@ -505,14 +569,16 @@ See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.
 | docsign-worker | 31 | Cloudflare Worker + session/magic link property tests |
 | shared-pdf | 30 | PDF parsing, coordinate transforms, signer |
 | mcp-server | 29 | MCP protocol, HTTP transport, REST API property tests |
+| pdfjoin-wasm | 24 | Session management, validation, split/merge regression tests |
 | shared-types | 22 | Document, Violation, ComplianceReport types |
+| pdfjoin-core | 6 | PDF split/merge algorithms |
 | docsign-core | 2 | PAdES signing, audit chain |
-| **Total** | **510+** | All tests passing (including property/fuzz tests) |
+| **Total** | **540+** | All tests passing (including property/fuzz tests) |
 
 ### All Components Compiling
 
-- **Shared Crates**: shared-types, shared-pdf, shared-crypto, compliance-engine, docsign-core, typst-engine
-- **WASM Apps**: agentpdf-wasm, docsign-wasm (wasm-opt disabled for bulk memory compatibility)
+- **Shared Crates**: shared-types, shared-pdf, shared-crypto, compliance-engine, docsign-core, pdfjoin-core, typst-engine, benchmark-harness
+- **WASM Apps**: agentpdf-wasm (75MB), docsign-wasm (3MB), pdfjoin-wasm (327KB)
 - **MCP Server**: stdio + HTTP transport (with `http` feature flag)
 - **Cloudflare Worker**: docsign-worker (upgraded to worker crate 0.7)
 

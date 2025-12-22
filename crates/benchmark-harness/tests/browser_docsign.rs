@@ -277,3 +277,221 @@ async fn test_docsign_mobile_touch_targets() {
         );
     }
 }
+
+// ============================================================================
+// UX-004: Session Expiry Page Tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_docsign_expiry_page_elements_exist() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8081");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    // Navigate to sign page with test session
+    page.goto("http://127.0.0.1:8081/sign.html?session=test&recipient=r1&key=test123")
+        .await
+        .expect("Should navigate to sign page");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check that expiry page elements exist in DOM
+    let expiry_elements: serde_json::Value = page
+        .evaluate(
+            r#"({
+            expiryPageExists: !!document.getElementById('expiry-page'),
+            hasExpiryIcon: !!document.querySelector('#expiry-page .expiry-icon'),
+            hasDocumentName: !!document.getElementById('expired-document-name'),
+            hasSenderName: !!document.getElementById('expired-sender-name'),
+            hasSenderEmail: !!document.getElementById('expired-sender-email'),
+            hasRequestButton: !!document.getElementById('btn-request-new-link'),
+            hasContactLink: !!document.getElementById('expired-sender-email-link'),
+            showExpiryPageFunction: typeof window.showExpiryPage === 'function',
+            handleRequestNewLinkFunction: typeof window.handleRequestNewLink === 'function'
+        })"#,
+        )
+        .await
+        .expect("Should evaluate JS")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("UX-004 Expiry page elements: {:?}", expiry_elements);
+
+    assert!(
+        expiry_elements["expiryPageExists"]
+            .as_bool()
+            .unwrap_or(false),
+        "Expiry page element should exist"
+    );
+    assert!(
+        expiry_elements["hasExpiryIcon"].as_bool().unwrap_or(false),
+        "Expiry icon should exist"
+    );
+    assert!(
+        expiry_elements["hasDocumentName"]
+            .as_bool()
+            .unwrap_or(false),
+        "Document name element should exist"
+    );
+    assert!(
+        expiry_elements["hasSenderName"].as_bool().unwrap_or(false),
+        "Sender name element should exist"
+    );
+    assert!(
+        expiry_elements["hasSenderEmail"].as_bool().unwrap_or(false),
+        "Sender email element should exist"
+    );
+    assert!(
+        expiry_elements["hasRequestButton"]
+            .as_bool()
+            .unwrap_or(false),
+        "Request New Link button should exist"
+    );
+    assert!(
+        expiry_elements["showExpiryPageFunction"]
+            .as_bool()
+            .unwrap_or(false),
+        "showExpiryPage function should be exposed"
+    );
+    assert!(
+        expiry_elements["handleRequestNewLinkFunction"]
+            .as_bool()
+            .unwrap_or(false),
+        "handleRequestNewLink function should be exposed"
+    );
+}
+
+#[tokio::test]
+async fn test_docsign_expiry_page_displays_correctly() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8081");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8081/sign.html?session=test&recipient=r1&key=test123")
+        .await
+        .expect("Should navigate to sign page");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Call showExpiryPage with mock data and verify display
+    let display_check: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+            window.showExpiryPage({
+                status: 'expired',
+                metadata: {
+                    filename: 'TestContract.pdf',
+                    created_by: 'Test Sender',
+                    sender_email: 'test@example.com'
+                }
+            });
+
+            const expiryPage = document.getElementById('expiry-page');
+            const isVisible = !expiryPage.classList.contains('hidden');
+            const docName = document.getElementById('expired-document-name')?.textContent;
+            const senderName = document.getElementById('expired-sender-name')?.textContent;
+            const senderEmail = document.getElementById('expired-sender-email')?.textContent;
+            const btn = document.getElementById('btn-request-new-link');
+            const btnRect = btn?.getBoundingClientRect();
+
+            return {
+                isVisible: isVisible,
+                documentName: docName,
+                senderName: senderName,
+                senderEmail: senderEmail,
+                buttonWidth: btnRect?.width || 0,
+                buttonHeight: btnRect?.height || 0
+            };
+        })()"#,
+        )
+        .await
+        .expect("Should check expiry page display")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("UX-004 Expiry page display: {:?}", display_check);
+
+    assert!(
+        display_check["isVisible"].as_bool().unwrap_or(false),
+        "Expiry page should be visible after showExpiryPage call"
+    );
+    assert_eq!(
+        display_check["documentName"].as_str().unwrap_or(""),
+        "TestContract.pdf",
+        "Document name should be displayed"
+    );
+    assert_eq!(
+        display_check["senderName"].as_str().unwrap_or(""),
+        "Test Sender",
+        "Sender name should be displayed"
+    );
+    assert_eq!(
+        display_check["senderEmail"].as_str().unwrap_or(""),
+        "test@example.com",
+        "Sender email should be displayed"
+    );
+    assert!(
+        display_check["buttonHeight"].as_f64().unwrap_or(0.0) >= 44.0,
+        "Request button should have minimum 44px touch target height"
+    );
+}
+
+#[tokio::test]
+async fn test_docsign_expiry_page_hidden_by_default() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8081");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8081/sign.html?session=test&recipient=r1&key=test123")
+        .await
+        .expect("Should navigate to sign page");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Check expiry page is hidden by default
+    let hidden_check: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+            const expiryPage = document.getElementById('expiry-page');
+            return {
+                hasHiddenClass: expiryPage?.classList.contains('hidden'),
+                computedDisplay: expiryPage ? getComputedStyle(expiryPage).display : 'none'
+            };
+        })()"#,
+        )
+        .await
+        .expect("Should check hidden state")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("UX-004 Expiry page hidden check: {:?}", hidden_check);
+
+    assert!(
+        hidden_check["hasHiddenClass"].as_bool().unwrap_or(false),
+        "Expiry page should have 'hidden' class by default"
+    );
+}
