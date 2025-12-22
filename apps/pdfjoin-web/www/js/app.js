@@ -110,9 +110,12 @@ async function handleSplitFile(file) {
         document.getElementById('split-file-details').textContent =
             `${info.page_count} pages - ${format_bytes(info.size_bytes)}`;
 
-        // Set default range
-        document.getElementById('page-range').value = `1-${info.page_count}`;
-        document.getElementById('split-btn').disabled = !splitSession.canExecute();
+        // Update example chips with page count
+        updateExampleChips(info.page_count);
+
+        // Don't auto-fill range - let placeholder show syntax examples
+        document.getElementById('page-range').value = '';
+        document.getElementById('split-btn').disabled = true;
     } catch (e) {
         showError('split-error', e.toString());
     }
@@ -170,6 +173,44 @@ function onSplitProgress(current, total, message) {
     const progressText = document.querySelector('#split-progress .progress-text');
     if (progressFill) progressFill.style.width = `${(current / total) * 100}%`;
     if (progressText) progressText.textContent = message;
+}
+
+function updateExampleChips(pageCount) {
+    const container = document.getElementById('range-chips');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // Generate dynamic chips based on page count
+    const chips = [];
+
+    if (pageCount >= 1) {
+        chips.push({ label: 'First page', range: '1' });
+    }
+    if (pageCount >= 5) {
+        chips.push({ label: 'First 5', range: '1-5' });
+    }
+    if (pageCount >= 3) {
+        const last3Start = pageCount - 2;
+        chips.push({ label: 'Last 3', range: `${last3Start}-${pageCount}` });
+    }
+    if (pageCount >= 1) {
+        chips.push({ label: 'All pages', range: `1-${pageCount}` });
+    }
+
+    chips.forEach(({ label, range }) => {
+        const chip = document.createElement('button');
+        chip.className = 'chip';
+        chip.type = 'button';
+        chip.textContent = label;
+        chip.dataset.range = range;
+        chip.addEventListener('click', () => {
+            const rangeInput = document.getElementById('page-range');
+            rangeInput.value = range;
+            validateRange();
+        });
+        container.appendChild(chip);
+    });
 }
 
 // ============ Merge View ============

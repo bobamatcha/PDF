@@ -473,4 +473,17 @@ mod tests {
             }
         }
     }
+
+    /// Test that get_page_count works with create_test_pdf generated PDFs
+    #[test]
+    fn test_get_page_count_with_generated_pdf() {
+        let pdf = create_test_pdf(7);
+        let result = crate::get_page_count(&pdf);
+        assert!(
+            result.is_ok(),
+            "get_page_count should work. Error: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), 7);
+    }
 }

@@ -63,6 +63,10 @@
         .range-input label { display: block; font-size: 0.9rem; margin-bottom: 0.25rem; color: var(--text-muted); }
         .range-input input { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; }
         .range-input input.invalid { border-color: var(--error); }
+        .range-hint { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+        .chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+        .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 0.25rem 0.75rem; font-size: 0.85rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+        .chip:hover { background: rgba(37, 99, 235, 0.1); border-color: var(--primary); }
 
         /* Buttons */
         .primary-btn { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
@@ -145,6 +149,8 @@
                     <div class="range-input">
                         <label for="page-range">Pages to extract:</label>
                         <input type="text" id="page-range" placeholder="e.g., 1-3, 5, 8-10">
+                        <small class="range-hint">Use commas for multiple ranges: 1-3, 5, 8-10</small>
+                        <div id="range-chips" class="chips"></div>
                     </div>
                     <button id="split-btn" class="primary-btn" disabled>Split PDF</button>
                 </div>

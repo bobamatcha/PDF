@@ -13,8 +13,4 @@ ignore = ["www/dist"]
 port = 8082
 open = false
 
-# Copy test PDFs from output/ for browser integration tests
-[[hooks]]
-stage = "post_build"
-command = "sh"
-command_arguments = ["-c", "cp ../../output/*.pdf www/dist/ 2>/dev/null || true"]
+# Test PDFs are symlinked in www/ and copied via index.html copy-file directives
