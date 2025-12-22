@@ -17,6 +17,7 @@ macro_rules! require_local_server {
             eprintln!("  To run these tests, start the server with:");
             eprintln!("    trunk serve --port 8080  (for agentpdf)");
             eprintln!("    trunk serve --port 8081  (for docsign)");
+            eprintln!("    trunk serve --port 8082  (for pdfjoin)");
             return;
         }
     }};

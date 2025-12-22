@@ -1,0 +1,78 @@
+# PDFJoin Performance Benchmark Scenarios
+# Performance testing for PDF split/merge web application
+
+[benchmark]
+# Name of the benchmark suite
+name = "PDFJoin Performance"
+
+# Base URL for local testing
+base_url = "http://127.0.0.1:8082"
+
+# Number of iterations per scenario
+iterations = 5
+
+# Number of warmup runs before measurement
+warmup = 1
+
+# Number of parallel browser contexts
+parallel_contexts = 4
+
+[throttling]
+# No throttling for fast local/CI runs
+# Use "Fast3G" + cpu_slowdown = 4.0 for realistic user simulation
+network_profile = "None"
+cpu_slowdown = 1.0
+
+[thresholds]
+# Largest Contentful Paint p95 threshold (500ms for localhost without throttling)
+lcp_p95 = 500.0
+
+# Interaction to Next Paint p95 threshold (100ms)
+inp_p95 = 100.0
+
+# Cumulative Layout Shift p95 threshold
+cls_p95 = 0.1
+
+# Scenario 1: Homepage load performance (Split tab default)
+[[scenarios]]
+name = "Homepage Load"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#split-file-input" },
+    { type = "measure", label = "homepage" }
+]
+
+# Scenario 2: Tab switching to Merge
+[[scenarios]]
+name = "Tab Switch to Merge"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = ".tabs" },
+    { type = "click", selector = "[data-tab='merge']" },
+    { type = "wait", wait_for = "selector", selector = "#merge-drop-zone" },
+    { type = "measure", label = "merge-tab-active" }
+]
+
+# Scenario 3: Split workflow ready
+[[scenarios]]
+name = "Split Workflow Ready"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = "#split-drop-zone" },
+    { type = "click", selector = "#split-drop-zone" },
+    { type = "wait", wait_for = "timeout", duration = 200 },
+    { type = "measure", label = "split-workflow-ready" }
+]
+
+# Scenario 4: Merge workflow ready
+[[scenarios]]
+name = "Merge Workflow Ready"
+steps = [
+    { type = "navigate", url = "/" },
+    { type = "wait", wait_for = "selector", selector = ".tabs" },
+    { type = "click", selector = "[data-tab='merge']" },
+    { type = "wait", wait_for = "selector", selector = "#merge-drop-zone" },
+    { type = "click", selector = "#merge-drop-zone" },
+    { type = "wait", wait_for = "timeout", duration = 200 },
+    { type = "measure", label = "merge-workflow-ready" }
+]

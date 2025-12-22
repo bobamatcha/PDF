@@ -1,0 +1,14 @@
+# Trunk configuration for pdfjoin-web
+# Run: trunk serve (dev) or trunk build --release (prod)
+
+[build]
+target = "www/index.html"
+dist = "www/dist"
+
+[watch]
+watch = ["wasm/src", "www"]
+ignore = ["www/dist"]
+
+[serve]
+port = 8082
+open = false

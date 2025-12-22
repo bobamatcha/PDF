@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Tools - Split & Merge PDFs</title>
+    <meta name="description" content="Free, private PDF tools. Split or merge PDF files entirely in your browser - your files never leave your device.">
+    <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
+    <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
+    <!-- Trunk: Copy static JS files -->
+    <link data-trunk rel="copy-dir" href="js" />
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text: #1e293b;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --success: #10b981;
+            --error: #ef4444;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+        .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
+        header { text-align: center; margin-bottom: 2rem; }
+        header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        header p { color: var(--text-muted); }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 0; margin-bottom: 2rem; border-bottom: 2px solid var(--border); }
+        .tab { background: none; border: none; padding: 1rem 2rem; font-size: 1rem; font-weight: 500; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color 0.2s, border-color 0.2s; }
+        .tab:hover { color: var(--text); }
+        .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+        /* Drop Zone */
+        .drop-zone { background: var(--card-bg); border: 2px dashed var(--border); border-radius: 12px; padding: 3rem; text-align: center; transition: border-color 0.2s, background 0.2s; cursor: pointer; }
+        .drop-zone:hover, .drop-zone.drag-over { border-color: var(--primary); background: rgba(37, 99, 235, 0.05); }
+        .drop-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .drop-zone button { background: none; border: none; color: var(--primary); cursor: pointer; font-size: inherit; text-decoration: underline; }
+        .drop-hint { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem; }
+
+        /* Editor */
+        .editor { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem; }
+        .file-info { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; background: var(--bg); border-radius: 8px; margin-bottom: 1rem; }
+        .file-info .file-name { font-weight: 500; }
+        .file-info .file-details { color: var(--text-muted); font-size: 0.9rem; margin-left: auto; }
+
+        /* Controls */
+        .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+        .range-input { flex: 1; }
+        .range-input label { display: block; font-size: 0.9rem; margin-bottom: 0.25rem; color: var(--text-muted); }
+        .range-input input { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; }
+        .range-input input.invalid { border-color: var(--error); }
+
+        /* Buttons */
+        .primary-btn { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+        .primary-btn:hover:not(:disabled) { background: var(--primary-dark); }
+        .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .secondary-btn { background: transparent; color: var(--primary); border: 1px solid var(--primary); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; cursor: pointer; }
+        .remove-btn { background: none; border: none; color: var(--error); cursor: pointer; font-size: 1.5rem; line-height: 1; padding: 0 0.25rem; }
+
+        /* File List */
+        .file-list { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem; }
+        .file-list h3 { margin-bottom: 1rem; font-size: 1rem; }
+        .file-list ul { list-style: none; margin-bottom: 1rem; }
+        .file-list li { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 8px; margin-bottom: 0.5rem; cursor: grab; }
+        .file-list li:active { cursor: grabbing; }
+        .file-list li.dragging { opacity: 0.5; }
+        .file-list li.drag-over { border-top: 2px solid var(--primary); }
+        .drag-handle { color: var(--text-muted); cursor: grab; }
+        .drag-hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
+        .file-list .file-name { flex: 1; }
+        .file-list .file-size { color: var(--text-muted); font-size: 0.85rem; }
+        .file-list .remove-btn { font-size: 1.2rem; }
+
+        /* Progress */
+        .progress { margin-top: 1.5rem; text-align: center; }
+        .progress-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem; }
+        .progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s; }
+        .progress-text { color: var(--text-muted); font-size: 0.9rem; }
+
+        /* Footer */
+        footer { text-align: center; margin-top: 3rem; color: var(--text-muted); }
+        .privacy-note { font-size: 0.85rem; }
+
+        /* Utilities */
+        .hidden { display: none !important; }
+
+        @media (max-width: 600px) {
+            .container { padding: 1rem; }
+            .controls { flex-direction: column; }
+            .primary-btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>PDF Tools</h1>
+            <p>Free, private PDF manipulation - all processing happens in your browser</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab active" data-tab="split">Split PDF</button>
+            <button class="tab" data-tab="merge">Merge PDFs</button>
+        </nav>
+
+        <!-- Split View -->
+        <section id="split-view" class="view">
+            <div id="split-drop-zone" class="drop-zone">
+                <input type="file" id="split-file-input" accept=".pdf" hidden>
+                <div class="drop-content">
+                    <div class="drop-icon">&#9986;</div>
+                    <p>Drag & drop a PDF here or <button id="split-browse-btn">browse</button></p>
+                    <p class="drop-hint">Extract specific pages from your document</p>
+                </div>
+            </div>
+
+            <div id="split-editor" class="editor hidden">
+                <div class="file-info">
+                    <span class="file-name" id="split-file-name"></span>
+                    <span class="file-details" id="split-file-details"></span>
+                    <button id="split-remove-btn" class="remove-btn" title="Remove file">&times;</button>
+                </div>
+
+                <div class="controls">
+                    <div class="range-input">
+                        <label for="page-range">Pages to extract:</label>
+                        <input type="text" id="page-range" placeholder="e.g., 1-3, 5, 8-10">
+                    </div>
+                    <button id="split-btn" class="primary-btn" disabled>Split PDF</button>
+                </div>
+
+                <div id="split-progress" class="progress hidden">
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                    <p class="progress-text">Processing...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Merge View -->
+        <section id="merge-view" class="view hidden">
+            <div id="merge-drop-zone" class="drop-zone">
+                <input type="file" id="merge-file-input" accept=".pdf" multiple hidden>
+                <div class="drop-content">
+                    <div class="drop-icon">&#128209;</div>
+                    <p>Drag & drop PDFs here or <button id="merge-browse-btn">browse</button></p>
+                    <p class="drop-hint">Add 2 or more files to combine</p>
+                </div>
+            </div>
+
+            <div id="merge-file-list" class="file-list hidden">
+                <h3>Files to merge <span id="merge-count">(0)</span></h3>
+                <ul id="merge-files"></ul>
+                <p class="drag-hint">Drag to reorder files</p>
+
+                <div class="controls">
+                    <button id="merge-add-btn" class="secondary-btn">+ Add more files</button>
+                    <button id="merge-btn" class="primary-btn" disabled>Merge PDFs</button>
+                </div>
+
+                <div id="merge-progress" class="progress hidden">
+                    <div class="progress-bar"><div class="progress-fill"></div></div>
+                    <p class="progress-text">Processing...</p>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p class="privacy-note">Your files never leave your device</p>
+        </footer>
+    </div>
+
+    <script type="module">
+        window.addEventListener('TrunkApplicationStarted', () => {
+            import('./js/app.js').then(m => m.init());
+        });
+    </script>
+</body>
+</html>

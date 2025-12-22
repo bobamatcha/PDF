@@ -1,6 +1,6 @@
 //! Configuration and code parity tests
 //!
-//! These tests ensure both apps have consistent configurations and shared code.
+//! These tests ensure all apps have consistent configurations and shared code.
 //! They don't require a browser or server - they're pure file-based checks.
 //!
 //! Run with: cargo test -p benchmark-harness --test parity_tests
@@ -15,20 +15,27 @@ use std::collections::HashSet;
 // WASM Build Configuration Parity
 // ============================================================================
 
-/// Test that both apps have the same wasm-opt configuration in their HTML.
+/// Test that all apps have the same wasm-opt configuration in their HTML.
 /// This catches the Rust 1.82+ bulk-memory regression where one app might
 /// have the fix but not the other.
 #[test]
 fn test_wasm_opt_config_parity() {
     let workspace_root = paths::workspace_root();
 
-    let agentpdf_html = workspace_root.join("apps/agentpdf-web/www/index.html");
-    let docsign_html = workspace_root.join("apps/docsign-web/www/index.html");
-
-    let agentpdf_content = std::fs::read_to_string(&agentpdf_html)
-        .unwrap_or_else(|_| panic!("Should read agentpdf index.html at {:?}", agentpdf_html));
-    let docsign_content = std::fs::read_to_string(&docsign_html)
-        .unwrap_or_else(|_| panic!("Should read docsign index.html at {:?}", docsign_html));
+    let apps = [
+        (
+            "agentpdf-web",
+            workspace_root.join("apps/agentpdf-web/www/index.html"),
+        ),
+        (
+            "docsign-web",
+            workspace_root.join("apps/docsign-web/www/index.html"),
+        ),
+        (
+            "pdfjoin-web",
+            workspace_root.join("apps/pdfjoin-web/www/index.html"),
+        ),
+    ];
 
     let extract_wasm_opt_params = |content: &str| -> Option<String> {
         let pattern = r#"data-wasm-opt-params="([^"]*)""#;
@@ -37,49 +44,72 @@ fn test_wasm_opt_config_parity() {
             .map(|c| c.get(1).unwrap().as_str().to_string())
     };
 
-    let agentpdf_params = extract_wasm_opt_params(&agentpdf_content);
-    let docsign_params = extract_wasm_opt_params(&docsign_content);
+    let mut all_params: Vec<(String, Option<String>)> = Vec::new();
 
-    assert!(
-        agentpdf_params.is_some(),
-        "agentpdf-web should have data-wasm-opt-params configured for Rust 1.82+ compatibility"
-    );
-    assert!(
-        docsign_params.is_some(),
-        "docsign-web should have data-wasm-opt-params configured for Rust 1.82+ compatibility"
-    );
+    for (name, path) in &apps {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Should read {} index.html at {:?}", name, path));
+        let params = extract_wasm_opt_params(&content);
+        all_params.push((name.to_string(), params));
+    }
 
-    assert_eq!(
-        agentpdf_params, docsign_params,
-        "Both apps should have identical wasm-opt-params. agentpdf: {:?}, docsign: {:?}",
-        agentpdf_params, docsign_params
-    );
+    // Verify all apps have wasm-opt-params configured
+    for (name, params) in &all_params {
+        assert!(
+            params.is_some(),
+            "{} should have data-wasm-opt-params configured for Rust 1.82+ compatibility",
+            name
+        );
+    }
 
-    let params = agentpdf_params.unwrap();
+    // Verify all apps have identical params
+    let first_params = all_params[0].1.as_ref().unwrap();
+    for (name, params) in &all_params[1..] {
+        assert_eq!(
+            params.as_ref().unwrap(),
+            first_params,
+            "All apps should have identical wasm-opt-params. {} differs from {}",
+            name,
+            all_params[0].0
+        );
+    }
+
+    // Verify required flags
     assert!(
-        params.contains("--enable-bulk-memory"),
+        first_params.contains("--enable-bulk-memory"),
         "wasm-opt-params must include --enable-bulk-memory for Rust 1.82+"
     );
     assert!(
-        params.contains("--enable-nontrapping-float-to-int"),
+        first_params.contains("--enable-nontrapping-float-to-int"),
         "wasm-opt-params should include --enable-nontrapping-float-to-int"
     );
 
-    eprintln!("✓ Both apps have matching wasm-opt config: {}", params);
+    eprintln!(
+        "✓ All {} apps have matching wasm-opt config: {}",
+        apps.len(),
+        first_params
+    );
 }
 
-/// Test that both apps have the same wasm-opt optimization level
+/// Test that all apps have the same wasm-opt optimization level
 #[test]
 fn test_wasm_opt_level_parity() {
     let workspace_root = paths::workspace_root();
 
-    let agentpdf_html = workspace_root.join("apps/agentpdf-web/www/index.html");
-    let docsign_html = workspace_root.join("apps/docsign-web/www/index.html");
-
-    let agentpdf_content =
-        std::fs::read_to_string(&agentpdf_html).expect("Should read agentpdf index.html");
-    let docsign_content =
-        std::fs::read_to_string(&docsign_html).expect("Should read docsign index.html");
+    let apps = [
+        (
+            "agentpdf-web",
+            workspace_root.join("apps/agentpdf-web/www/index.html"),
+        ),
+        (
+            "docsign-web",
+            workspace_root.join("apps/docsign-web/www/index.html"),
+        ),
+        (
+            "pdfjoin-web",
+            workspace_root.join("apps/pdfjoin-web/www/index.html"),
+        ),
+    ];
 
     let extract_wasm_opt_level = |content: &str| -> Option<String> {
         let pattern = r#"data-wasm-opt="([^"]*)""#;
@@ -88,18 +118,29 @@ fn test_wasm_opt_level_parity() {
             .map(|c| c.get(1).unwrap().as_str().to_string())
     };
 
-    let agentpdf_level = extract_wasm_opt_level(&agentpdf_content);
-    let docsign_level = extract_wasm_opt_level(&docsign_content);
+    let mut all_levels: Vec<(String, Option<String>)> = Vec::new();
 
-    assert_eq!(
-        agentpdf_level, docsign_level,
-        "Both apps should have same wasm-opt level. agentpdf: {:?}, docsign: {:?}",
-        agentpdf_level, docsign_level
-    );
+    for (name, path) in &apps {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Should read {} index.html at {:?}", name, path));
+        let level = extract_wasm_opt_level(&content);
+        all_levels.push((name.to_string(), level));
+    }
+
+    // Verify all apps have the same level
+    let first_level = &all_levels[0].1;
+    for (name, level) in &all_levels[1..] {
+        assert_eq!(
+            level, first_level,
+            "All apps should have same wasm-opt level. {} differs from {}",
+            name, all_levels[0].0
+        );
+    }
 
     eprintln!(
-        "✓ Both apps have matching wasm-opt level: {:?}",
-        agentpdf_level
+        "✓ All {} apps have matching wasm-opt level: {:?}",
+        apps.len(),
+        first_level
     );
 }
 
@@ -156,18 +197,25 @@ fn test_coords_rs_test_parity() {
     eprintln!("✓ coords.rs has matching test coverage in both apps");
 }
 
-/// Test that both apps have the same viewport meta tag for mobile support
+/// Test that all apps have proper viewport meta tag for mobile support
 #[test]
 fn test_viewport_meta_parity() {
     let workspace_root = paths::workspace_root();
 
-    let agentpdf_html = workspace_root.join("apps/agentpdf-web/www/index.html");
-    let docsign_html = workspace_root.join("apps/docsign-web/www/index.html");
-
-    let agentpdf_content =
-        std::fs::read_to_string(&agentpdf_html).expect("Should read agentpdf index.html");
-    let docsign_content =
-        std::fs::read_to_string(&docsign_html).expect("Should read docsign index.html");
+    let apps = [
+        (
+            "agentpdf-web",
+            workspace_root.join("apps/agentpdf-web/www/index.html"),
+        ),
+        (
+            "docsign-web",
+            workspace_root.join("apps/docsign-web/www/index.html"),
+        ),
+        (
+            "pdfjoin-web",
+            workspace_root.join("apps/pdfjoin-web/www/index.html"),
+        ),
+    ];
 
     let extract_viewport = |content: &str| -> Option<String> {
         let pattern = r#"<meta\s+name="viewport"\s+content="([^"]*)""#;
@@ -176,32 +224,23 @@ fn test_viewport_meta_parity() {
             .map(|c| c.get(1).unwrap().as_str().to_string())
     };
 
-    let agentpdf_viewport = extract_viewport(&agentpdf_content);
-    let docsign_viewport = extract_viewport(&docsign_content);
+    eprintln!("Viewport meta tags:");
+    for (name, path) in &apps {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("Should read {} index.html at {:?}", name, path));
+        let viewport = extract_viewport(&content);
 
-    assert!(
-        agentpdf_viewport.is_some(),
-        "agentpdf should have viewport meta tag"
-    );
-    assert!(
-        docsign_viewport.is_some(),
-        "docsign should have viewport meta tag"
-    );
+        assert!(viewport.is_some(), "{} should have viewport meta tag", name);
 
-    // Both should have width=device-width for proper mobile scaling
-    let agentpdf_vp = agentpdf_viewport.unwrap();
-    let docsign_vp = docsign_viewport.unwrap();
+        let vp = viewport.unwrap();
+        assert!(
+            vp.contains("width=device-width"),
+            "{} viewport should include width=device-width",
+            name
+        );
 
-    assert!(
-        agentpdf_vp.contains("width=device-width"),
-        "agentpdf viewport should include width=device-width"
-    );
-    assert!(
-        docsign_vp.contains("width=device-width"),
-        "docsign viewport should include width=device-width"
-    );
+        eprintln!("  {}: {}", name, vp);
+    }
 
-    eprintln!("✓ Both apps have proper viewport meta tags");
-    eprintln!("  agentpdf: {}", agentpdf_vp);
-    eprintln!("  docsign: {}", docsign_vp);
+    eprintln!("✓ All {} apps have proper viewport meta tags", apps.len());
 }
