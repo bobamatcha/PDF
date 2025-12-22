@@ -427,6 +427,91 @@ async fn test_pdfjoin_split_no_duplicate_pages_objects() {
     );
 }
 
+/// Regression test: Page objects must have /Parent pointing to the Pages object
+/// Bug: After splitting, page objects still referenced the original Pages object ID
+/// which no longer exists in the output PDF.
+#[tokio::test]
+async fn test_pdfjoin_split_pages_have_valid_parent() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(async () => {
+                try {
+                    const response = await fetch('/florida_purchase_contract.pdf');
+                    if (!response.ok) {
+                        return { success: false, error: 'PDF not found' };
+                    }
+                    const pdfBytes = new Uint8Array(await response.arrayBuffer());
+
+                    const { PdfJoinSession, SessionMode } = window.wasmBindings;
+                    const session = new PdfJoinSession(SessionMode.Split);
+                    session.addDocument('test.pdf', pdfBytes);
+                    session.setPageSelection('5-17');
+
+                    const result = session.execute();
+                    const resultBytes = new Uint8Array(result);
+                    const decoder = new TextDecoder('utf-8', { fatal: false });
+                    const pdfText = decoder.decode(resultBytes);
+
+                    // Find Pages object ID
+                    const pagesMatch = pdfText.match(/(\d+) 0 obj\s*<<[^>]*?\/Type \/Pages[^>]*?\/Kids/);
+                    const pagesId = pagesMatch ? pagesMatch[1] : null;
+
+                    // Find all /Parent references
+                    const parentMatches = pdfText.match(/\/Parent (\d+) 0 R/g) || [];
+                    const parentIds = parentMatches.map(m => m.match(/\d+/)[0]);
+                    const invalidParents = parentIds.filter(id => id !== pagesId);
+
+                    return {
+                        success: true,
+                        pagesObjectId: pagesId,
+                        parentRefs: parentIds,
+                        invalidParents: invalidParents,
+                        allValid: invalidParents.length === 0
+                    };
+                } catch (err) {
+                    return { success: false, error: err.toString() };
+                }
+            })()"#,
+        )
+        .await
+        .expect("Should test parent refs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Parent reference test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["allValid"].as_bool().unwrap_or(false),
+        "REGRESSION: Pages have invalid /Parent refs. Pages object is {}, but found refs to {:?}",
+        result["pagesObjectId"],
+        result["invalidParents"]
+    );
+}
+
 #[tokio::test]
 async fn test_pdfjoin_mobile_touch_targets() {
     skip_if_no_chrome!();

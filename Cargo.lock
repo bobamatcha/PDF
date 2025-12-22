@@ -2816,6 +2816,7 @@ dependencies = [
  "lopdf 0.33.0",
  "pretty_assertions",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

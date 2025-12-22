@@ -568,22 +568,40 @@ pub fn split_streaming(bytes: &[u8], pages_to_keep: Vec<u32>) -> Result<Vec<u8>,
     let mut id_mapping: HashMap<u32, u32> = HashMap::new();
     let mut next_id = 1u32;
 
-    // Write needed objects with new IDs
+    // First pass: assign new IDs to all objects so we know the Pages ID upfront
     let mut sorted_ids: Vec<u32> = needed_objects.iter().copied().collect();
     sorted_ids.sort();
 
+    for &old_id in &sorted_ids {
+        if let Some(entry) = pdf.xref.get(&old_id) {
+            if entry.in_use {
+                id_mapping.insert(old_id, next_id);
+                next_id += 1;
+            }
+        }
+    }
+
+    // The new Pages object ID (we'll write it after all other objects)
+    let pages_id = next_id;
+
+    // Map the original Pages ref to our new Pages ID so /Parent refs get updated
+    id_mapping.insert(original_pages_ref, pages_id);
+
+    // Reset next_id for actual writing
+    next_id = 1u32;
+
+    // Write needed objects with new IDs
     for old_id in sorted_ids {
         if let Some(entry) = pdf.xref.get(&old_id) {
             if entry.in_use {
                 let new_id = next_id;
-                id_mapping.insert(old_id, new_id);
                 next_id += 1;
 
                 new_xref.push((new_id, output.len()));
 
                 // Read and rewrite object with new ID
                 if let Ok(obj_bytes) = pdf.read_object(ObjRef(old_id, entry.generation)) {
-                    // Replace object header
+                    // Replace object header and update all references including /Parent
                     let rewritten = rewrite_object_refs(&obj_bytes, old_id, new_id, &id_mapping);
                     output.extend_from_slice(&rewritten);
                     output.push(b'\n');

@@ -346,4 +346,52 @@ mod tests {
             count_occurrences
         );
     }
+
+    /// Regression test: Page objects must have /Parent pointing to a valid Pages object
+    /// Bug: After splitting, page objects still referenced the original Pages object ID
+    /// which no longer exists in the output PDF. This causes macOS Preview to reject the file.
+    #[test]
+    fn test_streaming_split_pages_have_valid_parent() {
+        use crate::streaming;
+        use regex::Regex;
+        use std::path::PathBuf;
+
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let project_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let pdf_path = project_root.join("output/florida_purchase_contract.pdf");
+
+        if !pdf_path.exists() {
+            eprintln!("SKIP: Real PDF not found");
+            return;
+        }
+
+        let pdf_bytes = std::fs::read(&pdf_path).expect("read PDF");
+        let pages: Vec<u32> = (5..=17).collect();
+        let result =
+            streaming::split_streaming(&pdf_bytes, pages).expect("streaming split should succeed");
+
+        let result_str = String::from_utf8_lossy(&result);
+
+        // Find the Pages object ID (the one with /Type /Pages and /Kids)
+        let pages_obj_re = Regex::new(r"(\d+) 0 obj\s*<<[^>]*?/Type /Pages[^>]*?/Kids").unwrap();
+        let pages_obj_id = pages_obj_re
+            .captures(&result_str)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str())
+            .expect("Should find Pages object");
+
+        eprintln!("Pages object ID: {}", pages_obj_id);
+
+        // Find all /Parent references in page objects
+        let parent_re = Regex::new(r"/Parent (\d+) 0 R").unwrap();
+        for cap in parent_re.captures_iter(&result_str) {
+            let parent_id = cap.get(1).unwrap().as_str();
+            assert_eq!(
+                parent_id, pages_obj_id,
+                "REGRESSION: Page has /Parent {} but Pages object is {}. \
+                 Invalid parent references cause PDF corruption.",
+                parent_id, pages_obj_id
+            );
+        }
+    }
 }
