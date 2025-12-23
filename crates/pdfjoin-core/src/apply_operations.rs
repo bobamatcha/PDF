@@ -75,6 +75,7 @@ fn apply_single_operation(
             new_text,
             style,
         ),
+        EditOperation::AddWhiteRect { rect, .. } => add_white_rect_annotation(doc, page_id, rect),
     }
 }
 
@@ -217,17 +218,27 @@ fn add_text_replacement(
     new_text: &str,
     style: &TextStyle,
 ) -> Result<(), PdfJoinError> {
+    // Liberal padding to ensure the white cover fully hides original text
+    // Text rendering extends beyond reported bounds due to:
+    // - Descenders (g, y, p, q, j) extend below baseline
+    // - Ascenders and accents extend above cap height
+    // - Kerning and letter spacing variations
+    // - PDF viewer rendering differences
+    // Use generous padding (15pt) to guarantee complete coverage
+    const COVER_PADDING: f64 = 15.0;
+
     // 1. Add white Square annotation to cover original text
+    // Use padding to ensure complete coverage of original text glyphs
     let mut cover = Dictionary::new();
     cover.set("Type", Object::Name(b"Annot".to_vec()));
     cover.set("Subtype", Object::Name(b"Square".to_vec()));
     cover.set(
         "Rect",
         Object::Array(vec![
-            Object::Real(original_rect.x as f32),
-            Object::Real(original_rect.y as f32),
-            Object::Real((original_rect.x + original_rect.width) as f32),
-            Object::Real((original_rect.y + original_rect.height) as f32),
+            Object::Real((original_rect.x - COVER_PADDING) as f32),
+            Object::Real((original_rect.y - COVER_PADDING) as f32),
+            Object::Real((original_rect.x + original_rect.width + COVER_PADDING) as f32),
+            Object::Real((original_rect.y + original_rect.height + COVER_PADDING) as f32),
         ]),
     );
     // White fill (IC = Interior Color)
@@ -258,6 +269,50 @@ fn add_text_replacement(
 
     // 2. Add FreeText annotation with replacement text
     add_text_annotation(doc, page_id, replacement_rect, new_text, style)
+}
+
+fn add_white_rect_annotation(
+    doc: &mut Document,
+    page_id: ObjectId,
+    rect: &PdfRect,
+) -> Result<(), PdfJoinError> {
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Square".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(rect.x as f32),
+            Object::Real(rect.y as f32),
+            Object::Real((rect.x + rect.width) as f32),
+            Object::Real((rect.y + rect.height) as f32),
+        ]),
+    );
+    // White fill (IC = Interior Color)
+    annot.set(
+        "IC",
+        Object::Array(vec![
+            Object::Real(1.0),
+            Object::Real(1.0),
+            Object::Real(1.0),
+        ]),
+    );
+    // White border (C = Color)
+    annot.set(
+        "C",
+        Object::Array(vec![
+            Object::Real(1.0),
+            Object::Real(1.0),
+            Object::Real(1.0),
+        ]),
+    );
+    // No border width
+    let mut bs = Dictionary::new();
+    bs.set("W", Object::Integer(0));
+    annot.set("BS", Object::Dictionary(bs));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot));
+    add_annotation_to_page(doc, page_id, annot_id)
 }
 
 fn add_annotation_to_page(
@@ -432,5 +487,188 @@ mod tests {
         let result = apply_operations(&pdf, &log).unwrap();
         let doc = Document::load_mem(&result).unwrap();
         assert_eq!(doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_replace_text_white_cover_is_larger_than_original() {
+        // The white rectangle must be LARGER than the original text rect
+        // to ensure full coverage (no text bleeding through)
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Original text at position (100, 700) with size 200x24
+        let original_rect = PdfRect {
+            x: 100.0,
+            y: 700.0,
+            width: 200.0,
+            height: 24.0,
+        };
+
+        log.add(EditOperation::ReplaceText {
+            id: 0,
+            page: 1,
+            original_rect: original_rect.clone(),
+            replacement_rect: original_rect.clone(),
+            original_text: "Original Text".to_string(),
+            new_text: "Replacement".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+
+        // Parse the output PDF text to verify white rectangle coordinates
+        let output_str = String::from_utf8_lossy(&result);
+
+        // Find the Square annotation (white cover)
+        // It should be larger than the original rect to ensure coverage
+        // The rect should include padding: at least 2-4 points on each side
+        // Original: x=100, y=700, x2=300, y2=724
+        // Expected with padding: x<100, y<700, x2>300, y2>724
+
+        // Verify the PDF contains a Square annotation
+        assert!(
+            output_str.contains("/Square"),
+            "Should contain Square annotation for white cover"
+        );
+
+        // Verify the white interior color (IC)
+        assert!(
+            output_str.contains("/IC"),
+            "Square should have interior color (IC) for white fill"
+        );
+
+        // The rectangle bounds in the PDF
+        // Look for Rect array that is LARGER than original bounds
+        // Original would be: [100 700 300 724]
+        // With padding should be something like: [98 698 302 728] (2pt padding)
+        // or [96 696 304 732] (4pt padding)
+
+        // For now, just verify the annotation exists and has white color
+        // We'll check the actual bounds in a separate test
+        let doc = Document::load_mem(&result).unwrap();
+        assert_eq!(doc.get_pages().len(), 1);
+    }
+
+    #[test]
+    fn test_replace_text_white_cover_has_padding() {
+        // REGRESSION TEST: White cover must have padding to prevent text bleed-through
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        let original_rect = PdfRect {
+            x: 100.0,
+            y: 700.0,
+            width: 200.0,
+            height: 24.0,
+        };
+
+        log.add(EditOperation::ReplaceText {
+            id: 0,
+            page: 1,
+            original_rect: original_rect.clone(),
+            replacement_rect: original_rect.clone(),
+            original_text: "Original".to_string(),
+            new_text: "New".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let doc = Document::load_mem(&result).unwrap();
+
+        // Get the page and its annotations
+        let pages: Vec<_> = doc.get_pages().into_iter().collect();
+        let (_page_num, page_id) = pages[0];
+
+        let page = doc.get_object(page_id).unwrap();
+        if let Object::Dictionary(page_dict) = page {
+            if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                // Find the Square annotation (white cover)
+                let mut found_square = false;
+                let mut cover_rect: Option<(f32, f32, f32, f32)> = None;
+
+                for annot_ref in annots {
+                    if let Object::Reference(annot_id) = annot_ref {
+                        if let Ok(Object::Dictionary(annot)) = doc.get_object(*annot_id) {
+                            if let Ok(Object::Name(subtype)) = annot.get(b"Subtype") {
+                                if subtype == b"Square" {
+                                    found_square = true;
+                                    if let Ok(Object::Array(rect)) = annot.get(b"Rect") {
+                                        let x1 = match &rect[0] {
+                                            Object::Real(v) => *v,
+                                            Object::Integer(v) => *v as f32,
+                                            _ => 0.0,
+                                        };
+                                        let y1 = match &rect[1] {
+                                            Object::Real(v) => *v,
+                                            Object::Integer(v) => *v as f32,
+                                            _ => 0.0,
+                                        };
+                                        let x2 = match &rect[2] {
+                                            Object::Real(v) => *v,
+                                            Object::Integer(v) => *v as f32,
+                                            _ => 0.0,
+                                        };
+                                        let y2 = match &rect[3] {
+                                            Object::Real(v) => *v,
+                                            Object::Integer(v) => *v as f32,
+                                            _ => 0.0,
+                                        };
+                                        cover_rect = Some((x1, y1, x2, y2));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                assert!(
+                    found_square,
+                    "Should have Square annotation for white cover"
+                );
+
+                if let Some((x1, y1, x2, y2)) = cover_rect {
+                    // Verify the cover rect has GENEROUS padding (at least 10pt on each side)
+                    // Original: x=100, y=700, x2=300 (100+200), y2=724 (700+24)
+                    let orig_x1 = 100.0_f32;
+                    let orig_y1 = 700.0_f32;
+                    let orig_x2 = 300.0_f32; // 100 + 200
+                    let orig_y2 = 724.0_f32; // 700 + 24
+
+                    // Minimum required padding to prevent text bleed-through
+                    const MIN_PADDING: f32 = 10.0;
+
+                    // Cover should extend WELL BEYOND original bounds
+                    let left_padding = orig_x1 - x1;
+                    let bottom_padding = orig_y1 - y1;
+                    let right_padding = x2 - orig_x2;
+                    let top_padding = y2 - orig_y2;
+
+                    assert!(
+                        left_padding >= MIN_PADDING,
+                        "INSUFFICIENT PADDING: Cover left padding ({}) must be >= {}pt to prevent bleed-through",
+                        left_padding,
+                        MIN_PADDING
+                    );
+                    assert!(
+                        bottom_padding >= MIN_PADDING,
+                        "INSUFFICIENT PADDING: Cover bottom padding ({}) must be >= {}pt to prevent bleed-through",
+                        bottom_padding,
+                        MIN_PADDING
+                    );
+                    assert!(
+                        right_padding >= MIN_PADDING,
+                        "INSUFFICIENT PADDING: Cover right padding ({}) must be >= {}pt to prevent bleed-through",
+                        right_padding,
+                        MIN_PADDING
+                    );
+                    assert!(
+                        top_padding >= MIN_PADDING,
+                        "INSUFFICIENT PADDING: Cover top padding ({}) must be >= {}pt to prevent bleed-through",
+                        top_padding,
+                        MIN_PADDING
+                    );
+                }
+            }
+        }
     }
 }

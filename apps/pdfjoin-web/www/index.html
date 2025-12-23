@@ -399,19 +399,77 @@
             cursor: pointer;
         }
 
-        /* Replacement Overlay */
+        /* Replacement Overlay - covers original text on canvas */
         .edit-replace-overlay {
             position: absolute;
             background: white;
-            border: 1px solid #ccc;
-            padding: 2px 4px;
-            font-size: 12px;
+            border: none;
+            /* font-size and font-family applied dynamically to match original */
             white-space: nowrap;
-            overflow: hidden;
-            line-height: 1.2;
+            overflow: visible;
+            line-height: 1;
+            z-index: 10;
+            box-shadow: 0 0 0 2px white; /* Extra white coverage */
         }
         .edit-replace-overlay:hover {
-            border-color: var(--primary);
+            outline: 1px solid var(--primary);
+        }
+
+        /* Whiteout Tool Styles */
+        .whiteout-preview {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px dashed var(--primary);
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+        .edit-whiteout-overlay {
+            position: absolute;
+            background: white;
+            border: none;
+            z-index: 15;
+            cursor: pointer;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.1);
+        }
+        .edit-whiteout-overlay:hover {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+        }
+        .edit-whiteout-overlay.selected {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+        }
+        /* Resize handles for selected whiteout */
+        .edit-whiteout-overlay.selected .resize-handle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: var(--primary);
+            border: 1px solid white;
+            border-radius: 1px;
+        }
+        .resize-handle.nw { top: -4px; left: -4px; cursor: nw-resize; }
+        .resize-handle.ne { top: -4px; right: -4px; cursor: ne-resize; }
+        .resize-handle.sw { bottom: -4px; left: -4px; cursor: sw-resize; }
+        .resize-handle.se { bottom: -4px; right: -4px; cursor: se-resize; }
+        .resize-handle.n { top: -4px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+        .resize-handle.s { bottom: -4px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+        .resize-handle.w { left: -4px; top: 50%; transform: translateY(-50%); cursor: w-resize; }
+        .resize-handle.e { right: -4px; top: 50%; transform: translateY(-50%); cursor: e-resize; }
+
+        /* Whiteout text input (inside the whiteout) */
+        .whiteout-text-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            font-family: inherit;
+            z-index: 5;
+        }
+        /* Whiteout text content (saved text inside the whiteout) */
+        .whiteout-text-content {
+            pointer-events: none;
+            z-index: 5;
         }
 
         @media (max-width: 600px) {
@@ -558,6 +616,10 @@
                         <button id="tool-checkbox" class="tool-btn" title="Checkbox">
                             <span class="tool-icon">&#9745;</span>
                             <span class="tool-label">Check</span>
+                        </button>
+                        <button id="tool-whiteout" class="tool-btn" title="Draw White Rectangle">
+                            <span class="tool-icon">&#9634;</span>
+                            <span class="tool-label">Whiteout</span>
                         </button>
                     </div>
 

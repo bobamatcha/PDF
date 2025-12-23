@@ -22,6 +22,12 @@ pub struct TextStyle {
     /// Font name for text rendering. Will be mapped to PDF standard fonts.
     #[serde(default)]
     pub font_name: Option<String>,
+    /// Whether the text should be italic
+    #[serde(default)]
+    pub is_italic: bool,
+    /// Whether the text should be bold
+    #[serde(default)]
+    pub is_bold: bool,
 }
 
 impl Default for TextStyle {
@@ -30,6 +36,8 @@ impl Default for TextStyle {
             font_size: 12.0,
             color: "#000000".to_string(),
             font_name: None,
+            is_italic: false,
+            is_bold: false,
         }
     }
 }
@@ -38,12 +46,85 @@ impl TextStyle {
     /// Map a PDF.js font name to a PDF standard font name.
     /// PDF.js returns names like "g_d0_f1", "Times-Roman", "BCDEEE+ArialMT", etc.
     /// We map these to the PDF standard 14 fonts for maximum compatibility.
-    pub fn pdf_font_name(&self) -> &str {
-        match &self.font_name {
-            Some(name) => map_to_standard_font(name),
+    /// Also considers is_italic and is_bold flags for proper font variant selection.
+    pub fn pdf_font_name(&self) -> &'static str {
+        let base_font = match &self.font_name {
+            Some(name) => {
+                // First check if the name already specifies a style
+                let lower = name.to_lowercase();
+                if lower.contains("italic") || lower.contains("bold") || lower.contains("oblique") {
+                    // Font name already includes style info, use existing logic
+                    return map_to_standard_font(name);
+                }
+                // Get base font family
+                map_font_family_to_base(name)
+            }
             None => "Helvetica",
+        };
+
+        // Apply italic/bold based on flags
+        match base_font {
+            "Times-Roman" | "Times" => match (self.is_bold, self.is_italic) {
+                (true, true) => "Times-BoldItalic",
+                (true, false) => "Times-Bold",
+                (false, true) => "Times-Italic",
+                (false, false) => "Times-Roman",
+            },
+            "Helvetica" => match (self.is_bold, self.is_italic) {
+                (true, true) => "Helvetica-BoldOblique",
+                (true, false) => "Helvetica-Bold",
+                (false, true) => "Helvetica-Oblique",
+                (false, false) => "Helvetica",
+            },
+            "Courier" => match (self.is_bold, self.is_italic) {
+                (true, true) => "Courier-BoldOblique",
+                (true, false) => "Courier-Bold",
+                (false, true) => "Courier-Oblique",
+                (false, false) => "Courier",
+            },
+            _ => base_font,
         }
     }
+}
+
+/// Map font family name to base PDF font (without style variants)
+fn map_font_family_to_base(name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+
+    // Handle CSS generic font families
+    match lower.as_str() {
+        "serif" => return "Times-Roman",
+        "sans-serif" => return "Helvetica",
+        "monospace" => return "Courier",
+        "cursive" | "fantasy" => return "Helvetica",
+        _ => {}
+    }
+
+    // Check for Times/serif
+    if lower.contains("times") || lower.contains("georgia") || lower.contains("garamond") {
+        return "Times-Roman";
+    }
+
+    // Check for Courier/monospace
+    if lower.contains("courier")
+        || lower.contains("mono")
+        || lower.contains("consolas")
+        || lower.contains("monaco")
+    {
+        return "Courier";
+    }
+
+    // Check for Helvetica/sans-serif
+    if lower.contains("arial")
+        || lower.contains("helvetica")
+        || lower.contains("sans")
+        || lower.contains("gothic")
+    {
+        return "Helvetica";
+    }
+
+    // Default
+    "Helvetica"
 }
 
 /// Map font family/name to PDF standard 14 fonts
@@ -149,6 +230,8 @@ pub enum EditOperation {
         new_text: String,
         style: TextStyle,
     },
+    /// Add a white rectangle to cover/redact content
+    AddWhiteRect { id: OpId, page: u32, rect: PdfRect },
 }
 
 impl EditOperation {
@@ -158,6 +241,7 @@ impl EditOperation {
             EditOperation::AddHighlight { id, .. } => *id,
             EditOperation::AddCheckbox { id, .. } => *id,
             EditOperation::ReplaceText { id, .. } => *id,
+            EditOperation::AddWhiteRect { id, .. } => *id,
         }
     }
 
@@ -167,6 +251,7 @@ impl EditOperation {
             EditOperation::AddHighlight { page, .. } => *page,
             EditOperation::AddCheckbox { page, .. } => *page,
             EditOperation::ReplaceText { page, .. } => *page,
+            EditOperation::AddWhiteRect { page, .. } => *page,
         }
     }
 }
@@ -192,6 +277,7 @@ impl OperationLog {
             EditOperation::AddHighlight { id: op_id, .. } => *op_id = id,
             EditOperation::AddCheckbox { id: op_id, .. } => *op_id = id,
             EditOperation::ReplaceText { id: op_id, .. } => *op_id = id,
+            EditOperation::AddWhiteRect { id: op_id, .. } => *op_id = id,
         }
 
         self.operations.push(op);
@@ -428,29 +514,78 @@ mod tests {
         let style_default = TextStyle::default();
         assert_eq!(style_default.pdf_font_name(), "Helvetica");
 
-        // Serif font
+        // Serif font (regular)
         let style_serif = TextStyle {
             font_size: 12.0,
             color: "#000000".to_string(),
             font_name: Some("serif".to_string()),
+            is_italic: false,
+            is_bold: false,
         };
         assert_eq!(style_serif.pdf_font_name(), "Times-Roman");
 
-        // Sans-serif font
+        // Sans-serif font (regular)
         let style_sans = TextStyle {
             font_size: 14.0,
             color: "#333333".to_string(),
             font_name: Some("sans-serif".to_string()),
+            is_italic: false,
+            is_bold: false,
         };
         assert_eq!(style_sans.pdf_font_name(), "Helvetica");
 
-        // Monospace font
+        // Monospace font (regular)
         let style_mono = TextStyle {
             font_size: 10.0,
             color: "#000000".to_string(),
             font_name: Some("monospace".to_string()),
+            is_italic: false,
+            is_bold: false,
         };
         assert_eq!(style_mono.pdf_font_name(), "Courier");
+    }
+
+    #[test]
+    fn test_text_style_italic_bold() {
+        // Serif + italic -> Times-Italic
+        let style_italic = TextStyle {
+            font_size: 12.0,
+            color: "#000000".to_string(),
+            font_name: Some("serif".to_string()),
+            is_italic: true,
+            is_bold: false,
+        };
+        assert_eq!(style_italic.pdf_font_name(), "Times-Italic");
+
+        // Serif + bold -> Times-Bold
+        let style_bold = TextStyle {
+            font_size: 12.0,
+            color: "#000000".to_string(),
+            font_name: Some("serif".to_string()),
+            is_italic: false,
+            is_bold: true,
+        };
+        assert_eq!(style_bold.pdf_font_name(), "Times-Bold");
+
+        // Serif + bold + italic -> Times-BoldItalic
+        let style_bold_italic = TextStyle {
+            font_size: 12.0,
+            color: "#000000".to_string(),
+            font_name: Some("serif".to_string()),
+            is_italic: true,
+            is_bold: true,
+        };
+        assert_eq!(style_bold_italic.pdf_font_name(), "Times-BoldItalic");
+
+        // Sans-serif + italic -> Helvetica-Oblique
+        let style_sans_italic = TextStyle {
+            font_size: 12.0,
+            color: "#000000".to_string(),
+            font_name: Some("sans-serif".to_string()),
+            is_italic: true,
+            is_bold: false,
+        };
+        assert_eq!(style_sans_italic.pdf_font_name(), "Helvetica-Oblique");
     }
 
     #[test]
@@ -477,6 +612,8 @@ mod tests {
                 font_size: 11.0,
                 color: "#000000".to_string(),
                 font_name: Some("serif".to_string()),
+                is_italic: false,
+                is_bold: false,
             },
         });
 

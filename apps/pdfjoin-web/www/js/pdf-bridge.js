@@ -109,12 +109,23 @@ export const PdfBridge = {
             const pdfWidth = item.width || 0;
             const pdfHeight = item.height || 12; // Default font height
 
+            // Font size is the absolute value of the scaleY component (transform[3])
+            // This represents how tall the font renders in PDF points
+            const fontSize = Math.abs(item.transform[3]) || item.height || 12;
+
             // Get font family from styles (e.g., "serif", "sans-serif", "monospace")
             const fontStyle = styles[item.fontName];
             const fontFamily = fontStyle?.fontFamily || 'sans-serif';
 
+            // Detect italic/bold from font name
+            // Font names often contain style info: "Times-Italic", "Helvetica-Bold", etc.
+            const fontNameLower = (item.fontName || '').toLowerCase();
+            const isItalic = fontNameLower.includes('italic') || fontNameLower.includes('oblique');
+            const isBold = fontNameLower.includes('bold');
+
             // Convert PDF coords to DOM coords if viewport available
             let domBounds = null;
+            let domFontSize = fontSize; // DOM-scaled font size
             if (viewport) {
                 // PDF origin is bottom-left, viewport is top-left
                 const [domX, domY] = viewport.convertToViewportPoint(pdfX, pdfY);
@@ -125,6 +136,8 @@ export const PdfBridge = {
                     width: Math.abs(domX2 - domX) || pdfWidth * viewport.scale,
                     height: Math.abs(domY2 - domY) || pdfHeight * viewport.scale
                 };
+                // Scale font size to match viewport
+                domFontSize = fontSize * viewport.scale;
             }
 
             return {
@@ -134,8 +147,12 @@ export const PdfBridge = {
                 pdfY,
                 pdfWidth,
                 pdfHeight,
+                fontSize,      // PDF font size in points
+                domFontSize,   // Font size scaled to viewport (pixels)
                 fontName: item.fontName,
                 fontFamily, // "serif", "sans-serif", or "monospace"
+                isItalic,   // true if font name contains "italic" or "oblique"
+                isBold,     // true if font name contains "bold"
                 domBounds
             };
         });

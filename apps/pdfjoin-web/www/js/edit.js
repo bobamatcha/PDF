@@ -12,6 +12,14 @@ let operationHistory = [];  // For undo (stores operation IDs)
 let textItems = new Map();  // pageNum -> array of text items with positions
 let activeEditItem = null;  // Currently editing text item
 
+// Whiteout drawing state
+let isDrawing = false;
+let drawStartX = 0;
+let drawStartY = 0;
+let drawOverlay = null;
+let drawPageNum = null;
+let drawPreviewEl = null;
+
 export function setupEditView() {
     const dropZone = document.getElementById('edit-drop-zone');
     const fileInput = document.getElementById('edit-file-input');
@@ -68,7 +76,17 @@ export function setupEditView() {
             document.querySelectorAll('.tool-btn[id^="tool-"]').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             updateCursor();
+            // Deselect whiteout when changing tools
+            deselectWhiteout();
         });
+    });
+
+    // Click on viewer to deselect whiteout
+    document.getElementById('edit-viewer')?.addEventListener('click', (e) => {
+        // Only deselect if not clicking on a whiteout or its handles
+        if (!e.target.closest('.edit-whiteout-overlay')) {
+            deselectWhiteout();
+        }
     });
 
     // Page navigation
@@ -158,11 +176,30 @@ async function renderAllPages() {
 
         // Set up click handler for adding annotations
         overlay.addEventListener('click', (e) => handleOverlayClick(e, i));
+
+        // Set up mouse handlers for whiteout drawing on the PAGE div (not overlay)
+        // This ensures events are captured even when text layer is on top
+        pageDiv.addEventListener('mousedown', (e) => handleWhiteoutStart(e, i, overlay, pageDiv));
+        pageDiv.addEventListener('mousemove', (e) => handleWhiteoutMove(e));
+        pageDiv.addEventListener('mouseup', (e) => handleWhiteoutEnd(e, i));
+        pageDiv.addEventListener('mouseleave', (e) => {
+            if (isDrawing) handleWhiteoutCancel();
+        });
     }
 }
 
 function handleOverlayClick(e, pageNum) {
     if (currentTool === 'select') return;
+
+    // Check if clicking on or inside a whiteout - if so, open its editor
+    // Use elementFromPoint for more accurate detection (handles synthetic events)
+    const elementAtClick = document.elementFromPoint(e.clientX, e.clientY);
+    const whiteout = elementAtClick?.closest('.edit-whiteout-overlay') || e.target.closest('.edit-whiteout-overlay');
+    if (whiteout) {
+        // Open the whiteout's text editor instead of creating new annotation
+        openWhiteoutTextEditor(whiteout, pageNum);
+        return;
+    }
 
     const overlay = e.currentTarget;
     const rect = overlay.getBoundingClientRect();
@@ -193,23 +230,65 @@ function handleOverlayClick(e, pageNum) {
 }
 
 function addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
-    const text = prompt('Enter text:');
-    if (!text || text.trim() === '') return;
+    // Create inline text input instead of using prompt()
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'edit-text-input';
+    input.style.position = 'absolute';
+    input.style.left = domX + 'px';
+    input.style.top = domY + 'px';
+    input.style.minWidth = '150px';
+    input.style.fontSize = '12px';
+    input.style.padding = '2px 4px';
+    input.style.border = '1px solid #007bff';
+    input.style.borderRadius = '2px';
+    input.style.outline = 'none';
+    input.style.zIndex = '100';
+    input.placeholder = 'Type text...';
 
-    // Add to session (PDF coordinates, height adjusted)
-    const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, 12, '#000000');
-    operationHistory.push(opId);
+    overlay.appendChild(input);
+    input.focus();
 
-    // Add visual overlay
-    const textEl = document.createElement('div');
-    textEl.className = 'edit-text-overlay';
-    textEl.textContent = text;
-    textEl.style.left = domX + 'px';
-    textEl.style.top = domY + 'px';
-    textEl.dataset.opId = opId;
+    function saveText() {
+        const text = input.value.trim();
+        input.remove();
 
-    overlay.appendChild(textEl);
-    updateButtons();
+        if (!text) return;
+
+        // Add to session (PDF coordinates, height adjusted)
+        const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, 12, '#000000');
+        operationHistory.push(opId);
+
+        // Add visual overlay
+        const textEl = document.createElement('div');
+        textEl.className = 'edit-text-overlay';
+        textEl.textContent = text;
+        textEl.style.left = domX + 'px';
+        textEl.style.top = domY + 'px';
+        textEl.dataset.opId = opId;
+
+        overlay.appendChild(textEl);
+        updateButtons();
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveText();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            input.remove();
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        // Small delay to allow click events to process
+        setTimeout(() => {
+            if (input.parentElement) {
+                saveText();
+            }
+        }, 100);
+    });
 }
 
 function addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
@@ -251,6 +330,568 @@ function addHighlightAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
     highlight.dataset.opId = opId;
 
     overlay.appendChild(highlight);
+    updateButtons();
+}
+
+// ============ Whiteout Drawing Functions ============
+
+let drawPageDiv = null;
+
+function handleWhiteoutStart(e, pageNum, overlay, pageDiv) {
+    if (currentTool !== 'whiteout') return;
+
+    // Prevent text selection while drawing
+    e.preventDefault();
+    e.stopPropagation();
+
+    isDrawing = true;
+    drawOverlay = overlay;
+    drawPageNum = pageNum;
+    drawPageDiv = pageDiv;
+
+    // Get position relative to the page div
+    const rect = pageDiv.getBoundingClientRect();
+    drawStartX = e.clientX - rect.left;
+    drawStartY = e.clientY - rect.top;
+
+    // Create preview rectangle
+    drawPreviewEl = document.createElement('div');
+    drawPreviewEl.className = 'whiteout-preview';
+    drawPreviewEl.style.left = drawStartX + 'px';
+    drawPreviewEl.style.top = drawStartY + 'px';
+    drawPreviewEl.style.width = '0px';
+    drawPreviewEl.style.height = '0px';
+    pageDiv.appendChild(drawPreviewEl);
+}
+
+function handleWhiteoutMove(e) {
+    if (!isDrawing || !drawPreviewEl || !drawPageDiv) return;
+
+    const rect = drawPageDiv.getBoundingClientRect();
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    // Calculate rectangle dimensions (handle negative widths/dragging in any direction)
+    const x = Math.min(drawStartX, currentX);
+    const y = Math.min(drawStartY, currentY);
+    const width = Math.abs(currentX - drawStartX);
+    const height = Math.abs(currentY - drawStartY);
+
+    drawPreviewEl.style.left = x + 'px';
+    drawPreviewEl.style.top = y + 'px';
+    drawPreviewEl.style.width = width + 'px';
+    drawPreviewEl.style.height = height + 'px';
+}
+
+function handleWhiteoutEnd(e, pageNum) {
+    if (!isDrawing || !drawPreviewEl || !drawPageDiv) return;
+
+    const rect = drawPageDiv.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+
+    // Calculate rectangle dimensions in DOM coords
+    const domX = Math.min(drawStartX, endX);
+    const domY = Math.min(drawStartY, endY);
+    const domWidth = Math.abs(endX - drawStartX);
+    const domHeight = Math.abs(endY - drawStartY);
+
+    // Remove preview
+    if (drawPreviewEl) {
+        drawPreviewEl.remove();
+        drawPreviewEl = null;
+    }
+
+    // Only add if rectangle is big enough (at least 5x5 pixels)
+    if (domWidth >= 5 && domHeight >= 5) {
+        addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight);
+    }
+
+    isDrawing = false;
+    drawOverlay = null;
+    drawPageDiv = null;
+    drawPageNum = null;
+}
+
+function handleWhiteoutCancel() {
+    if (drawPreviewEl) {
+        drawPreviewEl.remove();
+        drawPreviewEl = null;
+    }
+    isDrawing = false;
+    drawOverlay = null;
+    drawPageDiv = null;
+    drawPageNum = null;
+}
+
+let selectedWhiteout = null;
+
+function addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight) {
+    // Get page info for coordinate conversion
+    const pageInfo = PdfBridge.getPageInfo(pageNum);
+    if (!pageInfo) return;
+
+    // Convert DOM coordinates to PDF coordinates
+    const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+    const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+    const pdfX = domX * scaleX;
+    const pdfWidth = domWidth * scaleX;
+    const pdfHeight = domHeight * scaleY;
+    // PDF Y is from bottom, DOM Y is from top
+    const pdfY = pageInfo.page.view[3] - ((domY + domHeight) * scaleY);
+
+    // Add to session
+    const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+    operationHistory.push(opId);
+
+    // Add visual overlay
+    const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+    const whiteRect = document.createElement('div');
+    whiteRect.className = 'edit-whiteout-overlay';
+    whiteRect.style.left = domX + 'px';
+    whiteRect.style.top = domY + 'px';
+    whiteRect.style.width = domWidth + 'px';
+    whiteRect.style.height = domHeight + 'px';
+    whiteRect.dataset.opId = opId;
+    whiteRect.dataset.page = pageNum;
+
+    // Mousedown to select and start move
+    whiteRect.addEventListener('mousedown', (e) => {
+        // Don't interfere with resize handles
+        if (e.target.classList.contains('resize-handle')) return;
+
+        e.stopPropagation();
+        e.preventDefault();
+        selectWhiteout(whiteRect);
+        startMove(e, whiteRect);
+    });
+
+    // Double-click to add text inside whiteout
+    whiteRect.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        openWhiteoutTextEditor(whiteRect, pageNum);
+    });
+
+    overlay.appendChild(whiteRect);
+
+    // Auto-select the newly created whiteout
+    selectWhiteout(whiteRect);
+
+    updateButtons();
+}
+
+function selectWhiteout(whiteRect) {
+    // Deselect previous
+    if (selectedWhiteout) {
+        selectedWhiteout.classList.remove('selected');
+        // Remove resize handles
+        selectedWhiteout.querySelectorAll('.resize-handle').forEach(h => h.remove());
+    }
+
+    selectedWhiteout = whiteRect;
+    whiteRect.classList.add('selected');
+
+    // Add resize handles
+    const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+    handles.forEach(pos => {
+        const handle = document.createElement('div');
+        handle.className = `resize-handle ${pos}`;
+        handle.dataset.handle = pos;
+        handle.addEventListener('mousedown', (e) => startResize(e, whiteRect, pos));
+        whiteRect.appendChild(handle);
+    });
+}
+
+function deselectWhiteout() {
+    if (selectedWhiteout) {
+        selectedWhiteout.classList.remove('selected');
+        selectedWhiteout.querySelectorAll('.resize-handle').forEach(h => h.remove());
+        selectedWhiteout = null;
+    }
+}
+
+// Resize state
+let resizing = false;
+let resizeTarget = null;
+let resizeHandle = '';
+let resizeStartX = 0;
+let resizeStartY = 0;
+let resizeStartRect = null;
+
+function startResize(e, whiteRect, handle) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    resizing = true;
+    resizeTarget = whiteRect;
+    resizeHandle = handle;
+    resizeStartX = e.clientX;
+    resizeStartY = e.clientY;
+    resizeStartRect = {
+        left: parseFloat(whiteRect.style.left),
+        top: parseFloat(whiteRect.style.top),
+        width: parseFloat(whiteRect.style.width),
+        height: parseFloat(whiteRect.style.height)
+    };
+
+    document.addEventListener('mousemove', handleResize);
+    document.addEventListener('mouseup', endResize);
+}
+
+function handleResize(e) {
+    if (!resizing || !resizeTarget) return;
+
+    const dx = e.clientX - resizeStartX;
+    const dy = e.clientY - resizeStartY;
+
+    let newLeft = resizeStartRect.left;
+    let newTop = resizeStartRect.top;
+    let newWidth = resizeStartRect.width;
+    let newHeight = resizeStartRect.height;
+
+    // Adjust based on which handle is being dragged
+    if (resizeHandle.includes('w')) {
+        newLeft = resizeStartRect.left + dx;
+        newWidth = resizeStartRect.width - dx;
+    }
+    if (resizeHandle.includes('e')) {
+        newWidth = resizeStartRect.width + dx;
+    }
+    if (resizeHandle.includes('n')) {
+        newTop = resizeStartRect.top + dy;
+        newHeight = resizeStartRect.height - dy;
+    }
+    if (resizeHandle.includes('s')) {
+        newHeight = resizeStartRect.height + dy;
+    }
+
+    // Ensure minimum size
+    if (newWidth < 10) {
+        if (resizeHandle.includes('w')) {
+            newLeft = resizeStartRect.left + resizeStartRect.width - 10;
+        }
+        newWidth = 10;
+    }
+    if (newHeight < 10) {
+        if (resizeHandle.includes('n')) {
+            newTop = resizeStartRect.top + resizeStartRect.height - 10;
+        }
+        newHeight = 10;
+    }
+
+    resizeTarget.style.left = newLeft + 'px';
+    resizeTarget.style.top = newTop + 'px';
+    resizeTarget.style.width = newWidth + 'px';
+    resizeTarget.style.height = newHeight + 'px';
+}
+
+function endResize(e) {
+    if (!resizing || !resizeTarget) return;
+
+    // IMPORTANT: Remove event listeners FIRST to prevent stuck state
+    document.removeEventListener('mousemove', handleResize);
+    document.removeEventListener('mouseup', endResize);
+
+    // Store reference before clearing state
+    const target = resizeTarget;
+    const pageNum = parseInt(target.dataset.page);
+    const opId = parseInt(target.dataset.opId);
+
+    // Clear state immediately
+    resizing = false;
+    resizeTarget = null;
+    resizeHandle = '';
+
+    // Now update the PDF operation (errors here won't leave listeners stuck)
+    try {
+        editSession.removeOperation(opId);
+
+        const pageInfo = PdfBridge.getPageInfo(pageNum);
+        if (pageInfo) {
+            const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+            const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+            const domX = parseFloat(target.style.left);
+            const domY = parseFloat(target.style.top);
+            const domWidth = parseFloat(target.style.width);
+            const domHeight = parseFloat(target.style.height);
+
+            const pdfX = domX * scaleX;
+            const pdfWidth = domWidth * scaleX;
+            const pdfHeight = domHeight * scaleY;
+            const pdfY = pageInfo.page.view[3] - ((domY + domHeight) * scaleY);
+
+            const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+            target.dataset.opId = newOpId;
+
+            // Update operation history
+            const idx = operationHistory.indexOf(opId);
+            if (idx !== -1) {
+                operationHistory[idx] = newOpId;
+            }
+        }
+    } catch (err) {
+        console.error('Error updating resize operation:', err);
+    }
+}
+
+// ============ Move Whiteout Functions ============
+
+let moving = false;
+let moveTarget = null;
+let moveStartX = 0;
+let moveStartY = 0;
+let moveStartLeft = 0;
+let moveStartTop = 0;
+
+function startMove(e, whiteRect) {
+    // Don't start move if we're resizing
+    if (resizing) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    moving = true;
+    moveTarget = whiteRect;
+    moveStartX = e.clientX;
+    moveStartY = e.clientY;
+    moveStartLeft = parseFloat(whiteRect.style.left);
+    moveStartTop = parseFloat(whiteRect.style.top);
+
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', endMove);
+}
+
+function handleMove(e) {
+    if (!moving || !moveTarget) return;
+
+    const dx = e.clientX - moveStartX;
+    const dy = e.clientY - moveStartY;
+
+    moveTarget.style.left = (moveStartLeft + dx) + 'px';
+    moveTarget.style.top = (moveStartTop + dy) + 'px';
+}
+
+function endMove(e) {
+    if (!moving || !moveTarget) return;
+
+    // IMPORTANT: Remove event listeners FIRST to prevent stuck state
+    document.removeEventListener('mousemove', handleMove);
+    document.removeEventListener('mouseup', endMove);
+
+    // Store reference before clearing state
+    const target = moveTarget;
+    const pageNum = parseInt(target.dataset.page);
+    const opId = parseInt(target.dataset.opId);
+
+    // Clear state immediately
+    moving = false;
+    moveTarget = null;
+
+    // Now update the PDF operation (errors here won't leave listeners stuck)
+    try {
+        editSession.removeOperation(opId);
+
+        const pageInfo = PdfBridge.getPageInfo(pageNum);
+        if (pageInfo) {
+            const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+            const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+            const domX = parseFloat(target.style.left);
+            const domY = parseFloat(target.style.top);
+            const domWidth = parseFloat(target.style.width);
+            const domHeight = parseFloat(target.style.height);
+
+            const pdfX = domX * scaleX;
+            const pdfWidth = domWidth * scaleX;
+            const pdfHeight = domHeight * scaleY;
+            const pdfY = pageInfo.page.view[3] - ((domY + domHeight) * scaleY);
+
+            const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+            target.dataset.opId = newOpId;
+
+            // Update operation history
+            const idx = operationHistory.indexOf(opId);
+            if (idx !== -1) {
+                operationHistory[idx] = newOpId;
+            }
+        }
+    } catch (err) {
+        console.error('Error updating move operation:', err);
+    }
+}
+
+// ============ Whiteout Text Editor ============
+
+async function openWhiteoutTextEditor(whiteRect, pageNum) {
+    // Check if already editing
+    if (whiteRect.querySelector('.whiteout-text-input')) {
+        return;
+    }
+
+    // Get whiteout dimensions
+    const domX = parseFloat(whiteRect.style.left);
+    const domY = parseFloat(whiteRect.style.top);
+    const domWidth = parseFloat(whiteRect.style.width);
+    const domHeight = parseFloat(whiteRect.style.height);
+
+    // Detect covered text style
+    const coveredStyle = await detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight);
+
+    // Create input INSIDE the whiteout
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'whiteout-text-input';
+    input.placeholder = '';
+    input.style.width = '100%';
+    input.style.height = '100%';
+    input.style.border = 'none';
+    input.style.outline = 'none';
+    input.style.background = 'transparent';
+    input.style.padding = '2px 4px';
+    input.style.boxSizing = 'border-box';
+    input.style.textAlign = 'center';
+
+    // Apply covered text style
+    input.style.fontSize = coveredStyle.fontSize + 'px';
+    input.style.fontFamily = coveredStyle.fontFamily;
+    input.style.color = '#000000';
+
+    // Store style info for saving
+    input.dataset.fontSize = coveredStyle.fontSize;
+    input.dataset.fontFamily = coveredStyle.fontFamily;
+
+    whiteRect.appendChild(input);
+    input.focus();
+
+    // Handle Enter to save
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveWhiteoutText(whiteRect, pageNum, input);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            input.remove();
+        }
+    });
+
+    // Handle blur to save
+    input.addEventListener('blur', () => {
+        // Small delay to allow click events to process
+        setTimeout(() => {
+            if (input.parentElement && input.value.trim()) {
+                saveWhiteoutText(whiteRect, pageNum, input);
+            } else if (input.parentElement) {
+                input.remove();
+            }
+        }, 100);
+    });
+}
+
+async function detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight) {
+    // Default style
+    const defaultStyle = { fontSize: 12, fontFamily: 'Helvetica, Arial, sans-serif' };
+
+    try {
+        // Get text items from this page
+        const textItems = await PdfBridge.extractTextWithPositions(pageNum);
+        if (!textItems || textItems.length === 0) {
+            return defaultStyle;
+        }
+
+        // Find text items that overlap with the whiteout area
+        const overlapping = textItems.filter(item => {
+            if (!item.domBounds) return false;
+            const b = item.domBounds;
+            // Check if text item intersects with whiteout
+            return !(b.x + b.width < domX || b.x > domX + domWidth ||
+                     b.y + b.height < domY || b.y > domY + domHeight);
+        });
+
+        if (overlapping.length === 0) {
+            return defaultStyle;
+        }
+
+        // Use the first overlapping item's style
+        const item = overlapping[0];
+        // Use domFontSize (viewport-scaled) for display in the DOM
+        return {
+            fontSize: item.domFontSize || item.fontSize || 12,
+            fontFamily: item.fontFamily || defaultStyle.fontFamily
+        };
+    } catch (err) {
+        console.error('Error detecting covered text style:', err);
+        return defaultStyle;
+    }
+}
+
+function saveWhiteoutText(whiteRect, pageNum, input) {
+    const text = input.value.trim();
+    if (!text) {
+        input.remove();
+        return;
+    }
+
+    // Get position and style info
+    const domX = parseFloat(whiteRect.style.left);
+    const domY = parseFloat(whiteRect.style.top);
+    const domWidth = parseFloat(whiteRect.style.width);
+    const domHeight = parseFloat(whiteRect.style.height);
+    const fontSize = parseFloat(input.dataset.fontSize) || 12;
+
+    // Convert to PDF coordinates
+    const pageInfo = PdfBridge.getPageInfo(pageNum);
+    if (!pageInfo) {
+        input.remove();
+        return;
+    }
+
+    const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+    const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+    const pdfX = domX * scaleX;
+    const pdfWidth = domWidth * scaleX;
+    const pdfHeight = domHeight * scaleY;
+    const pdfY = pageInfo.page.view[3] - ((domY + domHeight) * scaleY);
+
+    // Add text annotation at the whiteout position
+    const opId = editSession.addText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        text,
+        fontSize,
+        '#000000'
+    );
+    operationHistory.push(opId);
+
+    // Replace input with text span INSIDE the whiteout
+    const textSpan = document.createElement('span');
+    textSpan.className = 'whiteout-text-content';
+    textSpan.textContent = text;
+    textSpan.style.display = 'flex';
+    textSpan.style.alignItems = 'center';
+    textSpan.style.justifyContent = 'center';
+    textSpan.style.width = '100%';
+    textSpan.style.height = '100%';
+    textSpan.style.fontSize = fontSize + 'px';
+    textSpan.style.fontFamily = input.dataset.fontFamily || 'Helvetica, Arial, sans-serif';
+    textSpan.style.color = '#000000';
+    textSpan.style.overflow = 'hidden';
+    textSpan.style.textOverflow = 'ellipsis';
+    textSpan.style.whiteSpace = 'nowrap';
+    textSpan.dataset.opId = opId;
+
+    // Remove input and add text span
+    input.remove();
+    whiteRect.appendChild(textSpan);
+
+    // Store text op ID on whiteRect for reference
+    whiteRect.dataset.textOpId = opId;
+
     updateButtons();
 }
 
@@ -303,6 +944,11 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
 
     activeEditItem = { pageNum, index, textItem, spanElement };
 
+    // Map CSS generic font family to web-safe fonts for preview
+    const fontFamily = mapFontFamilyForPreview(textItem.fontFamily);
+    // Use pdfHeight scaled by 1.5 (our render scale) for preview size
+    const fontSize = (textItem.pdfHeight || 12) * 1.5;
+
     // Create inline editor
     const editor = document.createElement('div');
     editor.className = 'text-editor-popup';
@@ -314,6 +960,14 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
         </div>
     `;
 
+    // Apply font styling to input for accurate preview
+    const input = editor.querySelector('.text-editor-input');
+    input.style.fontFamily = fontFamily;
+    input.style.fontSize = fontSize + 'px';
+    // Preserve italic/bold styles
+    if (textItem.isItalic) input.style.fontStyle = 'italic';
+    if (textItem.isBold) input.style.fontWeight = 'bold';
+
     // Position near the text item
     const bounds = textItem.domBounds;
     editor.style.left = bounds.x + 'px';
@@ -322,8 +976,7 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
     const pageDiv = document.querySelector(`.edit-page[data-page="${pageNum}"]`);
     pageDiv.appendChild(editor);
 
-    // Focus input
-    const input = editor.querySelector('.text-editor-input');
+    // Focus input (already queried above for styling)
     input.focus();
     input.select();
 
@@ -374,7 +1027,7 @@ function applyTextReplacement(pageNum, textItem, newText) {
     const fontSize = textItem.pdfHeight || 12.0;
 
     // Use PDF coordinates from text item
-    // Note: We add a small padding to the height for the white cover
+    // Note: The Rust code adds padding to the white cover rectangle
     const opId = editSession.replaceText(
         pageNum,
         // Original rect (to cover)
@@ -393,20 +1046,40 @@ function applyTextReplacement(pageNum, textItem, newText) {
         fontSize,
         '#000000',
         // Font family from PDF.js styles (e.g., "serif", "sans-serif", "monospace")
-        textItem.fontFamily || null
+        textItem.fontFamily || null,
+        // Font style flags (detected from PDF.js font name)
+        textItem.isItalic || false,
+        textItem.isBold || false
     );
 
     operationHistory.push(opId);
 
-    // Add visual indicator (replacement overlay)
+    // Calculate DOM font size (scaled by 1.5 render scale)
+    const domFontSize = (textItem.pdfHeight || 12) * 1.5;
+    const fontFamily = mapFontFamilyForPreview(textItem.fontFamily);
+
+    // Add visual indicator (replacement overlay) with matching font
     const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
     const replaceEl = document.createElement('div');
     replaceEl.className = 'edit-replace-overlay';
     replaceEl.textContent = newText;
-    replaceEl.style.left = textItem.domBounds.x + 'px';
-    replaceEl.style.top = textItem.domBounds.y + 'px';
-    replaceEl.style.minWidth = textItem.domBounds.width + 'px';
-    replaceEl.style.height = textItem.domBounds.height + 'px';
+
+    // Position with generous padding to ensure full coverage of original canvas text
+    const padding = 15; // Liberal padding to cover descenders, ascenders, and rendering artifacts
+    replaceEl.style.left = (textItem.domBounds.x - padding) + 'px';
+    replaceEl.style.top = (textItem.domBounds.y - padding) + 'px';
+    replaceEl.style.minWidth = (textItem.domBounds.width + padding * 2) + 'px';
+    replaceEl.style.minHeight = (textItem.domBounds.height + padding * 2) + 'px';
+    replaceEl.style.padding = padding + 'px';
+    replaceEl.style.boxSizing = 'border-box';
+
+    // Apply matching font styling (family, size, italic, bold)
+    replaceEl.style.fontFamily = fontFamily;
+    replaceEl.style.fontSize = domFontSize + 'px';
+    replaceEl.style.lineHeight = '1';
+    if (textItem.isItalic) replaceEl.style.fontStyle = 'italic';
+    if (textItem.isBold) replaceEl.style.fontWeight = 'bold';
+
     replaceEl.dataset.opId = opId;
     overlay.appendChild(replaceEl);
 
@@ -423,6 +1096,27 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+// Map PDF.js font family to web-safe CSS font for preview
+function mapFontFamilyForPreview(fontFamily) {
+    if (!fontFamily) return 'sans-serif';
+
+    const lower = fontFamily.toLowerCase();
+
+    // CSS generic families
+    if (lower === 'serif') return 'Georgia, "Times New Roman", Times, serif';
+    if (lower === 'sans-serif') return 'Arial, Helvetica, sans-serif';
+    if (lower === 'monospace') return '"Courier New", Courier, monospace';
+
+    // Specific font names
+    if (lower.includes('times')) return '"Times New Roman", Times, serif';
+    if (lower.includes('arial') || lower.includes('helvetica')) return 'Arial, Helvetica, sans-serif';
+    if (lower.includes('courier') || lower.includes('mono')) return '"Courier New", Courier, monospace';
+    if (lower.includes('georgia')) return 'Georgia, serif';
+
+    // Default to sans-serif
+    return 'sans-serif';
 }
 
 function undoLastOperation() {
@@ -473,6 +1167,11 @@ function resetEditView() {
     currentTool = 'select';
     textItems.clear();
     closeTextEditor();
+
+    // Reset whiteout drawing and selection state
+    handleWhiteoutCancel();
+    deselectWhiteout();
+    selectedWhiteout = null;
 
     // Reset UI
     document.getElementById('edit-drop-zone').classList.remove('hidden');
@@ -528,8 +1227,15 @@ function updateCursor() {
         case 'text': viewer.style.cursor = 'text'; break;
         case 'highlight': viewer.style.cursor = 'crosshair'; break;
         case 'checkbox': viewer.style.cursor = 'pointer'; break;
+        case 'whiteout': viewer.style.cursor = 'crosshair'; break;
         default: viewer.style.cursor = 'default';
     }
+
+    // Disable text layer pointer events when whiteout tool is active
+    // This allows mouse events to reach the page div for drawing
+    document.querySelectorAll('.text-layer').forEach(layer => {
+        layer.style.pointerEvents = (currentTool === 'whiteout') ? 'none' : 'auto';
+    });
 }
 
 function showError(containerId, message) {

@@ -94,6 +94,8 @@ impl EditSession {
                 font_size,
                 color: color.to_string(),
                 font_name: None, // AddText uses default font
+                is_italic: false,
+                is_bold: false,
             },
         };
         self.operations.add(op)
@@ -175,6 +177,9 @@ impl EditSession {
         color: &str,
         // Font name from PDF.js (e.g., "Times-Roman", "BCDEEE+ArialMT")
         font_name: Option<String>,
+        // Font style flags
+        is_italic: bool,
+        is_bold: bool,
     ) -> u64 {
         let op = EditOperation::ReplaceText {
             id: 0,
@@ -197,6 +202,24 @@ impl EditSession {
                 font_size,
                 color: color.to_string(),
                 font_name,
+                is_italic,
+                is_bold,
+            },
+        };
+        self.operations.add(op)
+    }
+
+    /// Add a white rectangle to cover/redact content
+    #[wasm_bindgen(js_name = addWhiteRect)]
+    pub fn add_white_rect(&mut self, page: u32, x: f64, y: f64, width: f64, height: f64) -> u64 {
+        let op = EditOperation::AddWhiteRect {
+            id: 0,
+            page,
+            rect: PdfRect {
+                x,
+                y,
+                width,
+                height,
             },
         };
         self.operations.add(op)
