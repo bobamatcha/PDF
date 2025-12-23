@@ -21,6 +21,7 @@ use std::time::Duration;
 async fn test_agentpdf_homepage_loads() {
     skip_if_no_chrome!();
     require_local_server!("http://127.0.0.1:8080");
+    require_correct_app!("http://127.0.0.1:8080", "use-template-btn", "agentpdf-web");
 
     let Some((browser, _handle)) = browser::require_browser().await else {
         return;
@@ -78,6 +79,7 @@ async fn test_agentpdf_homepage_loads() {
 async fn test_agentpdf_state_selector_works() {
     skip_if_no_chrome!();
     require_local_server!("http://127.0.0.1:8080");
+    require_correct_app!("http://127.0.0.1:8080", "use-template-btn", "agentpdf-web");
 
     let Some((browser, _handle)) = browser::require_browser().await else {
         return;
@@ -113,6 +115,7 @@ async fn test_agentpdf_state_selector_works() {
 async fn test_agentpdf_template_generation_no_stack_overflow() {
     skip_if_no_chrome!();
     require_local_server!("http://127.0.0.1:8080");
+    require_correct_app!("http://127.0.0.1:8080", "use-template-btn", "agentpdf-web");
 
     let Some((browser, _handle)) = browser::require_browser().await else {
         return;
@@ -234,6 +237,7 @@ async fn test_agentpdf_template_generation_no_stack_overflow() {
 async fn test_agentpdf_mobile_viewport() {
     skip_if_no_chrome!();
     require_local_server!("http://127.0.0.1:8080");
+    require_correct_app!("http://127.0.0.1:8080", "use-template-btn", "agentpdf-web");
 
     let Some((browser, _handle)) = browser::require_browser().await else {
         return;

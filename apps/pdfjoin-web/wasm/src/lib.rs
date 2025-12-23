@@ -34,6 +34,8 @@
 //! const result = session.execute();
 //! ```
 
+pub mod coords;
+pub mod edit_session;
 pub mod page_info;
 pub mod session;
 pub mod validation;
@@ -41,6 +43,7 @@ pub mod validation;
 use wasm_bindgen::prelude::*;
 
 // Re-export main types for JavaScript
+pub use edit_session::EditSession;
 pub use page_info::{PageInfo, PageOrientation};
 pub use session::{PdfJoinSession, SessionMode};
 pub use validation::PdfInfo;

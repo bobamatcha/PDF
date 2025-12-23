@@ -12,6 +12,8 @@
     <meta property="og:url" content="https://pdfjoin.org">
     <link rel="canonical" href="https://pdfjoin.org">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>">
+    <!-- PDF.js is lazy-loaded via js/pdf-loader.js to avoid bloating main bundle -->
+    <!-- The js/vendor/ directory contains pdf.min.js and pdf.worker.min.js -->
     <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
     <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
     <!-- Trunk: Copy static files -->
@@ -114,10 +116,311 @@
         /* Utilities */
         .hidden { display: none !important; }
 
+        /* Signed PDF Warning - Senior-Friendly */
+        .signed-warning {
+            background: #fef3c7;
+            border: 2px solid #f59e0b;
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .signed-warning .warning-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+        .signed-warning h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #92400e;
+        }
+        .signed-warning .warning-text {
+            font-size: 1.1rem;
+            color: #78350f;
+            margin-bottom: 1.5rem;
+        }
+        .signed-warning .warning-options {
+            text-align: left;
+            background: white;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+        .signed-warning .warning-options h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .signed-warning .warning-options ul {
+            margin-left: 1.5rem;
+        }
+        .signed-warning .warning-options li {
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+        .signed-warning .warning-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* Edit Toolbar */
+        .edit-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px 12px 0 0;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .toolbar-section {
+            display: flex;
+            gap: 0.25rem;
+        }
+        .tool-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.5rem 0.75rem;
+            background: transparent;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 60px;
+        }
+        .tool-btn:hover {
+            background: rgba(37, 99, 235, 0.1);
+        }
+        .tool-btn.active {
+            background: rgba(37, 99, 235, 0.15);
+            border-color: var(--primary);
+        }
+        .tool-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .tool-icon {
+            font-size: 1.5rem;
+        }
+        .tool-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Edit Editor */
+        .edit-editor {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+        .edit-file-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+        }
+        .edit-viewer {
+            padding: 1rem;
+            min-height: 400px;
+            max-height: 60vh;
+            overflow: auto;
+            background: #e5e7eb;
+        }
+        .edit-pages {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            align-items: center;
+        }
+        .edit-page {
+            position: relative;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .edit-page canvas {
+            display: block;
+        }
+        .edit-page .overlay-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        .edit-page .overlay-container > * {
+            pointer-events: auto;
+        }
+
+        /* Page Navigation */
+        .edit-nav {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--card-bg);
+            border-radius: 0 0 12px 12px;
+        }
+        .nav-btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Overlay Elements */
+        .edit-text-overlay {
+            position: absolute;
+            background: rgba(255, 255, 200, 0.9);
+            border: 1px solid #ccc;
+            padding: 4px 8px;
+            cursor: move;
+            min-width: 50px;
+            min-height: 20px;
+            font-size: 14px;
+        }
+        .edit-text-overlay:hover {
+            border-color: var(--primary);
+        }
+        .edit-highlight-overlay {
+            position: absolute;
+            background: rgba(255, 255, 0, 0.3);
+            cursor: move;
+            border: 1px dashed transparent;
+        }
+        .edit-highlight-overlay:hover {
+            border-color: #f59e0b;
+        }
+        .edit-checkbox-overlay {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #333;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .edit-checkbox-overlay.checked {
+            background: #4ade80;
+            color: white;
+        }
+
+        /* Text Layer for hover/edit */
+        .text-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        .text-item {
+            position: absolute;
+            pointer-events: auto;
+            cursor: text;
+            background: transparent;
+            border: 1px solid transparent;
+            transition: background 0.15s, border-color 0.15s;
+            color: transparent;
+            overflow: hidden;
+            white-space: nowrap;
+            font-size: 12px;
+            line-height: 1;
+        }
+        .text-item.hover {
+            background: rgba(37, 99, 235, 0.15);
+            border-color: var(--primary);
+        }
+        .text-item.editing {
+            background: rgba(37, 99, 235, 0.25);
+            border-color: var(--primary);
+        }
+        .text-item.replaced {
+            display: none;
+        }
+
+        /* Inline Text Editor */
+        .text-editor-popup {
+            position: absolute;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            padding: 0.5rem;
+            z-index: 100;
+            min-width: 200px;
+        }
+        .text-editor-input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .text-editor-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+        .text-editor-save {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .text-editor-cancel {
+            background: transparent;
+            border: 1px solid var(--border);
+            padding: 0.4rem 0.8rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        /* Replacement Overlay */
+        .edit-replace-overlay {
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 2px 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            line-height: 1.2;
+        }
+        .edit-replace-overlay:hover {
+            border-color: var(--primary);
+        }
+
         @media (max-width: 600px) {
             .container { padding: 1rem; }
             .controls { flex-direction: column; }
             .primary-btn { width: 100%; }
+            .edit-toolbar { flex-direction: column; }
+            .tool-btn { min-width: 50px; padding: 0.25rem 0.5rem; }
+            .tool-label { display: none; }
         }
     </style>
 </head>
@@ -131,6 +434,7 @@
         <nav class="tabs">
             <button class="tab active" data-tab="split">Split PDF</button>
             <button class="tab" data-tab="merge">Merge PDFs</button>
+            <button class="tab" data-tab="edit">Edit PDF</button>
         </nav>
 
         <!-- Split View -->
@@ -199,6 +503,99 @@
                     <div class="progress-bar"><div class="progress-fill"></div></div>
                     <p class="progress-text">Processing...</p>
                 </div>
+            </div>
+        </section>
+
+        <!-- Edit View -->
+        <section id="edit-view" class="view hidden">
+            <!-- Drop zone (initial state) -->
+            <div id="edit-drop-zone" class="drop-zone">
+                <input type="file" id="edit-file-input" accept=".pdf" hidden>
+                <div class="drop-content">
+                    <div class="drop-icon">&#9998;</div>
+                    <p>Drag & drop a PDF here or <button id="edit-browse-btn">browse</button></p>
+                    <p class="drop-hint">Add text, highlights, and annotations</p>
+                </div>
+            </div>
+
+            <!-- Signature warning (shown for signed PDFs) -->
+            <div id="edit-signed-warning" class="signed-warning hidden">
+                <div class="warning-icon">&#9888;</div>
+                <h2>This PDF Has a Digital Signature</h2>
+                <p class="warning-text">
+                    Editing this document would break its signature and make it invalid.
+                </p>
+                <div class="warning-options">
+                    <h3>What you can do:</h3>
+                    <ul>
+                        <li>Use <strong>Split</strong> or <strong>Merge</strong> (signatures will be removed)</li>
+                        <li>Contact the sender for an unsigned copy</li>
+                    </ul>
+                </div>
+                <div class="warning-actions">
+                    <button id="edit-go-back-btn" class="primary-btn">Go Back</button>
+                    <button id="edit-use-split-btn" class="secondary-btn">Use Split/Merge Instead</button>
+                </div>
+            </div>
+
+            <!-- Editor (shown for unsigned PDFs) -->
+            <div id="edit-editor" class="edit-editor hidden">
+                <!-- Toolbar -->
+                <div class="edit-toolbar">
+                    <div class="toolbar-section">
+                        <button id="tool-select" class="tool-btn active" title="Select &amp; Edit Text">
+                            <span class="tool-icon">&#9757;</span>
+                            <span class="tool-label">Select</span>
+                        </button>
+                        <button id="tool-text" class="tool-btn" title="Add Text">
+                            <span class="tool-icon">T</span>
+                            <span class="tool-label">Text</span>
+                        </button>
+                        <button id="tool-highlight" class="tool-btn" title="Highlight">
+                            <span class="tool-icon">&#128396;</span>
+                            <span class="tool-label">Highlight</span>
+                        </button>
+                        <button id="tool-checkbox" class="tool-btn" title="Checkbox">
+                            <span class="tool-icon">&#9745;</span>
+                            <span class="tool-label">Check</span>
+                        </button>
+                    </div>
+
+                    <div class="toolbar-section toolbar-right">
+                        <button id="edit-undo-btn" class="tool-btn" title="Undo" disabled>
+                            &#8630; Undo
+                        </button>
+                        <button id="edit-download-btn" class="primary-btn" disabled>
+                            Download Edited PDF
+                        </button>
+                    </div>
+                </div>
+
+                <!-- File info bar -->
+                <div class="edit-file-info">
+                    <span id="edit-file-name" class="file-name"></span>
+                    <span id="edit-file-details" class="file-details"></span>
+                    <button id="edit-remove-btn" class="remove-btn" title="Remove file">&times;</button>
+                </div>
+
+                <!-- PDF viewer with overlays -->
+                <div id="edit-viewer" class="edit-viewer">
+                    <div id="edit-pages" class="edit-pages">
+                        <!-- Pages will be rendered here -->
+                    </div>
+                </div>
+
+                <!-- Page navigation -->
+                <div class="edit-nav">
+                    <button id="edit-prev-page" class="nav-btn" disabled>&larr; Previous</button>
+                    <span id="edit-page-indicator">Page 1 of 1</span>
+                    <button id="edit-next-page" class="nav-btn" disabled>Next &rarr;</button>
+                </div>
+            </div>
+
+            <div id="edit-error" class="error-msg hidden">
+                <span class="error-text"></span>
+                <button class="dismiss">&times;</button>
             </div>
         </section>
 

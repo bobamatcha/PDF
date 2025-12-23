@@ -1,6 +1,8 @@
 // PDFJoin - Single Page App
 // Uses window.wasmBindings from Trunk-injected WASM loader
 
+import { setupEditView } from './edit.js';
+
 const { PdfJoinSession, SessionMode, format_bytes } = window.wasmBindings;
 
 // Size thresholds
@@ -24,6 +26,7 @@ export function init() {
     setupTabs();
     setupSplitView();
     setupMergeView();
+    setupEditView();  // Initialize edit tab
 
     console.log('PDFJoin initialized (WASM-first architecture)');
 }

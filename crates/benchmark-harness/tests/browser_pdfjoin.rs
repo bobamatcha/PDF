@@ -1712,3 +1712,696 @@ async fn test_pdfjoin_merge_browse_multiple_files() {
         files_selected, files_added, result["fileNames"]
     );
 }
+
+// ============================================================================
+// Text Edit Feature Tests - Font Preservation
+// ============================================================================
+
+/// Test that the Edit tab exists in pdfjoin-web
+#[tokio::test]
+async fn test_pdfjoin_edit_tab_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"({
+            hasEditTab: !!document.querySelector('[data-tab="edit"]'),
+            hasEditView: !!document.querySelector('#edit-view'),
+            hasEditDropZone: !!document.querySelector('#edit-drop-zone'),
+            hasEditFileInput: !!document.querySelector('#edit-file-input')
+        })"#,
+        )
+        .await
+        .expect("Should evaluate JS")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Edit tab elements: {:?}", result);
+
+    assert!(
+        result["hasEditTab"].as_bool().unwrap_or(false),
+        "Should have edit tab button"
+    );
+    assert!(
+        result["hasEditView"].as_bool().unwrap_or(false),
+        "Should have edit view section"
+    );
+    assert!(
+        result["hasEditDropZone"].as_bool().unwrap_or(false),
+        "Should have edit drop zone"
+    );
+}
+
+/// Test that EditSession WASM binding is available with replaceText method
+#[tokio::test]
+async fn test_pdfjoin_edit_session_wasm_binding() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                const {{ EditSession }} = window.wasmBindings;
+                if (!EditSession) {{
+                    return {{ success: false, error: 'EditSession not in wasmBindings' }};
+                }}
+
+                // Decode test PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Create session
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Check methods exist
+                const hasAddText = typeof session.addText === 'function';
+                const hasReplaceText = typeof session.replaceText === 'function';
+                const hasExport = typeof session.export === 'function';
+                const hasRemoveOperation = typeof session.removeOperation === 'function';
+
+                return {{
+                    success: true,
+                    pageCount: session.pageCount,
+                    isSigned: session.isSigned,
+                    hasAddText: hasAddText,
+                    hasReplaceText: hasReplaceText,
+                    hasExport: hasExport,
+                    hasRemoveOperation: hasRemoveOperation
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test EditSession")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("EditSession WASM binding test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "EditSession creation should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hasReplaceText"].as_bool().unwrap_or(false),
+        "EditSession should have replaceText method for font-preserving text replacement"
+    );
+    assert!(
+        result["hasExport"].as_bool().unwrap_or(false),
+        "EditSession should have export method"
+    );
+}
+
+/// Test that PdfBridge extractTextWithPositions returns font information
+#[tokio::test]
+async fn test_pdfjoin_text_extraction_returns_font_info() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Use Florida contract which has known text content
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Navigate to edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF via file input
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'contract.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to load and render
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Check if PdfBridge has extractTextWithPositions
+                if (!window.PdfBridge) {{
+                    return {{ success: false, error: 'PdfBridge not available' }};
+                }}
+                if (typeof window.PdfBridge.extractTextWithPositions !== 'function') {{
+                    return {{ success: false, error: 'extractTextWithPositions not a function' }};
+                }}
+
+                // Extract text from first page
+                const textItems = await window.PdfBridge.extractTextWithPositions(1);
+
+                if (!textItems || textItems.length === 0) {{
+                    return {{ success: false, error: 'No text items extracted' }};
+                }}
+
+                // Check first few items for required properties
+                const firstItem = textItems[0];
+                const hasFontFamily = 'fontFamily' in firstItem;
+                const hasPdfX = 'pdfX' in firstItem;
+                const hasPdfY = 'pdfY' in firstItem;
+                const hasPdfWidth = 'pdfWidth' in firstItem;
+                const hasPdfHeight = 'pdfHeight' in firstItem;
+                const hasStr = 'str' in firstItem;
+
+                // Get sample of font families found
+                const fontFamilies = [...new Set(textItems.map(item => item.fontFamily))];
+
+                return {{
+                    success: true,
+                    textItemCount: textItems.length,
+                    hasFontFamily: hasFontFamily,
+                    hasPdfX: hasPdfX,
+                    hasPdfY: hasPdfY,
+                    hasPdfWidth: hasPdfWidth,
+                    hasPdfHeight: hasPdfHeight,
+                    hasStr: hasStr,
+                    fontFamilies: fontFamilies,
+                    sampleItem: {{
+                        str: firstItem.str?.substring(0, 50),
+                        fontFamily: firstItem.fontFamily,
+                        pdfHeight: firstItem.pdfHeight
+                    }}
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text extraction")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text extraction font info test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Text extraction should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hasFontFamily"].as_bool().unwrap_or(false),
+        "Text items should include fontFamily property for font preservation"
+    );
+    assert!(
+        result["hasPdfHeight"].as_bool().unwrap_or(false),
+        "Text items should include pdfHeight for font size preservation"
+    );
+
+    let text_count = result["textItemCount"].as_i64().unwrap_or(0);
+    assert!(
+        text_count > 0,
+        "Should extract text items from PDF, got {}",
+        text_count
+    );
+}
+
+/// Test that replaceText creates operations with font information
+#[tokio::test]
+async fn test_pdfjoin_replace_text_preserves_font_in_operation() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                const {{ EditSession }} = window.wasmBindings;
+
+                // Decode test PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Test replaceText with font preservation
+                // Parameters: page, orig_x, orig_y, orig_w, orig_h, new_x, new_y, new_w, new_h,
+                //            original_text, new_text, font_size, color, font_name
+                const opId = session.replaceText(
+                    1,           // page
+                    100, 700,    // orig_x, orig_y
+                    150, 14,     // orig_width, orig_height
+                    100, 700,    // new_x, new_y
+                    150, 14,     // new_width, new_height
+                    'Original',  // original_text
+                    'Replaced',  // new_text
+                    12.0,        // font_size
+                    '#000000',   // color
+                    'serif'      // font_name (should map to Times-Roman)
+                );
+
+                // Get operations JSON to verify font was stored
+                const opsJson = session.getOperationsJson();
+                const ops = JSON.parse(opsJson);
+
+                const replaceOp = ops.operations?.find(op => op.type === 'ReplaceText');
+
+                return {{
+                    success: true,
+                    opId: opId,
+                    hasChanges: session.hasChanges(),
+                    operationCount: session.getOperationCount(),
+                    opsJson: opsJson,
+                    hasReplaceOp: !!replaceOp,
+                    fontNameInOp: replaceOp?.style?.font_name || null
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test replaceText")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ReplaceText font preservation test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "replaceText should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hasChanges"].as_bool().unwrap_or(false),
+        "Session should have changes after replaceText"
+    );
+    assert!(
+        result["hasReplaceOp"].as_bool().unwrap_or(false),
+        "Operations should include ReplaceText operation"
+    );
+    assert_eq!(
+        result["fontNameInOp"].as_str().unwrap_or(""),
+        "serif",
+        "ReplaceText operation should preserve font_name"
+    );
+}
+
+/// Test that exported PDF contains correct font in FreeText annotation
+#[tokio::test]
+async fn test_pdfjoin_export_preserves_font_in_pdf() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                const {{ EditSession }} = window.wasmBindings;
+
+                // Decode test PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Add replaceText with serif font (should become Times-Roman)
+                session.replaceText(
+                    1, 100, 700, 150, 14, 100, 700, 150, 14,
+                    'Original', 'SerifTest',
+                    12.0, '#000000', 'serif'
+                );
+
+                // Add replaceText with monospace font (should become Courier)
+                session.replaceText(
+                    1, 100, 600, 150, 14, 100, 600, 150, 14,
+                    'Original2', 'MonoTest',
+                    10.0, '#000000', 'monospace'
+                );
+
+                // Export the PDF
+                const exportedBytes = session.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                // Convert to string to check for font references
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                // Check for font names in DA (Default Appearance) strings
+                const hasTimesRoman = pdfText.includes('/Times-Roman') || pdfText.includes('/Times');
+                const hasCourier = pdfText.includes('/Courier');
+                const hasFreeText = pdfText.includes('/FreeText');
+
+                // Look for DA strings with font specifications
+                const daMatches = pdfText.match(/\\/DA/g) || [];
+
+                return {{
+                    success: true,
+                    exportedSize: exportedArray.length,
+                    startsWithPdf: pdfText.startsWith('%PDF-'),
+                    hasTimesRoman: hasTimesRoman,
+                    hasCourier: hasCourier,
+                    hasFreeText: hasFreeText,
+                    daStrings: daMatches.slice(0, 5)
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test export font preservation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Export font preservation test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Export should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["startsWithPdf"].as_bool().unwrap_or(false),
+        "Exported file should be valid PDF"
+    );
+    assert!(
+        result["hasFreeText"].as_bool().unwrap_or(false),
+        "Exported PDF should contain FreeText annotations"
+    );
+
+    // Check font mapping
+    let has_times = result["hasTimesRoman"].as_bool().unwrap_or(false);
+    let has_courier = result["hasCourier"].as_bool().unwrap_or(false);
+
+    assert!(
+        has_times || has_courier,
+        "Exported PDF should contain mapped fonts (Times-Roman for serif, Courier for monospace). \
+         DA strings found: {:?}",
+        result["daStrings"]
+    );
+}
+
+/// Test that font size from PDF.js pdfHeight is preserved in replacement
+#[tokio::test]
+async fn test_pdfjoin_font_size_preservation() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                const {{ EditSession }} = window.wasmBindings;
+
+                // Decode test PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Add replaceText with specific font size (simulating pdfHeight from PDF.js)
+                const testFontSize = 18.5;
+                session.replaceText(
+                    1, 100, 700, 150, testFontSize, 100, 700, 150, testFontSize,
+                    'Original', 'SizeTest',
+                    testFontSize, '#000000', 'sans-serif'
+                );
+
+                // Get operations to verify font size
+                const opsJson = session.getOperationsJson();
+                const ops = JSON.parse(opsJson);
+                const replaceOp = ops.operations?.find(op => op.type === 'ReplaceText');
+
+                // Export and check DA string contains font size
+                const exportedBytes = session.export();
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(new Uint8Array(exportedBytes));
+
+                // Look for font size in DA string
+                const fontSizeInPdf = pdfText.includes('18.5') || pdfText.includes('18');
+
+                return {{
+                    success: true,
+                    inputFontSize: testFontSize,
+                    storedFontSize: replaceOp?.style?.font_size || null,
+                    fontSizeMatch: Math.abs((replaceOp?.style?.font_size || 0) - testFontSize) < 0.01,
+                    fontSizeInExportedPdf: fontSizeInPdf
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test font size preservation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Font size preservation test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Font size test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["fontSizeMatch"].as_bool().unwrap_or(false),
+        "Font size should be preserved in operation. Input: {}, Stored: {:?}",
+        result["inputFontSize"],
+        result["storedFontSize"]
+    );
+}
+
+/// Test font mapping from CSS generic families to PDF standard fonts
+#[tokio::test]
+async fn test_pdfjoin_font_family_mapping() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                const {{ EditSession }} = window.wasmBindings;
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Test all CSS generic font families
+                const fontTests = [
+                    {{ family: 'serif', expected: 'Times' }},
+                    {{ family: 'sans-serif', expected: 'Helvetica' }},
+                    {{ family: 'monospace', expected: 'Courier' }}
+                ];
+
+                // Add operations with each font family
+                for (const test of fontTests) {{
+                    session.replaceText(
+                        1, 100, 700, 150, 12, 100, 700, 150, 12,
+                        'Orig', test.family + ' text',
+                        12.0, '#000000', test.family
+                    );
+                }}
+
+                // Export and check for expected fonts
+                const exportedBytes = session.export();
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(new Uint8Array(exportedBytes));
+
+                const results = fontTests.map(test => ({{
+                    family: test.family,
+                    expected: test.expected,
+                    found: pdfText.includes('/' + test.expected)
+                }}));
+
+                return {{
+                    success: true,
+                    fontMappings: results,
+                    allMapped: results.every(r => r.found)
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test font mapping")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Font family mapping test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Font mapping test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Check individual mappings
+    if let Some(mappings) = result["fontMappings"].as_array() {
+        for mapping in mappings {
+            let family = mapping["family"].as_str().unwrap_or("");
+            let expected = mapping["expected"].as_str().unwrap_or("");
+            let found = mapping["found"].as_bool().unwrap_or(false);
+
+            assert!(
+                found,
+                "Font family '{}' should map to '{}' in exported PDF",
+                family, expected
+            );
+        }
+    }
+}

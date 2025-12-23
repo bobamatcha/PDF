@@ -14,11 +14,8 @@
     <link data-trunk rel="copy-dir" href="styles" />
     <!-- Trunk: Copy additional HTML pages -->
     <link data-trunk rel="copy-file" href="tampa.html" />
-    <!-- PDF.js from CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    </script>
+    <!-- PDF.js is lazy-loaded via js/pdf-loader.js to avoid bloating main bundle -->
+    <!-- The js/vendor/ directory contains pdf.min.js and pdf.worker.min.js -->
     <style>
         :root {
             /* Florida Trust Palette */
@@ -1297,6 +1294,9 @@
 
                 const arrayBuffer = await file.arrayBuffer();
                 state.pdfBytes = new Uint8Array(arrayBuffer);
+
+                // Lazy load PDF.js on first use
+                await window.ensurePdfJsLoaded();
 
                 // Load with PDF.js
                 state.pdfDoc = await pdfjsLib.getDocument({ data: state.pdfBytes }).promise;

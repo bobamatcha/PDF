@@ -5,7 +5,7 @@
 let pdfJsLoaded = false;
 let pdfJsLoadPromise = null;
 
-async function ensurePdfJsLoaded() {
+export async function ensurePdfJsLoaded() {
     if (pdfJsLoaded) return;
     if (pdfJsLoadPromise) return pdfJsLoadPromise;
 
@@ -28,7 +28,7 @@ async function ensurePdfJsLoaded() {
     return pdfJsLoadPromise;
 }
 
-window.PdfBridge = {
+export const PdfBridge = {
     currentDoc: null,
     pageCanvases: new Map(),
 
@@ -91,6 +91,56 @@ window.PdfBridge = {
         return textContent.items.map(item => item.str).join(' ');
     },
 
+    async extractTextWithPositions(pageNum) {
+        if (!this.currentDoc) throw new Error('No document loaded');
+
+        const page = await this.currentDoc.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const cached = this.pageCanvases.get(pageNum);
+        const viewport = cached?.viewport;
+
+        // Get font styles map (fontName -> { fontFamily, ascent, descent, vertical })
+        const styles = textContent.styles || {};
+
+        return textContent.items.map((item, index) => {
+            // PDF.js transform: [scaleX, skewX, skewY, scaleY, x, y]
+            const pdfX = item.transform[4];
+            const pdfY = item.transform[5];
+            const pdfWidth = item.width || 0;
+            const pdfHeight = item.height || 12; // Default font height
+
+            // Get font family from styles (e.g., "serif", "sans-serif", "monospace")
+            const fontStyle = styles[item.fontName];
+            const fontFamily = fontStyle?.fontFamily || 'sans-serif';
+
+            // Convert PDF coords to DOM coords if viewport available
+            let domBounds = null;
+            if (viewport) {
+                // PDF origin is bottom-left, viewport is top-left
+                const [domX, domY] = viewport.convertToViewportPoint(pdfX, pdfY);
+                const [domX2, domY2] = viewport.convertToViewportPoint(pdfX + pdfWidth, pdfY + pdfHeight);
+                domBounds = {
+                    x: Math.min(domX, domX2),
+                    y: Math.min(domY, domY2),
+                    width: Math.abs(domX2 - domX) || pdfWidth * viewport.scale,
+                    height: Math.abs(domY2 - domY) || pdfHeight * viewport.scale
+                };
+            }
+
+            return {
+                index,
+                str: item.str,
+                pdfX,
+                pdfY,
+                pdfWidth,
+                pdfHeight,
+                fontName: item.fontName,
+                fontFamily, // "serif", "sans-serif", or "monospace"
+                domBounds
+            };
+        });
+    },
+
     async extractAllText() {
         if (!this.currentDoc) throw new Error('No document loaded');
 
@@ -110,5 +160,6 @@ window.PdfBridge = {
     }
 };
 
-// Export ensurePdfJsLoaded for direct use
+// Also expose on window for backwards compatibility
 window.ensurePdfJsLoaded = ensurePdfJsLoaded;
+window.PdfBridge = PdfBridge;
