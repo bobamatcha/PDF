@@ -6118,6 +6118,427 @@ async fn test_pdfjoin_multiple_texts_remain_editable_after_switching() {
     );
 }
 
+/// BUG TEST: Edited PDF text (replacement overlay) should be re-editable after saving.
+/// User scenario:
+/// 1. Load PDF with existing text
+/// 2. Click on existing text with Select tool to edit it
+/// 3. Change text and save -> creates .edit-replace-overlay
+/// 4. Try to click on the replacement overlay to edit it again -> should work
+/// BUG: The .edit-replace-overlay has no click handlers, so it cannot be re-edited.
+#[tokio::test]
+async fn test_pdfjoin_pdf_text_replacement_is_reeditable() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Use Florida contract which has real text to edit
+    let pdf_b64 = florida_escalation_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Find a text item in the text layer (existing PDF text)
+                const textItem = document.querySelector('.text-item');
+                if (!textItem) {{
+                    return {{ success: false, error: 'No text items found in PDF' }};
+                }}
+                const originalText = textItem.textContent;
+
+                // Click on it with Select tool (default) to edit
+                textItem.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the text editor popup
+                const editor = document.querySelector('.text-editor-popup');
+                if (!editor) {{
+                    return {{ success: false, error: 'Text editor popup did not appear' }};
+                }}
+
+                // Change the text
+                const input = editor.querySelector('.text-editor-input');
+                input.value = 'FIRST EDIT';
+
+                // Click save
+                editor.querySelector('.text-editor-save').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the replacement overlay that was created
+                const replaceOverlay = document.querySelector('.edit-replace-overlay');
+                if (!replaceOverlay) {{
+                    return {{ success: false, error: 'Replacement overlay was not created after save' }};
+                }}
+                const afterFirstEdit = replaceOverlay.textContent;
+
+                // NOW TRY TO RE-EDIT: Click on the replacement overlay
+                replaceOverlay.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Check if an editor appeared (either popup or inline input)
+                const editorAfterClick = document.querySelector('.text-editor-popup') ||
+                                         document.querySelector('.edit-text-input');
+                const canReEdit = !!editorAfterClick;
+
+                if (!canReEdit) {{
+                    return {{
+                        success: true,
+                        originalText,
+                        afterFirstEdit,
+                        canReEdit: false,
+                        error: 'BUG: Cannot re-edit replacement overlay - no editor appeared on click'
+                    }};
+                }}
+
+                // If editor appeared, try to change text again
+                const reEditInput = editorAfterClick.querySelector?.('.text-editor-input') || editorAfterClick;
+                if (reEditInput.tagName === 'INPUT') {{
+                    reEditInput.value = 'SECOND EDIT';
+                }} else {{
+                    reEditInput.textContent = 'SECOND EDIT';
+                }}
+
+                // Save again
+                const saveBtn = document.querySelector('.text-editor-save');
+                if (saveBtn) {{
+                    saveBtn.click();
+                }} else {{
+                    reEditInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                }}
+                await new Promise(r => setTimeout(r, 300));
+
+                // Check final state
+                const finalOverlay = document.querySelector('.edit-replace-overlay');
+                const afterSecondEdit = finalOverlay?.textContent;
+
+                return {{
+                    success: true,
+                    originalText,
+                    afterFirstEdit,
+                    canReEdit: true,
+                    afterSecondEdit,
+                    secondEditWorked: afterSecondEdit === 'SECOND EDIT'
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test PDF text re-editing")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("PDF text replacement re-edit test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["canReEdit"].as_bool().unwrap_or(false),
+        "BUG: Replacement overlay cannot be re-edited! \
+         Original: '{}', After first edit: '{}'. \
+         Clicking on replacement overlay does not open an editor.",
+        result["originalText"].as_str().unwrap_or("?"),
+        result["afterFirstEdit"].as_str().unwrap_or("?")
+    );
+
+    assert!(
+        result["secondEditWorked"].as_bool().unwrap_or(false),
+        "BUG: Second edit did not work! \
+         After first edit: '{}', After second edit: '{}' (expected 'SECOND EDIT')",
+        result["afterFirstEdit"].as_str().unwrap_or("?"),
+        result["afterSecondEdit"].as_str().unwrap_or("?")
+    );
+}
+
+/// BUG TEST: When re-editing a replacement overlay, the editor should show the user's
+/// intermediate text (their last edit), NOT the original PDF text.
+/// User scenario:
+/// 1. Edit "ESCALATION ADDENDUM" -> "MY CUSTOM TEXT", save
+/// 2. Click on "MY CUSTOM TEXT" to re-edit
+/// 3. Editor should open with "MY CUSTOM TEXT" pre-filled (NOT "ESCALATION ADDENDUM")
+/// BUG: Editor opens with original text instead of user's last edit.
+#[tokio::test]
+async fn test_pdfjoin_reedit_shows_intermediate_text_not_original() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = florida_escalation_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Find a text item in the text layer
+                const textItem = document.querySelector('.text-item');
+                if (!textItem) {{
+                    return {{ success: false, error: 'No text items found in PDF' }};
+                }}
+                const originalText = textItem.textContent;
+
+                // First edit: click and change text
+                textItem.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const editor1 = document.querySelector('.text-editor-popup');
+                if (!editor1) {{
+                    return {{ success: false, error: 'First editor popup did not appear' }};
+                }}
+
+                const input1 = editor1.querySelector('.text-editor-input');
+                const firstEditText = 'MY INTERMEDIATE TEXT';
+                input1.value = firstEditText;
+                editor1.querySelector('.text-editor-save').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find replacement overlay
+                const replaceOverlay = document.querySelector('.edit-replace-overlay');
+                if (!replaceOverlay) {{
+                    return {{ success: false, error: 'Replacement overlay not created' }};
+                }}
+
+                // Now click to re-edit
+                replaceOverlay.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Check what text is in the editor
+                const editor2 = document.querySelector('.text-editor-popup');
+                if (!editor2) {{
+                    return {{ success: false, error: 'Second editor popup did not appear on re-edit' }};
+                }}
+
+                const input2 = editor2.querySelector('.text-editor-input');
+                const textInReEditPopup = input2.value;
+
+                // Close editor
+                const cancelBtn = editor2.querySelector('.text-editor-cancel');
+                if (cancelBtn) cancelBtn.click();
+
+                return {{
+                    success: true,
+                    originalText,
+                    firstEditText,
+                    textInReEditPopup,
+                    showsIntermediateText: textInReEditPopup === firstEditText,
+                    showsOriginalText: textInReEditPopup === originalText
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test re-edit intermediate text")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Re-edit intermediate text test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["showsIntermediateText"].as_bool().unwrap_or(false),
+        "BUG: Re-edit editor should show user's intermediate text '{}', \
+         but instead shows '{}'. Original was '{}'.",
+        result["firstEditText"].as_str().unwrap_or("?"),
+        result["textInReEditPopup"].as_str().unwrap_or("?"),
+        result["originalText"].as_str().unwrap_or("?")
+    );
+}
+
+/// BUG TEST: During re-editing, the preview should show the user's intermediate text,
+/// not the original PDF text. The replacement overlay should stay visible to cover
+/// the original canvas text while the editor is open.
+#[tokio::test]
+async fn test_pdfjoin_reedit_preview_shows_intermediate_not_original() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = florida_escalation_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                const textItem = document.querySelector('.text-item');
+                if (!textItem) {{
+                    return {{ success: false, error: 'No text items found' }};
+                }}
+                const originalText = textItem.textContent;
+
+                // First edit
+                textItem.click();
+                await new Promise(r => setTimeout(r, 300));
+                const editor1 = document.querySelector('.text-editor-popup');
+                const input1 = editor1.querySelector('.text-editor-input');
+                const intermediateText = 'MY EDITED TEXT';
+                input1.value = intermediateText;
+                editor1.querySelector('.text-editor-save').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Click to re-edit
+                const replaceOverlay = document.querySelector('.edit-replace-overlay');
+                replaceOverlay.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // While editor is open, check if replacement overlay still covers the original
+                // The overlay should still be in DOM and visible (or a cover should be present)
+                const overlayDuringEdit = document.querySelector('.edit-replace-overlay');
+                const overlayVisible = overlayDuringEdit &&
+                    window.getComputedStyle(overlayDuringEdit).display !== 'none' &&
+                    window.getComputedStyle(overlayDuringEdit).visibility !== 'hidden';
+                const overlayText = overlayDuringEdit ? overlayDuringEdit.textContent : null;
+
+                // Close editor
+                const cancelBtn = document.querySelector('.text-editor-cancel');
+                if (cancelBtn) cancelBtn.click();
+
+                return {{
+                    success: true,
+                    originalText,
+                    intermediateText,
+                    overlayVisibleDuringEdit: overlayVisible,
+                    overlayTextDuringEdit: overlayText,
+                    previewShowsIntermediate: overlayVisible && overlayText === intermediateText
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test preview during re-edit")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Re-edit preview test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["previewShowsIntermediate"]
+            .as_bool()
+            .unwrap_or(false),
+        "BUG: During re-edit, preview should show intermediate text '{}', \
+         but overlay visible={}, overlay text='{}'. Original was '{}'.",
+        result["intermediateText"].as_str().unwrap_or("?"),
+        result["overlayVisibleDuringEdit"]
+            .as_bool()
+            .unwrap_or(false),
+        result["overlayTextDuringEdit"].as_str().unwrap_or("null"),
+        result["originalText"].as_str().unwrap_or("?")
+    );
+}
+
 /// Tests that font size controls exist in the edit toolbar
 #[tokio::test]
 async fn test_pdfjoin_font_size_controls_exist() {

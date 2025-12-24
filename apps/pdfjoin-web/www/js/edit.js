@@ -988,6 +988,72 @@ function makeTextOverlayDraggable(textEl, pageNum) {
     });
 }
 
+// Make replacement overlays (from editing existing PDF text) re-editable
+// Uses "undo and re-edit" approach: removes the old replacement and triggers fresh edit on original text
+function makeReplaceOverlayEditable(replaceEl, pageNum) {
+    replaceEl.style.cursor = 'pointer';
+
+    // Click handler for re-editing via undo-and-reedit
+    replaceEl.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // 1. Get the original textItem data stored in the overlay
+        const originalTextItemJson = replaceEl.dataset.originalTextItem;
+        const textItemIndex = replaceEl.dataset.textItemIndex;
+        const opId = replaceEl.dataset.opId;
+
+        if (!originalTextItemJson) {
+            console.error('Cannot re-edit: no original text item data stored');
+            return;
+        }
+
+        // Capture the user's intermediate text (what they last saved) BEFORE removing the overlay
+        const intermediateText = replaceEl.textContent;
+
+        const textItem = JSON.parse(originalTextItemJson);
+        // Override the original text with the user's intermediate text for the editor
+        // This way the editor shows what the user last typed, not the original PDF text
+        textItem.str = intermediateText;
+
+        // 2. Remove the replacement operation from the edit session
+        if (opId && editSession) {
+            editSession.removeOperation(BigInt(opId));
+            // Remove from history
+            const historyIndex = operationHistory.indexOf(BigInt(opId));
+            if (historyIndex > -1) {
+                operationHistory.splice(historyIndex, 1);
+            }
+        }
+
+        // 3. Keep the replacement overlay visible to cover the canvas during editing
+        // Mark it for removal when save happens (applyTextReplacement will clean it up)
+        replaceEl.dataset.pendingRemoval = 'true';
+
+        // 4. Don't unhide the original text item - keep it hidden so canvas text doesn't show
+        const originalSpan = document.querySelector(
+            `.text-item[data-page="${pageNum}"][data-index="${textItemIndex}"]`
+        );
+
+        // 5. Trigger fresh edit on the original text item
+        if (originalSpan) {
+            startTextEdit(pageNum, parseInt(textItemIndex), textItem, originalSpan);
+        } else {
+            console.error('Cannot find original text item span to re-edit');
+        }
+    });
+
+    // Hover highlight for visual feedback
+    replaceEl.addEventListener('mouseenter', () => {
+        if (currentTool === 'select' || currentTool === 'text' || currentTool === 'edit-text') {
+            replaceEl.style.outline = '2px solid #007bff';
+        }
+    });
+    replaceEl.addEventListener('mouseleave', () => {
+        replaceEl.style.outline = '';
+    });
+}
+
 function handleTextDrag(e) {
     if (!draggingTextOverlay) return;
 
@@ -1508,6 +1574,13 @@ function applyTextReplacement(pageNum, textItem, newText, isBold = null, isItali
 
     // Add visual indicator (replacement overlay) with matching font
     const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+
+    // Clean up any old overlay marked for removal (from re-editing)
+    const oldOverlay = overlay.querySelector('.edit-replace-overlay[data-pending-removal="true"]');
+    if (oldOverlay) {
+        oldOverlay.remove();
+    }
+
     const replaceEl = document.createElement('div');
     replaceEl.className = 'edit-replace-overlay';
     replaceEl.textContent = newText;
@@ -1529,7 +1602,24 @@ function applyTextReplacement(pageNum, textItem, newText, isBold = null, isItali
     if (useBold) replaceEl.style.fontWeight = 'bold';
 
     replaceEl.dataset.opId = opId;
+    // Store original textItem for undo-and-reedit approach
+    replaceEl.dataset.textItemIndex = textItem.index;
+    replaceEl.dataset.originalTextItem = JSON.stringify({
+        index: textItem.index,
+        str: textItem.str,
+        pdfX: textItem.pdfX,
+        pdfY: textItem.pdfY,
+        pdfWidth: textItem.pdfWidth,
+        pdfHeight: textItem.pdfHeight,
+        fontFamily: textItem.fontFamily,
+        isBold: textItem.isBold,
+        isItalic: textItem.isItalic,
+        domBounds: textItem.domBounds
+    });
     overlay.appendChild(replaceEl);
+
+    // Make replacement overlay re-editable (click to undo and re-edit)
+    makeReplaceOverlayEditable(replaceEl, pageNum);
 
     // Hide original text item visually
     const span = document.querySelector(
