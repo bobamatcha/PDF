@@ -5847,6 +5847,277 @@ async fn test_pdfjoin_text_remains_editable_after_first_edit() {
     );
 }
 
+/// BUG TEST: After editing text A, then editing text B, both should remain re-editable.
+/// User scenario:
+/// 1. Add and edit text A
+/// 2. Add and edit text B
+/// 3. Try to edit text A again -> should work
+/// 4. Try to edit text B again -> should work
+/// BUG: After editing multiple texts, returning to edit any of them fails.
+#[tokio::test]
+async fn test_pdfjoin_multiple_texts_remain_editable_after_switching() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load PDF
+    let pdf_b64 = test_pdf_base64(2);
+    page.evaluate(
+        format!(
+            r#"(async () => {{
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 300));
+            const b64 = "{}";
+            const binary = atob(b64);
+            const pdfBytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+            const fileInput = document.getElementById('edit-file-input');
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        }})()"#,
+            pdf_b64
+        )
+        .as_str(),
+    )
+    .await
+    .expect("Should load PDF");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Click Text tool
+    page.evaluate(r#"document.getElementById('tool-text').click()"#)
+        .await
+        .expect("Should click text tool");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Step 1: Click to add Text A
+    page.evaluate(r#"(() => {
+        const overlay = document.querySelector('.overlay-container');
+        const rect = overlay.getBoundingClientRect();
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + 100, clientY: rect.top + 100 }));
+    })()"#)
+        .await
+        .expect("Should click to add text A");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Type "AAA" and press Enter
+    page.evaluate(
+        r#"(() => {
+        const input = document.querySelector('.edit-text-input');
+        input.textContent = 'AAA';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()"#,
+    )
+    .await
+    .expect("Should type AAA");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Step 2: Click on Text A to edit it
+    page.evaluate(r#"document.querySelector('.edit-text-overlay').click()"#)
+        .await
+        .expect("Should click text A to edit");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Change to "AAA-edited" and press Enter
+    page.evaluate(
+        r#"(() => {
+        const input = document.querySelector('.edit-text-input');
+        input.textContent = 'AAA-edited';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()"#,
+    )
+    .await
+    .expect("Should edit text A");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Step 3: Click to add Text B at different position
+    page.evaluate(r#"(() => {
+        const overlay = document.querySelector('.overlay-container');
+        const rect = overlay.getBoundingClientRect();
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: rect.left + 100, clientY: rect.top + 250 }));
+    })()"#)
+        .await
+        .expect("Should click to add text B");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Type "BBB" and press Enter
+    page.evaluate(
+        r#"(() => {
+        const input = document.querySelector('.edit-text-input');
+        input.textContent = 'BBB';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()"#,
+    )
+    .await
+    .expect("Should type BBB");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Step 4: Click on Text B to edit it
+    page.evaluate(r#"document.querySelectorAll('.edit-text-overlay')[1].click()"#)
+        .await
+        .expect("Should click text B to edit");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Change to "BBB-edited" and press Enter
+    page.evaluate(
+        r#"(() => {
+        const input = document.querySelector('.edit-text-input');
+        input.textContent = 'BBB-edited';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    })()"#,
+    )
+    .await
+    .expect("Should edit text B");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Check current state
+    let state1: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+            const overlays = document.querySelectorAll('.edit-text-overlay');
+            return {
+                count: overlays.length,
+                textA: overlays[0]?.textContent,
+                textB: overlays[1]?.textContent
+            };
+        })()"#,
+        )
+        .await
+        .expect("Should get state")
+        .into_value()
+        .expect("value");
+
+    eprintln!(
+        "After first edits - A: '{}', B: '{}'",
+        state1["textA"].as_str().unwrap_or("?"),
+        state1["textB"].as_str().unwrap_or("?")
+    );
+
+    // Step 5: NOW TRY TO EDIT TEXT A AGAIN - click on first overlay
+    page.evaluate(r#"document.querySelectorAll('.edit-text-overlay')[0].click()"#)
+        .await
+        .expect("Should click text A again");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Check if input appeared
+    let input_appeared_a: bool = page
+        .evaluate(r#"!!document.querySelector('.edit-text-input')"#)
+        .await
+        .expect("check input")
+        .into_value()
+        .expect("value");
+
+    if input_appeared_a {
+        // Change to "AAA-edited-again" and press Enter
+        page.evaluate(
+            r#"(() => {
+            const input = document.querySelector('.edit-text-input');
+            input.textContent = 'AAA-edited-again';
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        })()"#,
+        )
+        .await
+        .expect("Should edit text A again");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Step 6: NOW TRY TO EDIT TEXT B AGAIN
+    page.evaluate(r#"document.querySelectorAll('.edit-text-overlay')[1].click()"#)
+        .await
+        .expect("Should click text B again");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let input_appeared_b: bool = page
+        .evaluate(r#"!!document.querySelector('.edit-text-input')"#)
+        .await
+        .expect("check input")
+        .into_value()
+        .expect("value");
+
+    if input_appeared_b {
+        page.evaluate(
+            r#"(() => {
+            const input = document.querySelector('.edit-text-input');
+            input.textContent = 'BBB-edited-again';
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        })()"#,
+        )
+        .await
+        .expect("Should edit text B again");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    // Final state check
+    let final_state: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+            const overlays = document.querySelectorAll('.edit-text-overlay');
+            return {
+                count: overlays.length,
+                textA: overlays[0]?.textContent,
+                textB: overlays[1]?.textContent
+            };
+        })()"#,
+        )
+        .await
+        .expect("Should get final state")
+        .into_value()
+        .expect("value");
+
+    eprintln!(
+        "Final state - A: '{}', B: '{}'",
+        final_state["textA"].as_str().unwrap_or("?"),
+        final_state["textB"].as_str().unwrap_or("?")
+    );
+
+    // Assert text A was editable again
+    assert_eq!(
+        final_state["textA"].as_str().unwrap_or(""),
+        "AAA-edited-again",
+        "BUG: Text A should be 'AAA-edited-again' but is '{}'. Input appeared: {}",
+        final_state["textA"].as_str().unwrap_or("?"),
+        input_appeared_a
+    );
+
+    // Assert text B was editable again
+    assert_eq!(
+        final_state["textB"].as_str().unwrap_or(""),
+        "BBB-edited-again",
+        "BUG: Text B should be 'BBB-edited-again' but is '{}'. Input appeared: {}",
+        final_state["textB"].as_str().unwrap_or("?"),
+        input_appeared_b
+    );
+}
+
 /// Tests that font size controls exist in the edit toolbar
 #[tokio::test]
 async fn test_pdfjoin_font_size_controls_exist() {

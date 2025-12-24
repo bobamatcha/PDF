@@ -461,11 +461,9 @@ function editExistingTextOverlay(textOverlay, pageNum) {
         input.remove();
         setActiveTextInput(null);
 
-        // Remove the old text overlay
-        textOverlay.remove();
-
         if (!text) {
-            // User cleared the text - just remove (operation already removed)
+            // User cleared the text - remove the overlay
+            textOverlay.remove();
             updateButtons();
             return;
         }
@@ -474,26 +472,18 @@ function editExistingTextOverlay(textOverlay, pageNum) {
         const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, newFontSize, '#000000', newFontFamily, newIsItalic, newIsBold);
         operationHistory.push(opId);
 
-        // Create new visual overlay
-        const newTextEl = document.createElement('div');
-        newTextEl.className = 'edit-text-overlay';
-        newTextEl.textContent = text;
-        newTextEl.style.left = domX + 'px';
-        newTextEl.style.top = domY + 'px';
-        newTextEl.style.fontSize = newFontSize + 'px';
-        newTextEl.style.fontFamily = newFontFamily;
-        if (newIsBold) newTextEl.style.fontWeight = 'bold';
-        if (newIsItalic) newTextEl.style.fontStyle = 'italic';
-        newTextEl.dataset.opId = opId;
-        newTextEl.dataset.fontSize = newFontSize;
-        newTextEl.dataset.fontFamily = newFontFamily;
-        newTextEl.dataset.isBold = newIsBold ? 'true' : 'false';
-        newTextEl.dataset.isItalic = newIsItalic ? 'true' : 'false';
-
-        overlay.appendChild(newTextEl);
-
-        // Make text overlay draggable with Select tool
-        makeTextOverlayDraggable(newTextEl, pageNum);
+        // Update existing overlay IN PLACE (don't remove and recreate - that changes DOM order)
+        textOverlay.textContent = text;
+        textOverlay.style.display = '';  // Make visible again
+        textOverlay.style.fontSize = newFontSize + 'px';
+        textOverlay.style.fontFamily = newFontFamily;
+        textOverlay.style.fontWeight = newIsBold ? 'bold' : 'normal';
+        textOverlay.style.fontStyle = newIsItalic ? 'italic' : 'normal';
+        textOverlay.dataset.opId = opId;
+        textOverlay.dataset.fontSize = newFontSize;
+        textOverlay.dataset.fontFamily = newFontFamily;
+        textOverlay.dataset.isBold = newIsBold ? 'true' : 'false';
+        textOverlay.dataset.isItalic = newIsItalic ? 'true' : 'false';
 
         updateButtons();
     }
