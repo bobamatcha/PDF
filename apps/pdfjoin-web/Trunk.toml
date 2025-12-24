@@ -7,7 +7,7 @@ dist = "www/dist"
 
 [watch]
 watch = ["wasm/src", "www"]
-ignore = ["www/dist"]
+ignore = ["www/dist", "node_modules", "dist"]
 
 [serve]
 port = 8082

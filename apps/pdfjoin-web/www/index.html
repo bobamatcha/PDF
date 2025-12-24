@@ -17,7 +17,10 @@
     <!-- Trunk: Build WASM from Rust crate (exposes bindings on window.wasmBindings) -->
     <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
     <!-- Trunk: Copy static files -->
-    <link data-trunk rel="copy-dir" href="js" />
+    <!-- Copy TypeScript-compiled bundle from dist/js -->
+    <link data-trunk rel="copy-dir" href="../dist/js" data-target-path="js" />
+    <!-- Copy vendor files (PDF.js) from www/js/vendor -->
+    <link data-trunk rel="copy-dir" href="js/vendor" data-target-path="js/vendor" />
     <link data-trunk rel="copy-file" href="robots.txt" />
     <link data-trunk rel="copy-file" href="sitemap.xml" />
     <link data-trunk rel="copy-file" href="404.html" />
@@ -728,14 +731,18 @@
                             <span class="tool-icon">T</span>
                             <span class="tool-label">Text</span>
                         </button>
+                        <!-- TODO: Re-enable highlight tool once implemented
                         <button id="tool-highlight" class="tool-btn" title="Highlight">
                             <span class="tool-icon">&#128396;</span>
                             <span class="tool-label">Highlight</span>
                         </button>
+                        -->
+                        <!-- TODO: Re-enable checkbox tool after testing
                         <button id="tool-checkbox" class="tool-btn" title="Checkbox">
                             <span class="tool-icon">&#9745;</span>
                             <span class="tool-label">Check</span>
                         </button>
+                        -->
                         <button id="tool-whiteout" class="tool-btn" title="Draw White Rectangle">
                             <span class="tool-icon">&#9634;</span>
                             <span class="tool-label">Whiteout</span>
@@ -811,7 +818,7 @@
 
     <script type="module">
         window.addEventListener('TrunkApplicationStarted', () => {
-            import('./js/app.js').then(m => m.init());
+            import('./js/bundle.js').then(m => m.init());
         });
     </script>
 </body>

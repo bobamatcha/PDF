@@ -7255,3 +7255,422 @@ async fn test_pdfjoin_text_input_auto_expands() {
         result["expandedWidth"].as_f64().unwrap_or(0.0)
     );
 }
+
+/// Regression test: Overlay container should have pointer-events: auto when annotation tools are active
+/// Bug: overlay-container had pointer-events: none which prevented clicks from reaching the click handler
+/// that adds annotations (text). Clicks passed through to the text layer below.
+/// Fix: updateCursor() now sets overlay-container pointer-events to 'auto' for annotation tools.
+/// NOTE: checkbox and highlight tools are currently disabled, so only text tool is tested.
+#[tokio::test]
+async fn test_pdfjoin_overlay_pointer_events_enabled_for_annotation_tools() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to render
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Get initial pointer-events state (should be 'none' for select tool)
+                const overlay = document.querySelector('.overlay-container');
+                if (!overlay) {{
+                    return {{ success: false, error: 'overlay-container not found' }};
+                }}
+
+                const selectToolPE = window.getComputedStyle(overlay).pointerEvents;
+
+                // Click text tool (only annotation tool currently enabled)
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+                const textToolPE = window.getComputedStyle(overlay).pointerEvents;
+
+                // Click select tool (should disable pointer-events)
+                document.getElementById('tool-select').click();
+                await new Promise(r => setTimeout(r, 100));
+                const selectToolPE2 = window.getComputedStyle(overlay).pointerEvents;
+
+                // Click whiteout tool (should also disable pointer-events)
+                document.getElementById('tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+                const whiteoutToolPE = window.getComputedStyle(overlay).pointerEvents;
+
+                return {{
+                    success: true,
+                    selectToolPE: selectToolPE,
+                    textToolPE: textToolPE,
+                    selectToolPE2: selectToolPE2,
+                    whiteoutToolPE: whiteoutToolPE
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test overlay pointer-events")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Overlay pointer-events test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Text tool should have pointer-events: auto
+    assert_eq!(
+        result["textToolPE"].as_str().unwrap_or(""),
+        "auto",
+        "Text tool should enable overlay pointer-events"
+    );
+
+    // Select and whiteout tools should have pointer-events: none
+    assert_eq!(
+        result["selectToolPE2"].as_str().unwrap_or(""),
+        "none",
+        "Select tool should disable overlay pointer-events"
+    );
+    assert_eq!(
+        result["whiteoutToolPE"].as_str().unwrap_or(""),
+        "none",
+        "Whiteout tool should disable overlay pointer-events"
+    );
+}
+
+// TODO: Re-enable when checkbox tool is restored
+// /// Regression test: Clicking with checkbox tool should actually add a checkbox annotation
+// /// Bug: overlay-container had pointer-events: none, so clicks didn't reach the handler
+// #[tokio::test]
+// async fn test_pdfjoin_checkbox_tool_creates_annotation_on_click() {
+//     skip_if_no_chrome!();
+//     require_local_server!("http://127.0.0.1:8082");
+//
+//     let Some((browser, _handle)) = browser::require_browser().await else {
+//         return;
+//     };
+//
+//     let page = browser
+//         .new_page("about:blank")
+//         .await
+//         .expect("Should create page");
+//
+//     page.goto("http://127.0.0.1:8082")
+//         .await
+//         .expect("Should navigate to PDFJoin");
+//
+//     tokio::time::sleep(Duration::from_secs(3)).await;
+//
+//     let pdf_b64 = test_pdf_base64(1);
+//     let js_code = format!(
+//         r#"(async () => {{
+//             try {{
+//                 // Click Edit tab
+//                 document.querySelector('[data-tab="edit"]').click();
+//                 await new Promise(r => setTimeout(r, 300));
+//
+//                 // Load PDF
+//                 const b64 = "{}";
+//                 const binary = atob(b64);
+//                 const pdfBytes = new Uint8Array(binary.length);
+//                 for (let i = 0; i < binary.length; i++) {{
+//                     pdfBytes[i] = binary.charCodeAt(i);
+//                 }}
+//
+//                 const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+//                 const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+//                 const dt = new DataTransfer();
+//                 dt.items.add(file);
+//                 const inp = document.getElementById('edit-file-input');
+//                 inp.files = dt.files;
+//                 inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+//
+//                 // Wait for PDF to render
+//                 await new Promise(r => setTimeout(r, 3000));
+//
+//                 // Click checkbox tool
+//                 document.getElementById('tool-checkbox').click();
+//                 await new Promise(r => setTimeout(r, 100));
+//
+//                 // Count overlays before
+//                 const beforeCount = document.querySelectorAll('[data-op-id]').length;
+//
+//                 // Click on the overlay-container to add a checkbox
+//                 const overlay = document.querySelector('.overlay-container');
+//                 if (!overlay) {{
+//                     return {{ success: false, error: 'overlay-container not found' }};
+//                 }}
+//
+//                 const rect = overlay.getBoundingClientRect();
+//                 overlay.dispatchEvent(new MouseEvent('click', {{
+//                     bubbles: true,
+//                     cancelable: true,
+//                     clientX: rect.left + 200,
+//                     clientY: rect.top + 200,
+//                     view: window
+//                 }}));
+//
+//                 await new Promise(r => setTimeout(r, 500));
+//
+//                 // Count overlays after
+//                 const afterCount = document.querySelectorAll('[data-op-id]').length;
+//
+//                 // Check download button state
+//                 const downloadBtn = document.getElementById('edit-download-btn');
+//                 const downloadEnabled = downloadBtn && !downloadBtn.disabled;
+//
+//                 return {{
+//                     success: true,
+//                     beforeCount: beforeCount,
+//                     afterCount: afterCount,
+//                     checkboxAdded: afterCount > beforeCount,
+//                     downloadEnabled: downloadEnabled
+//                 }};
+//             }} catch (err) {{
+//                 return {{ success: false, error: err.toString() }};
+//             }}
+//         }})()"#,
+//         pdf_b64
+//     );
+//
+//     let result: serde_json::Value = page
+//         .evaluate(js_code.as_str())
+//         .await
+//         .expect("Should test checkbox creation")
+//         .into_value()
+//         .expect("Should get value");
+//
+//     eprintln!("Checkbox tool click test: {:?}", result);
+//
+//     assert!(
+//         result["success"].as_bool().unwrap_or(false),
+//         "Test should succeed. Error: {:?}",
+//         result["error"]
+//     );
+//
+//     assert!(
+//         result["checkboxAdded"].as_bool().unwrap_or(false),
+//         "Clicking with checkbox tool should add a checkbox. Before: {}, After: {}",
+//         result["beforeCount"].as_i64().unwrap_or(0),
+//         result["afterCount"].as_i64().unwrap_or(0)
+//     );
+//
+//     assert!(
+//         result["downloadEnabled"].as_bool().unwrap_or(false),
+//         "Download button should be enabled after adding annotation"
+//     );
+// }
+
+/// BUG TEST: Whiteout box should NOT expand when typing short text that fits
+/// The bug: Every time something is typed, the whitebox expands even if the text
+/// doesn't require additional space.
+#[tokio::test]
+async fn test_pdfjoin_whiteout_does_not_expand_for_short_text() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+
+    // Navigate and load the PDF
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page did not render' }};
+                }}
+
+                // Draw a reasonably sized whiteout (200x50 pixels) - large enough that short text fits
+                document.getElementById('tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;
+                const endY = startY + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{
+                    return {{ success: false, error: 'Whiteout not created' }};
+                }}
+
+                // Record original dimensions
+                const originalWidth = parseFloat(whiteout.style.width);
+                const originalHeight = parseFloat(whiteout.style.height);
+                const originalWidthRect = whiteout.getBoundingClientRect().width;
+                const originalHeightRect = whiteout.getBoundingClientRect().height;
+
+                // Double-click to open text editor
+                const whiteoutRect = whiteout.getBoundingClientRect();
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: whiteoutRect.left + whiteoutRect.width / 2,
+                    clientY: whiteoutRect.top + whiteoutRect.height / 2
+                }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the text input
+                const input = whiteout.querySelector('.whiteout-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not found' }};
+                }}
+
+                // Record dimensions after opening editor (before typing)
+                const widthBeforeTyping = parseFloat(whiteout.style.width);
+                const heightBeforeTyping = parseFloat(whiteout.style.height);
+
+                // Type a single short character - this should definitely fit
+                input.textContent = 'a';
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                // Record dimensions after typing
+                const widthAfterTyping = parseFloat(whiteout.style.width);
+                const heightAfterTyping = parseFloat(whiteout.style.height);
+
+                // Calculate expansion
+                const widthExpanded = widthAfterTyping > originalWidth;
+                const heightExpanded = heightAfterTyping > originalHeight;
+                const widthDelta = widthAfterTyping - originalWidth;
+                const heightDelta = heightAfterTyping - originalHeight;
+
+                return {{
+                    success: true,
+                    originalWidth: originalWidth,
+                    originalHeight: originalHeight,
+                    widthBeforeTyping: widthBeforeTyping,
+                    heightBeforeTyping: heightBeforeTyping,
+                    widthAfterTyping: widthAfterTyping,
+                    heightAfterTyping: heightAfterTyping,
+                    widthExpanded: widthExpanded,
+                    heightExpanded: heightExpanded,
+                    widthDelta: widthDelta,
+                    heightDelta: heightDelta,
+                    shouldNotExpand: !widthExpanded && !heightExpanded
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout expansion")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Whiteout expansion test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["shouldNotExpand"].as_bool().unwrap_or(false),
+        "BUG: Whiteout should NOT expand when typing short text that fits. \
+         Original: {}x{}, After typing 'a': {}x{} (delta: +{}w, +{}h)",
+        result["originalWidth"].as_f64().unwrap_or(0.0),
+        result["originalHeight"].as_f64().unwrap_or(0.0),
+        result["widthAfterTyping"].as_f64().unwrap_or(0.0),
+        result["heightAfterTyping"].as_f64().unwrap_or(0.0),
+        result["widthDelta"].as_f64().unwrap_or(0.0),
+        result["heightDelta"].as_f64().unwrap_or(0.0)
+    );
+}

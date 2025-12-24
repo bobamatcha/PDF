@@ -58,6 +58,40 @@ cargo test test_name
 
 # Run tests for a specific crate
 cargo test -p crate-name
+
+# Run tests for a specific app (recommended for faster iteration)
+./scripts/test-app.sh pdfjoin    # Tests pdfjoin-core + pdfjoin-wasm
+./scripts/test-app.sh agentpdf   # Tests agentpdf-wasm
+./scripts/test-app.sh docsign    # Tests docsign-core + docsign-wasm
+./scripts/test-app.sh list       # Show all available options
+```
+
+## App-Specific Testing
+
+Use `./scripts/test-app.sh` for faster test runs when working on a specific app:
+
+| App | Crates Tested | Command |
+|-----|---------------|---------|
+| pdfjoin-web | pdfjoin-core, pdfjoin-wasm | `./scripts/test-app.sh pdfjoin` |
+| agentpdf-web | agentpdf-wasm | `./scripts/test-app.sh agentpdf` |
+| docsign-web | docsign-core, docsign-wasm | `./scripts/test-app.sh docsign` |
+| corpus-api | corpus-core, corpus-api | `./scripts/test-app.sh corpus` |
+
+### pdfjoin-web Development
+
+```bash
+cd apps/pdfjoin-web
+
+# TypeScript build (esbuild)
+npm run build          # One-time build
+npm run build:watch    # Watch mode
+npm run typecheck      # Type check only
+
+# Full dev server (TS watch + Trunk serve)
+npm run dev
+
+# Run Rust tests only
+./scripts/test-app.sh pdfjoin
 ```
 
 ## Pre-commit Hook
