@@ -4808,7 +4808,7 @@ async fn test_pdfjoin_whiteout_saved_text_appears_on_top() {
                     return {{ success: false, error: 'Text input not found' }};
                 }}
 
-                input.value = 'Test Text On Top';
+                input.textContent = 'Test Text On Top';
                 input.dispatchEvent(new Event('input'));
 
                 // Press Enter to save
@@ -5033,5 +5033,1533 @@ async fn test_pdfjoin_clicking_whiteout_with_text_tool_opens_whiteout_editor() {
         "BUG: Text input font should match covered text ({}px), not default. Got: {}px",
         result["coveredFontSize"].as_f64().unwrap_or(0.0),
         result["inputFontSize"].as_f64().unwrap_or(0.0)
+    );
+}
+
+/// Test that whiteout text appears in the exported PDF via full UI flow
+/// This tests the actual user journey: draw whiteout, type text, press Enter, download
+#[tokio::test]
+async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Draw a whiteout
+                document.getElementById('tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;
+                const endY = startY + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{
+                    return {{ success: false, error: 'Whiteout not created' }};
+                }}
+
+                // Find the text input that should have appeared
+                let input = whiteout.querySelector('input, .whiteout-text-input');
+                if (!input) {{
+                    // Click on the whiteout to open editor
+                    whiteout.scrollIntoView({{ block: 'center' }});
+                    await new Promise(r => setTimeout(r, 100));
+                    const whiteoutRect = whiteout.getBoundingClientRect();
+                    const overlay = document.querySelector('.overlay-container');
+                    overlay.dispatchEvent(new MouseEvent('click', {{
+                        bubbles: true,
+                        clientX: whiteoutRect.left + whiteoutRect.width / 2,
+                        clientY: whiteoutRect.top + whiteoutRect.height / 2
+                    }}));
+                    await new Promise(r => setTimeout(r, 300));
+                    input = whiteout.querySelector('input, .whiteout-text-input');
+                }}
+
+                if (!input) {{
+                    return {{ success: false, error: 'Could not find text input in whiteout' }};
+                }}
+
+                // Type text and press Enter
+                input.textContent = 'UNIQUE_WHITEOUT_TEXT_XYZ789';
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Verify text was saved (check for text span)
+                const textSpan = whiteout.querySelector('.whiteout-text-content');
+                const hasTextInPreview = textSpan && textSpan.textContent.includes('UNIQUE_WHITEOUT_TEXT_XYZ789');
+
+                // Capture the export by intercepting the download
+                let exportedArray = null;
+                const originalCreateObjectURL = URL.createObjectURL;
+                URL.createObjectURL = (blob) => {{
+                    // Read the blob
+                    const reader = new FileReader();
+                    reader.readAsArrayBuffer(blob);
+                    reader.onload = () => {{
+                        exportedArray = new Uint8Array(reader.result);
+                    }};
+                    return originalCreateObjectURL(blob);
+                }};
+
+                // Click download button
+                const downloadBtn = document.getElementById('edit-download-btn');
+                if (downloadBtn && !downloadBtn.disabled) {{
+                    downloadBtn.click();
+                    await new Promise(r => setTimeout(r, 500));
+                }}
+
+                // Restore original
+                URL.createObjectURL = originalCreateObjectURL;
+
+                if (!exportedArray) {{
+                    // Try alternative: check if operations exist
+                    const opCount = document.querySelectorAll('.edit-whiteout-overlay').length;
+                    return {{
+                        success: false,
+                        error: 'Could not capture export - download button may be disabled or export failed',
+                        hasTextInPreview,
+                        downloadBtnDisabled: downloadBtn?.disabled,
+                        whiteoutCount: opCount
+                    }};
+                }}
+
+                // Check the exported PDF for our text
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasTextInPdf = pdfText.includes('UNIQUE_WHITEOUT_TEXT_XYZ789');
+                const hasFreeText = pdfText.includes('/FreeText');
+                const hasSquare = pdfText.includes('/Square');
+
+                return {{
+                    success: true,
+                    hasTextInPreview: hasTextInPreview,
+                    hasTextInPdf: hasTextInPdf,
+                    hasFreeText: hasFreeText,
+                    hasSquare: hasSquare,
+                    exportedSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout text export")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Whiteout text export test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hasTextInPreview"].as_bool().unwrap_or(false),
+        "Text should appear in preview"
+    );
+    assert!(
+        result["hasSquare"].as_bool().unwrap_or(false),
+        "Exported PDF should contain Square annotation for whiteout"
+    );
+    assert!(
+        result["hasTextInPdf"].as_bool().unwrap_or(false),
+        "BUG: Text entered on whiteout does NOT appear in exported PDF. \
+         The text shows in preview (hasTextInPreview={}) but is missing from downloaded document.",
+        result["hasTextInPreview"].as_bool().unwrap_or(false)
+    );
+}
+
+/// Test that whiteout borders are hidden by default but visible when editing
+/// Borders should only be visible when:
+/// 1. The Whiteout tool is selected
+/// 2. When clicking on a whiteout to edit text
+/// But NOT visible in normal preview mode
+#[tokio::test]
+async fn test_pdfjoin_whiteout_borders_hidden_by_default() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Draw a whiteout
+                document.getElementById('tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;
+                const endY = startY + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{
+                    return {{ success: false, error: 'Whiteout not created' }};
+                }}
+
+                // Get computed style to check border visibility
+                const computeVisibleBorder = (el) => {{
+                    const style = window.getComputedStyle(el);
+                    const boxShadow = style.boxShadow;
+                    const border = style.border;
+                    const outline = style.outline;
+                    // Check if there's any visible edge indicator
+                    const hasVisibleShadow = boxShadow && boxShadow !== 'none' && !boxShadow.includes('rgba(0, 0, 0, 0)');
+                    const hasVisibleBorder = border && !border.includes('0px') && !border.includes('none');
+                    const hasVisibleOutline = outline && !outline.includes('0px') && !outline.includes('none');
+                    return {{ boxShadow, border, outline, hasVisibleShadow, hasVisibleBorder, hasVisibleOutline }};
+                }};
+
+                // 1. Check border while Whiteout tool is selected (should be visible)
+                const borderWithWhiteoutTool = computeVisibleBorder(whiteout);
+
+                // 2. Switch to Select tool and check border (should be hidden)
+                document.getElementById('tool-select').click();
+                await new Promise(r => setTimeout(r, 100));
+                const borderWithSelectTool = computeVisibleBorder(whiteout);
+
+                // 3. Switch to Text tool and check border (should be hidden)
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+                const borderWithTextTool = computeVisibleBorder(whiteout);
+
+                return {{
+                    success: true,
+                    borderWithWhiteoutTool: borderWithWhiteoutTool,
+                    borderWithSelectTool: borderWithSelectTool,
+                    borderWithTextTool: borderWithTextTool,
+                    // These are the expectations
+                    visibleWhenWhiteoutToolSelected: borderWithWhiteoutTool.hasVisibleShadow || borderWithWhiteoutTool.hasVisibleOutline,
+                    hiddenWhenSelectTool: !borderWithSelectTool.hasVisibleShadow && !borderWithSelectTool.hasVisibleOutline,
+                    hiddenWhenTextTool: !borderWithTextTool.hasVisibleShadow && !borderWithTextTool.hasVisibleOutline
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout border visibility")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Whiteout border visibility test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hiddenWhenSelectTool"].as_bool().unwrap_or(false),
+        "BUG: Whiteout borders should be HIDDEN when Select tool is active. \
+         Currently visible: {:?}",
+        result["borderWithSelectTool"]
+    );
+    assert!(
+        result["hiddenWhenTextTool"].as_bool().unwrap_or(false),
+        "BUG: Whiteout borders should be HIDDEN when Text tool is active. \
+         Currently visible: {:?}",
+        result["borderWithTextTool"]
+    );
+}
+
+/// BUG TEST: Editing existing text overlay should allow bold/italic styling
+/// When clicking on an existing text overlay to edit it, the Bold (B) and Italic (I)
+/// buttons should be enabled and clicking them should apply the style.
+/// BUG: Currently the blur handler fires too quickly (100ms) and closes the input
+/// before the button click can be processed.
+#[tokio::test]
+async fn test_pdfjoin_edit_existing_text_allows_bold_italic() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add some text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // Click to add text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Find the text input and type some text
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not created on click' }};
+                }}
+
+                input.textContent = 'Test Text';
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // Press Enter to save
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the saved text overlay
+                const textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Text overlay not created after Enter' }};
+                }}
+
+                // Initial state - should NOT be bold
+                const initialFontWeight = textOverlay.style.fontWeight;
+                const wasInitiallyBold = initialFontWeight === 'bold' || initialFontWeight === '700';
+
+                // Now click on the text overlay to edit it (this is the bug scenario)
+                textOverlay.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Find the edit input
+                input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Edit input not created when clicking existing text' }};
+                }}
+
+                // Check if bold button is enabled
+                const boldBtn = document.getElementById('style-bold');
+                const boldBtnDisabled = boldBtn.disabled;
+
+                // Try to click the bold button
+                boldBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Check if input still exists (bug: it may have been closed by blur)
+                const inputStillExists = document.querySelector('.edit-text-input') !== null;
+
+                // Check if bold was applied to the input
+                const inputIsBold = input.dataset?.isBold === 'true' || input.style.fontWeight === 'bold';
+
+                // If input still exists, press Enter to save
+                if (inputStillExists) {{
+                    input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+
+                // Check final overlay state
+                const finalOverlay = document.querySelector('.edit-text-overlay');
+                const finalFontWeight = finalOverlay?.style.fontWeight || '';
+                const isFinallyBold = finalFontWeight === 'bold' || finalFontWeight === '700';
+
+                return {{
+                    success: true,
+                    wasInitiallyBold: wasInitiallyBold,
+                    boldBtnDisabled: boldBtnDisabled,
+                    inputStillExistsAfterBoldClick: inputStillExists,
+                    inputIsBold: inputIsBold,
+                    isFinallyBold: isFinallyBold,
+                    boldWasApplied: !wasInitiallyBold && isFinallyBold
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test bold on existing text")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Edit existing text bold/italic test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        !result["boldBtnDisabled"].as_bool().unwrap_or(true),
+        "BUG: Bold button should be ENABLED when editing existing text"
+    );
+    assert!(
+        result["inputStillExistsAfterBoldClick"]
+            .as_bool()
+            .unwrap_or(false),
+        "BUG: Input should NOT close when clicking Bold button. \
+         The blur handler (100ms) fires before the click is processed."
+    );
+    assert!(
+        result["boldWasApplied"].as_bool().unwrap_or(false),
+        "BUG: Clicking Bold button should make text bold. \
+         Initial bold: {}, Final bold: {}",
+        result["wasInitiallyBold"].as_bool().unwrap_or(false),
+        result["isFinallyBold"].as_bool().unwrap_or(false)
+    );
+}
+
+/// BUG TEST: Bold/italic buttons should remain enabled on SUBSEQUENT edits of text
+/// After editing text once and saving, clicking on it again to edit should still
+/// have the bold/italic buttons enabled.
+/// BUG: Buttons are disabled on second edit due to stale blur handler timing.
+#[tokio::test]
+async fn test_pdfjoin_edit_existing_text_bold_enabled_on_second_edit() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // Click to add text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Type and save text
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not created on click' }};
+                }}
+                input.textContent = 'Test Text';
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // FIRST EDIT: Click on text overlay to edit
+                let textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Text overlay not found after save' }};
+                }}
+                textOverlay.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check bold button is enabled on first edit
+                const boldBtn = document.getElementById('style-bold');
+                const firstEditBoldDisabled = boldBtn.disabled;
+
+                // Save first edit (press Enter)
+                input = document.querySelector('.edit-text-input');
+                if (input) {{
+                    input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                }}
+                await new Promise(r => setTimeout(r, 300));
+
+                // SECOND EDIT: Click on text overlay again
+                textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Text overlay not found after first edit' }};
+                }}
+                textOverlay.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check bold button is enabled on SECOND edit
+                const secondEditBoldDisabled = boldBtn.disabled;
+
+                // Check if input was created
+                input = document.querySelector('.edit-text-input');
+                const secondEditInputCreated = !!input;
+
+                return {{
+                    success: true,
+                    firstEditBoldDisabled: firstEditBoldDisabled,
+                    secondEditBoldDisabled: secondEditBoldDisabled,
+                    secondEditInputCreated: secondEditInputCreated,
+                    bugExists: !firstEditBoldDisabled && secondEditBoldDisabled
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test second edit")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Second edit bold button test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["secondEditInputCreated"].as_bool().unwrap_or(false),
+        "Input should be created on second edit"
+    );
+    assert!(
+        !result["secondEditBoldDisabled"].as_bool().unwrap_or(true),
+        "BUG: Bold button is DISABLED on second edit but was ENABLED on first edit. \
+         First edit disabled: {}, Second edit disabled: {}",
+        result["firstEditBoldDisabled"].as_bool().unwrap_or(false),
+        result["secondEditBoldDisabled"].as_bool().unwrap_or(true)
+    );
+}
+
+/// BUG TEST: Text should remain editable after being edited once
+/// After editing existing text and saving, clicking on it again should open the editor.
+/// BUG: Text becomes completely uneditable after the first edit.
+#[tokio::test]
+async fn test_pdfjoin_text_remains_editable_after_first_edit() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
+
+                // Step 1: Add new text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 150));
+
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Step 1: Input not created when adding new text' }};
+                }}
+                // Use textContent for contentEditable spans
+                input.textContent = 'Original Text';
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Verify text overlay was created
+                let textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Step 1: Text overlay not created after Enter' }};
+                }}
+                const step1Content = textOverlay.textContent;
+
+                // Step 2: FIRST EDIT - click on existing text
+                textOverlay.click();
+                await new Promise(r => setTimeout(r, 150));
+
+                input = document.querySelector('.edit-text-input');
+                const firstEditInputCreated = !!input;
+                if (!input) {{
+                    return {{
+                        success: false,
+                        error: 'Step 2: Input not created on FIRST edit click',
+                        step1Content: step1Content
+                    }};
+                }}
+
+                // Modify the text (use textContent for contentEditable)
+                input.textContent = 'Modified Text';
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Verify text was modified
+                textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Step 2: Text overlay disappeared after first edit' }};
+                }}
+                const step2Content = textOverlay.textContent;
+                const textWasModified = step2Content === 'Modified Text';
+
+                // Step 3: SECOND EDIT - click on text again (THIS IS WHERE THE BUG IS)
+                textOverlay.click();
+                await new Promise(r => setTimeout(r, 150));
+
+                input = document.querySelector('.edit-text-input');
+                const secondEditInputCreated = !!input;
+
+                // Also check if bold button is enabled (secondary issue)
+                const boldBtn = document.getElementById('style-bold');
+                const boldBtnDisabled = boldBtn?.disabled;
+
+                return {{
+                    success: true,
+                    step1Content: step1Content,
+                    step2Content: step2Content,
+                    textWasModified: textWasModified,
+                    firstEditInputCreated: firstEditInputCreated,
+                    secondEditInputCreated: secondEditInputCreated,
+                    boldBtnDisabledOnSecondEdit: boldBtnDisabled,
+                    bugExists: firstEditInputCreated && !secondEditInputCreated
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text editability")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text remains editable test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["firstEditInputCreated"].as_bool().unwrap_or(false),
+        "First edit should create input"
+    );
+    assert!(
+        result["textWasModified"].as_bool().unwrap_or(false),
+        "Text should be modified after first edit. Got: '{}'",
+        result["step2Content"].as_str().unwrap_or("?")
+    );
+    assert!(
+        result["secondEditInputCreated"].as_bool().unwrap_or(false),
+        "BUG: Text becomes UNEDITABLE after first edit! \
+         Clicking on text after editing it once does NOT open the editor. \
+         First edit worked: {}, Second edit worked: {}",
+        result["firstEditInputCreated"].as_bool().unwrap_or(false),
+        result["secondEditInputCreated"].as_bool().unwrap_or(false)
+    );
+}
+
+/// Tests that font size controls exist in the edit toolbar
+#[tokio::test]
+async fn test_pdfjoin_font_size_controls_exist() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let js_code = r#"(async () => {
+        try {
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 300));
+
+            const fontSizeControl = document.getElementById('font-size-control');
+            const fontSizeDecrease = document.getElementById('font-size-decrease');
+            const fontSizeIncrease = document.getElementById('font-size-increase');
+            const fontSizeValue = document.getElementById('font-size-value');
+
+            return {
+                success: true,
+                fontSizeControlExists: !!fontSizeControl,
+                fontSizeDecreaseExists: !!fontSizeDecrease,
+                fontSizeIncreaseExists: !!fontSizeIncrease,
+                fontSizeValueExists: !!fontSizeValue,
+                decreaseButtonText: fontSizeDecrease ? fontSizeDecrease.textContent : null,
+                increaseButtonText: fontSizeIncrease ? fontSizeIncrease.textContent : null,
+                defaultFontSize: fontSizeValue ? fontSizeValue.value : null
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let result: serde_json::Value = page
+        .evaluate(js_code)
+        .await
+        .expect("Should check font size controls")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Font size controls test: {:?}", result);
+
+    assert!(
+        result["fontSizeControlExists"].as_bool().unwrap_or(false),
+        "Font size control container should exist"
+    );
+    assert!(
+        result["fontSizeDecreaseExists"].as_bool().unwrap_or(false),
+        "Font size decrease button should exist"
+    );
+    assert!(
+        result["fontSizeIncreaseExists"].as_bool().unwrap_or(false),
+        "Font size increase button should exist"
+    );
+    assert!(
+        result["fontSizeValueExists"].as_bool().unwrap_or(false),
+        "Font size value input should exist"
+    );
+    assert_eq!(
+        result["defaultFontSize"].as_str().unwrap_or(""),
+        "12",
+        "Default font size should be 12"
+    );
+}
+
+/// Tests that font family dropdown exists with expected options
+#[tokio::test]
+async fn test_pdfjoin_font_family_control_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let js_code = r#"(async () => {
+        try {
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 300));
+
+            const fontFamilySelect = document.getElementById('style-font-family');
+            if (!fontFamilySelect) {
+                return { success: false, error: 'Font family select not found' };
+            }
+
+            const options = Array.from(fontFamilySelect.options).map(o => o.value);
+
+            return {
+                success: true,
+                fontFamilyExists: true,
+                optionCount: options.length,
+                options: options,
+                hasSansSerif: options.includes('sans-serif'),
+                hasSerif: options.includes('serif'),
+                hasMonospace: options.includes('monospace'),
+                hasArial: options.includes('Arial'),
+                hasTimesNewRoman: options.includes('Times New Roman')
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let result: serde_json::Value = page
+        .evaluate(js_code)
+        .await
+        .expect("Should check font family control")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Font family control test: {:?}", result);
+
+    assert!(
+        result["fontFamilyExists"].as_bool().unwrap_or(false),
+        "Font family select should exist"
+    );
+    assert!(
+        result["optionCount"].as_i64().unwrap_or(0) >= 5,
+        "Should have at least 5 font options"
+    );
+    assert!(
+        result["hasSansSerif"].as_bool().unwrap_or(false),
+        "Should have sans-serif option"
+    );
+    assert!(
+        result["hasSerif"].as_bool().unwrap_or(false),
+        "Should have serif option"
+    );
+    assert!(
+        result["hasMonospace"].as_bool().unwrap_or(false),
+        "Should have monospace option"
+    );
+}
+
+/// Tests that font size can be changed when editing text
+#[tokio::test]
+async fn test_pdfjoin_font_size_change_works() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
+
+                // Click to add text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 150));
+
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not created' }};
+                }}
+
+                // Check initial state
+                const initialFontSize = document.getElementById('font-size-value').value;
+                const initialInputFontSize = input.dataset.fontSize;
+
+                // Check that font controls are enabled
+                const increaseBtn = document.getElementById('font-size-increase');
+                const decreaseBtn = document.getElementById('font-size-decrease');
+                const controlsEnabled = !increaseBtn.disabled && !decreaseBtn.disabled;
+
+                // Increase font size twice
+                increaseBtn.click();
+                await new Promise(r => setTimeout(r, 50));
+                increaseBtn.click();
+                await new Promise(r => setTimeout(r, 50));
+
+                const newFontSizeValue = document.getElementById('font-size-value').value;
+                const newInputFontSize = input.dataset.fontSize;
+                const inputStyleFontSize = input.style.fontSize;
+
+                return {{
+                    success: true,
+                    initialFontSize: initialFontSize,
+                    initialInputFontSize: initialInputFontSize,
+                    controlsEnabled: controlsEnabled,
+                    newFontSizeValue: newFontSizeValue,
+                    newInputFontSize: newInputFontSize,
+                    inputStyleFontSize: inputStyleFontSize,
+                    fontSizeIncreased: parseInt(newFontSizeValue) > parseInt(initialFontSize)
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test font size change")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Font size change test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["controlsEnabled"].as_bool().unwrap_or(false),
+        "Font controls should be enabled when text input is active"
+    );
+    assert!(
+        result["fontSizeIncreased"].as_bool().unwrap_or(false),
+        "Font size should increase when clicking + button. Initial: {}, New: {}",
+        result["initialFontSize"].as_str().unwrap_or("?"),
+        result["newFontSizeValue"].as_str().unwrap_or("?")
+    );
+}
+
+/// Tests that text overlay can be dragged with Select tool
+#[tokio::test]
+async fn test_pdfjoin_text_overlay_draggable_with_select_tool() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
+
+                // Click to add text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 150));
+
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not created' }};
+                }}
+
+                // Add text using contentEditable (textContent instead of value)
+                input.textContent = 'Draggable Text';
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                let textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Text overlay not created' }};
+                }}
+
+                // Record initial position
+                const initialLeft = parseFloat(textOverlay.style.left);
+                const initialTop = parseFloat(textOverlay.style.top);
+
+                // Check cursor style
+                const cursorStyle = window.getComputedStyle(textOverlay).cursor;
+
+                // Switch to Select tool
+                document.getElementById('tool-select').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Simulate drag: mousedown, mousemove, mouseup
+                const overlayRect = textOverlay.getBoundingClientRect();
+                const startX = overlayRect.left + overlayRect.width / 2;
+                const startY = overlayRect.top + overlayRect.height / 2;
+                const endX = startX + 50;
+                const endY = startY + 30;
+
+                textOverlay.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: startX,
+                    clientY: startY
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+
+                document.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true,
+                    clientX: endX,
+                    clientY: endY
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+
+                document.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: endX,
+                    clientY: endY
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                // Check final position
+                textOverlay = document.querySelector('.edit-text-overlay');
+                const finalLeft = parseFloat(textOverlay.style.left);
+                const finalTop = parseFloat(textOverlay.style.top);
+
+                return {{
+                    success: true,
+                    cursorStyle: cursorStyle,
+                    hasMoveStyle: cursorStyle === 'move',
+                    initialLeft: initialLeft,
+                    initialTop: initialTop,
+                    finalLeft: finalLeft,
+                    finalTop: finalTop,
+                    positionChanged: finalLeft !== initialLeft || finalTop !== initialTop,
+                    deltaX: finalLeft - initialLeft,
+                    deltaY: finalTop - initialTop
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text overlay dragging")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text overlay drag test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["hasMoveStyle"].as_bool().unwrap_or(false),
+        "Text overlay should have cursor: move style"
+    );
+    assert!(
+        result["positionChanged"].as_bool().unwrap_or(false),
+        "Text overlay position should change after dragging. Initial: ({}, {}), Final: ({}, {})",
+        result["initialLeft"].as_f64().unwrap_or(0.0),
+        result["initialTop"].as_f64().unwrap_or(0.0),
+        result["finalLeft"].as_f64().unwrap_or(0.0),
+        result["finalTop"].as_f64().unwrap_or(0.0)
+    );
+}
+
+/// Tests that text overlay can be edited after clicking elsewhere in the document
+#[tokio::test]
+async fn test_pdfjoin_text_editable_after_clicking_elsewhere() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
+
+                // Step 1: Add new text at position (200, 200)
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 150));
+
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Step 1: Input not created' }};
+                }}
+                input.textContent = 'Test Text';
+                input.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', bubbles: true }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                let textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Step 1: Text overlay not created' }};
+                }}
+                const overlayOpId1 = textOverlay.dataset.opId;
+
+                // Step 2: Click ELSEWHERE in the document (different position)
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 400,
+                    clientY: pageRect.top + 400
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // A new input might have been created at the new position - close it
+                let newInput = document.querySelector('.edit-text-input');
+                if (newInput) {{
+                    newInput.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Escape', bubbles: true }}));
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                // Step 3: Now try to click on the ORIGINAL text overlay to edit it
+                textOverlay = document.querySelector('.edit-text-overlay');
+                if (!textOverlay) {{
+                    return {{ success: false, error: 'Step 3: Original text overlay disappeared' }};
+                }}
+
+                // Get the text overlay position and click on it
+                const textRect = textOverlay.getBoundingClientRect();
+                textOverlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: textRect.left + textRect.width / 2,
+                    clientY: textRect.top + textRect.height / 2
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check if edit input was created
+                input = document.querySelector('.edit-text-input');
+                const editInputCreated = !!input;
+                const inputValue = input ? input.textContent : null;
+
+                return {{
+                    success: true,
+                    overlayOpId1: overlayOpId1,
+                    editInputCreated: editInputCreated,
+                    inputValue: inputValue,
+                    textOverlayExists: !!document.querySelector('.edit-text-overlay'),
+                    bugExists: !editInputCreated
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text editability after clicking elsewhere")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text editable after clicking elsewhere test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["editInputCreated"].as_bool().unwrap_or(false),
+        "BUG: Text overlay cannot be edited after clicking elsewhere! \
+         The edit input was NOT created when clicking on the text overlay."
+    );
+}
+
+/// Tests that contentEditable text input auto-expands
+#[tokio::test]
+async fn test_pdfjoin_text_input_auto_expands() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text tool and add text
+                document.getElementById('tool-text').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container');
+                const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
+
+                // Click to add text
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 150));
+
+                let input = document.querySelector('.edit-text-input');
+                if (!input) {{
+                    return {{ success: false, error: 'Text input not created' }};
+                }}
+
+                // Check that it's contentEditable
+                const isContentEditable = input.contentEditable === 'true' || input.isContentEditable;
+
+                // Get initial dimensions
+                const initialWidth = input.offsetWidth;
+                const initialHeight = input.offsetHeight;
+
+                // Add a long text
+                input.textContent = 'This is a very long text that should cause the input to expand horizontally to accommodate all the content without truncation';
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                // Get expanded dimensions
+                const expandedWidth = input.offsetWidth;
+                const expandedHeight = input.offsetHeight;
+
+                return {{
+                    success: true,
+                    isContentEditable: isContentEditable,
+                    initialWidth: initialWidth,
+                    initialHeight: initialHeight,
+                    expandedWidth: expandedWidth,
+                    expandedHeight: expandedHeight,
+                    widthExpanded: expandedWidth > initialWidth,
+                    tagName: input.tagName.toLowerCase()
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text input auto-expand")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text input auto-expand test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+    assert!(
+        result["isContentEditable"].as_bool().unwrap_or(false),
+        "Text input should be contentEditable. Tag: {}",
+        result["tagName"].as_str().unwrap_or("?")
+    );
+    assert!(
+        result["widthExpanded"].as_bool().unwrap_or(false),
+        "Text input should expand with content. Initial: {}px, Expanded: {}px",
+        result["initialWidth"].as_f64().unwrap_or(0.0),
+        result["expandedWidth"].as_f64().unwrap_or(0.0)
     );
 }

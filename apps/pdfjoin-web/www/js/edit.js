@@ -11,6 +11,7 @@ let currentPage = 1;
 let operationHistory = [];  // For undo (stores operation IDs)
 let textItems = new Map();  // pageNum -> array of text items with positions
 let activeEditItem = null;  // Currently editing text item
+let activeTextInput = null; // Currently focused text input (for B/I buttons)
 
 // Whiteout drawing state
 let isDrawing = false;
@@ -78,6 +79,15 @@ export function setupEditView() {
             updateCursor();
             // Deselect whiteout when changing tools
             deselectWhiteout();
+            // Toggle whiteout-tool-active class for border visibility
+            const viewer = document.getElementById('edit-viewer');
+            if (viewer) {
+                if (currentTool === 'whiteout') {
+                    viewer.classList.add('whiteout-tool-active');
+                } else {
+                    viewer.classList.remove('whiteout-tool-active');
+                }
+            }
         });
     });
 
@@ -97,6 +107,34 @@ export function setupEditView() {
     document.querySelector('#edit-error .dismiss').addEventListener('click', () => {
         document.getElementById('edit-error').classList.add('hidden');
     });
+
+    // Bold/Italic style buttons
+    const boldBtn = document.getElementById('style-bold');
+    const italicBtn = document.getElementById('style-italic');
+
+    boldBtn.addEventListener('click', () => toggleBold());
+    italicBtn.addEventListener('click', () => toggleItalic());
+
+    // Global keyboard shortcuts for Cmd+B and Cmd+I
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && activeTextInput) {
+            if (e.key === 'b' || e.key === 'B') {
+                e.preventDefault();
+                toggleBold();
+            } else if (e.key === 'i' || e.key === 'I') {
+                e.preventDefault();
+                toggleItalic();
+            }
+        }
+    });
+
+    // Font size controls
+    document.getElementById('font-size-decrease').addEventListener('click', () => decreaseFontSize());
+    document.getElementById('font-size-increase').addEventListener('click', () => increaseFontSize());
+    document.getElementById('font-size-value').addEventListener('change', (e) => setFontSize(e.target.value));
+
+    // Font family control
+    document.getElementById('style-font-family').addEventListener('change', (e) => setFontFamily(e.target.value));
 }
 
 async function handleEditFile(file) {
@@ -201,6 +239,14 @@ function handleOverlayClick(e, pageNum) {
         return;
     }
 
+    // Check if clicking on an existing text overlay - if so, edit it
+    const textOverlay = elementAtClick?.closest('.edit-text-overlay') || e.target.closest('.edit-text-overlay');
+    if (textOverlay && currentTool === 'text') {
+        // Edit the existing text overlay instead of creating new
+        editExistingTextOverlay(textOverlay, pageNum);
+        return;
+    }
+
     const overlay = e.currentTarget;
     const rect = overlay.getBoundingClientRect();
     const domX = e.clientX - rect.left;
@@ -230,33 +276,54 @@ function handleOverlayClick(e, pageNum) {
 }
 
 function addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
-    // Create inline text input instead of using prompt()
-    const input = document.createElement('input');
-    input.type = 'text';
+    // Create auto-expanding contentEditable span
+    const input = document.createElement('span');
+    input.contentEditable = true;
     input.className = 'edit-text-input';
     input.style.position = 'absolute';
     input.style.left = domX + 'px';
     input.style.top = domY + 'px';
-    input.style.minWidth = '150px';
+    input.style.minWidth = '20px';
+    input.style.minHeight = '1em';
     input.style.fontSize = '12px';
+    input.style.fontFamily = 'sans-serif';
     input.style.padding = '2px 4px';
     input.style.border = '1px solid #007bff';
     input.style.borderRadius = '2px';
     input.style.outline = 'none';
     input.style.zIndex = '100';
-    input.placeholder = 'Type text...';
+    input.style.display = 'inline-block';
+    input.style.whiteSpace = 'pre-wrap';
+    input.style.wordBreak = 'break-word';
+    input.style.background = 'white';
+
+    // Initialize text styling state
+    input.dataset.isBold = 'false';
+    input.dataset.isItalic = 'false';
+    input.dataset.fontSize = '12';
+    input.dataset.fontFamily = 'sans-serif';
 
     overlay.appendChild(input);
     input.focus();
+    setActiveTextInput(input);
 
     function saveText() {
-        const text = input.value.trim();
+        const text = input.textContent.trim();
+        const isBold = input.dataset.isBold === 'true';
+        const isItalic = input.dataset.isItalic === 'true';
+        const fontSize = parseInt(input.dataset.fontSize) || 12;
+        const fontFamily = input.dataset.fontFamily || 'sans-serif';
         input.remove();
+        setActiveTextInput(null);
 
         if (!text) return;
 
+        // Get actual dimensions of the text for PDF operation
+        const textWidth = Math.max(input.offsetWidth, 50);
+        const textHeight = Math.max(input.offsetHeight, 20);
+
         // Add to session (PDF coordinates, height adjusted)
-        const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, 12, '#000000');
+        const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
         operationHistory.push(opId);
 
         // Add visual overlay
@@ -265,19 +332,32 @@ function addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
         textEl.textContent = text;
         textEl.style.left = domX + 'px';
         textEl.style.top = domY + 'px';
+        textEl.style.fontSize = fontSize + 'px';
+        textEl.style.fontFamily = fontFamily;
+        if (isBold) textEl.style.fontWeight = 'bold';
+        if (isItalic) textEl.style.fontStyle = 'italic';
         textEl.dataset.opId = opId;
+        textEl.dataset.fontSize = fontSize;
+        textEl.dataset.fontFamily = fontFamily;
+        textEl.dataset.isBold = isBold ? 'true' : 'false';
+        textEl.dataset.isItalic = isItalic ? 'true' : 'false';
 
         overlay.appendChild(textEl);
+
+        // Make text overlay draggable with Select tool
+        makeTextOverlayDraggable(textEl, pageNum);
+
         updateButtons();
     }
 
     input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             saveText();
         } else if (e.key === 'Escape') {
             e.preventDefault();
             input.remove();
+            setActiveTextInput(null);
         }
     });
 
@@ -286,6 +366,161 @@ function addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
         setTimeout(() => {
             if (input.parentElement) {
                 saveText();
+            }
+        }, 100);
+    });
+}
+
+function editExistingTextOverlay(textOverlay, pageNum) {
+    // Get existing text and style
+    const existingText = textOverlay.textContent;
+    const existingOpId = textOverlay.dataset.opId;
+    const isBold = textOverlay.style.fontWeight === 'bold' || textOverlay.style.fontWeight === '700';
+    const isItalic = textOverlay.style.fontStyle === 'italic';
+    const fontSize = parseInt(textOverlay.dataset.fontSize) || 12;
+    const fontFamily = textOverlay.dataset.fontFamily || 'sans-serif';
+
+    // Get position
+    const domX = parseFloat(textOverlay.style.left);
+    const domY = parseFloat(textOverlay.style.top);
+
+    // Get the overlay container
+    const overlay = textOverlay.parentElement;
+
+    // Remove the old operation from session
+    if (existingOpId && editSession) {
+        editSession.removeOperation(BigInt(existingOpId));
+        // Remove from history
+        const historyIndex = operationHistory.indexOf(BigInt(existingOpId));
+        if (historyIndex > -1) {
+            operationHistory.splice(historyIndex, 1);
+        }
+    }
+
+    // Hide the text overlay while editing (don't remove yet in case of cancel)
+    textOverlay.style.display = 'none';
+
+    // Create auto-expanding contentEditable span at the same position
+    const input = document.createElement('span');
+    input.contentEditable = true;
+    input.className = 'edit-text-input';
+    input.style.position = 'absolute';
+    input.style.left = domX + 'px';
+    input.style.top = domY + 'px';
+    input.style.minWidth = '20px';
+    input.style.minHeight = '1em';
+    input.style.fontSize = fontSize + 'px';
+    input.style.fontFamily = fontFamily;
+    input.style.padding = '2px 4px';
+    input.style.border = '1px solid #007bff';
+    input.style.borderRadius = '2px';
+    input.style.outline = 'none';
+    input.style.zIndex = '100';
+    input.style.display = 'inline-block';
+    input.style.whiteSpace = 'pre-wrap';
+    input.style.wordBreak = 'break-word';
+    input.style.background = 'white';
+    input.textContent = existingText;
+
+    // Initialize text styling state from existing overlay
+    input.dataset.isBold = isBold ? 'true' : 'false';
+    input.dataset.isItalic = isItalic ? 'true' : 'false';
+    input.dataset.fontSize = fontSize;
+    input.dataset.fontFamily = fontFamily;
+    if (isBold) input.style.fontWeight = 'bold';
+    if (isItalic) input.style.fontStyle = 'italic';
+
+    overlay.appendChild(input);
+    input.focus();
+    // Select all text for easy replacement
+    const range = document.createRange();
+    range.selectNodeContents(input);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    setActiveTextInput(input);
+
+    // Get page info for coordinate conversion
+    const pageInfo = PdfBridge.getPageInfo(pageNum);
+    const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+    const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+    const pdfX = domX * scaleX;
+    const pdfY = pageInfo.page.view[3] - (domY * scaleY);
+
+    function saveEditedText() {
+        const text = input.textContent.trim();
+        const newIsBold = input.dataset.isBold === 'true';
+        const newIsItalic = input.dataset.isItalic === 'true';
+        const newFontSize = parseInt(input.dataset.fontSize) || 12;
+        const newFontFamily = input.dataset.fontFamily || 'sans-serif';
+
+        // Get actual dimensions before removing
+        const textWidth = Math.max(input.offsetWidth, 50);
+        const textHeight = Math.max(input.offsetHeight, 20);
+
+        input.remove();
+        setActiveTextInput(null);
+
+        // Remove the old text overlay
+        textOverlay.remove();
+
+        if (!text) {
+            // User cleared the text - just remove (operation already removed)
+            updateButtons();
+            return;
+        }
+
+        // Add new operation with updated text and dimensions
+        const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, newFontSize, '#000000', newFontFamily, newIsItalic, newIsBold);
+        operationHistory.push(opId);
+
+        // Create new visual overlay
+        const newTextEl = document.createElement('div');
+        newTextEl.className = 'edit-text-overlay';
+        newTextEl.textContent = text;
+        newTextEl.style.left = domX + 'px';
+        newTextEl.style.top = domY + 'px';
+        newTextEl.style.fontSize = newFontSize + 'px';
+        newTextEl.style.fontFamily = newFontFamily;
+        if (newIsBold) newTextEl.style.fontWeight = 'bold';
+        if (newIsItalic) newTextEl.style.fontStyle = 'italic';
+        newTextEl.dataset.opId = opId;
+        newTextEl.dataset.fontSize = newFontSize;
+        newTextEl.dataset.fontFamily = newFontFamily;
+        newTextEl.dataset.isBold = newIsBold ? 'true' : 'false';
+        newTextEl.dataset.isItalic = newIsItalic ? 'true' : 'false';
+
+        overlay.appendChild(newTextEl);
+
+        // Make text overlay draggable with Select tool
+        makeTextOverlayDraggable(newTextEl, pageNum);
+
+        updateButtons();
+    }
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            saveEditedText();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            input.remove();
+            setActiveTextInput(null);
+            // Restore the old text overlay since user cancelled
+            textOverlay.style.display = '';
+            // Re-add the operation that was removed
+            if (existingText) {
+                const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, existingText, fontSize, '#000000', fontFamily, isItalic, isBold);
+                operationHistory.push(opId);
+                textOverlay.dataset.opId = opId;
+            }
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        setTimeout(() => {
+            if (input.parentElement) {
+                saveEditedText();
             }
         }, 100);
     });
@@ -649,6 +884,9 @@ function startMove(e, whiteRect) {
     // Don't start move if we're resizing
     if (resizing) return;
 
+    // Only Select or Whiteout tools can drag whiteout overlays
+    if (currentTool !== 'select' && currentTool !== 'whiteout') return;
+
     e.preventDefault();
     e.stopPropagation();
 
@@ -722,6 +960,110 @@ function endMove(e) {
     }
 }
 
+// ============ Text Overlay Dragging ============
+
+let draggingTextOverlay = null;
+let textDragStartX = 0;
+let textDragStartY = 0;
+let textDragStartLeft = 0;
+let textDragStartTop = 0;
+
+function makeTextOverlayDraggable(textEl, pageNum) {
+    textEl.style.cursor = 'move';
+
+    // Click handler for editing with Text tool
+    textEl.addEventListener('click', (e) => {
+        if (currentTool === 'text') {
+            e.preventDefault();
+            e.stopPropagation();
+            editExistingTextOverlay(textEl, pageNum);
+        }
+    });
+
+    textEl.addEventListener('mousedown', (e) => {
+        // Only Select tool can drag text overlays
+        if (currentTool !== 'select') return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        draggingTextOverlay = textEl;
+        textDragStartX = e.clientX;
+        textDragStartY = e.clientY;
+        textDragStartLeft = parseFloat(textEl.style.left);
+        textDragStartTop = parseFloat(textEl.style.top);
+
+        document.addEventListener('mousemove', handleTextDrag);
+        document.addEventListener('mouseup', endTextDrag);
+    });
+}
+
+function handleTextDrag(e) {
+    if (!draggingTextOverlay) return;
+
+    const dx = e.clientX - textDragStartX;
+    const dy = e.clientY - textDragStartY;
+
+    draggingTextOverlay.style.left = (textDragStartLeft + dx) + 'px';
+    draggingTextOverlay.style.top = (textDragStartTop + dy) + 'px';
+}
+
+function endTextDrag(e) {
+    if (!draggingTextOverlay) return;
+
+    // Remove event listeners first
+    document.removeEventListener('mousemove', handleTextDrag);
+    document.removeEventListener('mouseup', endTextDrag);
+
+    const textEl = draggingTextOverlay;
+    draggingTextOverlay = null;
+
+    // Only update if position actually changed
+    const newLeft = parseFloat(textEl.style.left);
+    const newTop = parseFloat(textEl.style.top);
+    if (newLeft === textDragStartLeft && newTop === textDragStartTop) return;
+
+    // Get operation data
+    const opId = textEl.dataset.opId;
+    const pageNum = parseInt(textEl.closest('.edit-page').dataset.page);
+    const text = textEl.textContent;
+    const fontSize = parseInt(textEl.dataset.fontSize) || 12;
+    const fontFamily = textEl.dataset.fontFamily || 'sans-serif';
+    const isBold = textEl.dataset.isBold === 'true';
+    const isItalic = textEl.dataset.isItalic === 'true';
+
+    // Remove old operation
+    if (opId && editSession) {
+        try {
+            editSession.removeOperation(BigInt(opId));
+            const historyIndex = operationHistory.indexOf(BigInt(opId));
+            if (historyIndex > -1) {
+                operationHistory.splice(historyIndex, 1);
+            }
+        } catch (err) {
+            console.error('Error removing text operation:', err);
+        }
+    }
+
+    // Convert new position to PDF coordinates
+    const pageInfo = PdfBridge.getPageInfo(pageNum);
+    if (pageInfo) {
+        const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+        const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+        const pdfX = newLeft * scaleX;
+        const pdfY = pageInfo.page.view[3] - (newTop * scaleY);
+
+        // Add new text operation at new position
+        const newOpId = editSession.addText(
+            pageNum, pdfX, pdfY - 20, 200, 20, text,
+            fontSize, '#000000', fontFamily, isItalic, isBold
+        );
+        operationHistory.push(newOpId);
+        textEl.dataset.opId = newOpId;
+    }
+}
+
 // ============ Whiteout Text Editor ============
 
 async function openWhiteoutTextEditor(whiteRect, pageNum) {
@@ -736,62 +1078,115 @@ async function openWhiteoutTextEditor(whiteRect, pageNum) {
     const domWidth = parseFloat(whiteRect.style.width);
     const domHeight = parseFloat(whiteRect.style.height);
 
+    // Store original dimensions for potential restoration
+    const originalWidth = domWidth;
+    const originalHeight = domHeight;
+
     // Detect covered text style
     const coveredStyle = await detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight);
 
-    // Create input INSIDE the whiteout
-    const input = document.createElement('input');
-    input.type = 'text';
+    // Create auto-expanding contentEditable span INSIDE the whiteout
+    const input = document.createElement('span');
+    input.contentEditable = true;
     input.className = 'whiteout-text-input';
-    input.placeholder = '';
-    input.style.width = '100%';
-    input.style.height = '100%';
+    input.style.display = 'block';
+    input.style.minWidth = '100%';
+    input.style.minHeight = '100%';
     input.style.border = 'none';
     input.style.outline = 'none';
     input.style.background = 'transparent';
     input.style.padding = '2px 4px';
     input.style.boxSizing = 'border-box';
     input.style.textAlign = 'center';
+    input.style.whiteSpace = 'pre-wrap';
+    input.style.wordBreak = 'break-word';
+    input.style.overflow = 'visible';
 
-    // Apply covered text style
+    // Apply covered text style (including bold/italic)
     input.style.fontSize = coveredStyle.fontSize + 'px';
     input.style.fontFamily = coveredStyle.fontFamily;
     input.style.color = '#000000';
+    if (coveredStyle.isBold) input.style.fontWeight = 'bold';
+    if (coveredStyle.isItalic) input.style.fontStyle = 'italic';
 
     // Store style info for saving
     input.dataset.fontSize = coveredStyle.fontSize;
     input.dataset.fontFamily = coveredStyle.fontFamily;
+    input.dataset.isBold = coveredStyle.isBold ? 'true' : 'false';
+    input.dataset.isItalic = coveredStyle.isItalic ? 'true' : 'false';
 
     whiteRect.appendChild(input);
+    whiteRect.classList.add('editing');
+    // Allow whiteout to expand with content
+    whiteRect.style.overflow = 'visible';
     input.focus();
+    setActiveTextInput(input);
+
+    // Auto-expand whiteout as user types
+    function expandWhiteoutForText() {
+        const textWidth = input.scrollWidth + 16; // padding
+        const textHeight = input.scrollHeight + 8;
+        const currentWidth = parseFloat(whiteRect.style.width);
+        const currentHeight = parseFloat(whiteRect.style.height);
+
+        if (textWidth > currentWidth) {
+            whiteRect.style.width = textWidth + 'px';
+        }
+        if (textHeight > currentHeight) {
+            whiteRect.style.height = textHeight + 'px';
+        }
+    }
+
+    input.addEventListener('input', expandWhiteoutForText);
 
     // Handle Enter to save
     input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            saveWhiteoutText(whiteRect, pageNum, input);
+            whiteRect.classList.remove('editing');
+            saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeight);
         } else if (e.key === 'Escape') {
             e.preventDefault();
+            whiteRect.classList.remove('editing');
+            // Restore original dimensions
+            whiteRect.style.width = originalWidth + 'px';
+            whiteRect.style.height = originalHeight + 'px';
+            whiteRect.style.overflow = 'hidden';
             input.remove();
+            setActiveTextInput(null);
         }
     });
 
     // Handle blur to save
     input.addEventListener('blur', () => {
-        // Small delay to allow click events to process
+        // Small delay to allow click events on style buttons to process
         setTimeout(() => {
-            if (input.parentElement && input.value.trim()) {
-                saveWhiteoutText(whiteRect, pageNum, input);
+            // Don't close if still focused (style button click refocuses)
+            if (input.matches(':focus')) return;
+
+            whiteRect.classList.remove('editing');
+            if (input.parentElement && input.textContent.trim()) {
+                saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeight);
             } else if (input.parentElement) {
+                // Restore original dimensions
+                whiteRect.style.width = originalWidth + 'px';
+                whiteRect.style.height = originalHeight + 'px';
+                whiteRect.style.overflow = 'hidden';
                 input.remove();
+                setActiveTextInput(null);
             }
-        }, 100);
+        }, 200);
     });
 }
 
 async function detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight) {
     // Default style
-    const defaultStyle = { fontSize: 12, fontFamily: 'Helvetica, Arial, sans-serif' };
+    const defaultStyle = {
+        fontSize: 12,
+        fontFamily: 'Helvetica, Arial, sans-serif',
+        isBold: false,
+        isItalic: false
+    };
 
     try {
         // Get text items from this page
@@ -818,7 +1213,9 @@ async function detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight) 
         // Use domFontSize (viewport-scaled) for display in the DOM
         return {
             fontSize: item.domFontSize || item.fontSize || 12,
-            fontFamily: item.fontFamily || defaultStyle.fontFamily
+            fontFamily: item.fontFamily || defaultStyle.fontFamily,
+            isBold: item.isBold || false,
+            isItalic: item.isItalic || false
         };
     } catch (err) {
         console.error('Error detecting covered text style:', err);
@@ -826,19 +1223,27 @@ async function detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight) 
     }
 }
 
-function saveWhiteoutText(whiteRect, pageNum, input) {
-    const text = input.value.trim();
+function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeight) {
+    const text = input.textContent.trim();
     if (!text) {
+        // Restore original dimensions if no text
+        if (originalWidth) whiteRect.style.width = originalWidth + 'px';
+        if (originalHeight) whiteRect.style.height = originalHeight + 'px';
+        whiteRect.style.overflow = 'hidden';
         input.remove();
+        setActiveTextInput(null);
         return;
     }
 
-    // Get position and style info
+    // Get position and style info (including potentially expanded dimensions)
     const domX = parseFloat(whiteRect.style.left);
     const domY = parseFloat(whiteRect.style.top);
     const domWidth = parseFloat(whiteRect.style.width);
     const domHeight = parseFloat(whiteRect.style.height);
     const fontSize = parseFloat(input.dataset.fontSize) || 12;
+    const fontFamily = input.dataset.fontFamily || null;
+    const isBold = input.dataset.isBold === 'true';
+    const isItalic = input.dataset.isItalic === 'true';
 
     // Convert to PDF coordinates
     const pageInfo = PdfBridge.getPageInfo(pageNum);
@@ -855,7 +1260,24 @@ function saveWhiteoutText(whiteRect, pageNum, input) {
     const pdfHeight = domHeight * scaleY;
     const pdfY = pageInfo.page.view[3] - ((domY + domHeight) * scaleY);
 
-    // Add text annotation at the whiteout position
+    // If whiteout was resized, update the whiteout operation
+    if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
+        const existingOpId = whiteRect.dataset.opId;
+        if (existingOpId && editSession) {
+            editSession.removeOperation(BigInt(existingOpId));
+            // Remove from history
+            const historyIndex = operationHistory.indexOf(BigInt(existingOpId));
+            if (historyIndex > -1) {
+                operationHistory.splice(historyIndex, 1);
+            }
+            // Add new whiteout with updated dimensions
+            const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+            operationHistory.push(newWhiteOpId);
+            whiteRect.dataset.opId = newWhiteOpId;
+        }
+    }
+
+    // Add text annotation at the whiteout position (with font styling)
     const opId = editSession.addText(
         pageNum,
         pdfX,
@@ -864,11 +1286,14 @@ function saveWhiteoutText(whiteRect, pageNum, input) {
         pdfHeight,
         text,
         fontSize,
-        '#000000'
+        '#000000',
+        fontFamily,  // font name
+        isItalic,    // is_italic
+        isBold       // is_bold
     );
     operationHistory.push(opId);
 
-    // Replace input with text span INSIDE the whiteout
+    // Replace input with text span INSIDE the whiteout (auto-sizing)
     const textSpan = document.createElement('span');
     textSpan.className = 'whiteout-text-content';
     textSpan.textContent = text;
@@ -880,13 +1305,20 @@ function saveWhiteoutText(whiteRect, pageNum, input) {
     textSpan.style.fontSize = fontSize + 'px';
     textSpan.style.fontFamily = input.dataset.fontFamily || 'Helvetica, Arial, sans-serif';
     textSpan.style.color = '#000000';
-    textSpan.style.overflow = 'hidden';
-    textSpan.style.textOverflow = 'ellipsis';
-    textSpan.style.whiteSpace = 'nowrap';
+    if (isBold) textSpan.style.fontWeight = 'bold';
+    if (isItalic) textSpan.style.fontStyle = 'italic';
+    textSpan.style.whiteSpace = 'pre-wrap';
+    textSpan.style.wordBreak = 'break-word';
     textSpan.dataset.opId = opId;
+    textSpan.dataset.fontSize = fontSize;
+    textSpan.dataset.fontFamily = fontFamily || 'sans-serif';
+    textSpan.dataset.isBold = isBold ? 'true' : 'false';
+    textSpan.dataset.isItalic = isItalic ? 'true' : 'false';
 
     // Remove input and add text span
     input.remove();
+    setActiveTextInput(null);
+    whiteRect.style.overflow = 'hidden';
     whiteRect.appendChild(textSpan);
 
     // Store text op ID on whiteRect for reference
@@ -964,7 +1396,12 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
     const input = editor.querySelector('.text-editor-input');
     input.style.fontFamily = fontFamily;
     input.style.fontSize = fontSize + 'px';
-    // Preserve italic/bold styles
+    // Store font size and family for style controls
+    input.dataset.fontSize = Math.round(fontSize);
+    input.dataset.fontFamily = textItem.fontFamily || 'sans-serif';
+    // Initialize bold/italic state from detected text item
+    input.dataset.isBold = textItem.isBold ? 'true' : 'false';
+    input.dataset.isItalic = textItem.isItalic ? 'true' : 'false';
     if (textItem.isItalic) input.style.fontStyle = 'italic';
     if (textItem.isBold) input.style.fontWeight = 'bold';
 
@@ -976,15 +1413,21 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
     const pageDiv = document.querySelector(`.edit-page[data-page="${pageNum}"]`);
     pageDiv.appendChild(editor);
 
-    // Focus input (already queried above for styling)
+    // Focus input and register with style buttons
     input.focus();
     input.select();
+    setActiveTextInput(input);
 
     // Event handlers
     editor.querySelector('.text-editor-save').addEventListener('click', () => {
         const newText = input.value;
-        if (newText !== textItem.str) {
-            applyTextReplacement(pageNum, textItem, newText);
+        const isBold = input.dataset.isBold === 'true';
+        const isItalic = input.dataset.isItalic === 'true';
+        const customFontSize = parseFloat(input.dataset.fontSize) || null;
+        const customFontFamily = input.dataset.fontFamily || null;
+        if (newText !== textItem.str || isBold !== textItem.isBold || isItalic !== textItem.isItalic ||
+            customFontSize !== Math.round((textItem.pdfHeight || 12) * 1.5) || customFontFamily !== textItem.fontFamily) {
+            applyTextReplacement(pageNum, textItem, newText, isBold, isItalic, customFontSize, customFontFamily);
         }
         closeTextEditor();
     });
@@ -994,8 +1437,13 @@ function startTextEdit(pageNum, index, textItem, spanElement) {
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             const newText = input.value;
-            if (newText !== textItem.str) {
-                applyTextReplacement(pageNum, textItem, newText);
+            const isBold = input.dataset.isBold === 'true';
+            const isItalic = input.dataset.isItalic === 'true';
+            const customFontSize = parseFloat(input.dataset.fontSize) || null;
+            const customFontFamily = input.dataset.fontFamily || null;
+            if (newText !== textItem.str || isBold !== textItem.isBold || isItalic !== textItem.isItalic ||
+                customFontSize !== Math.round((textItem.pdfHeight || 12) * 1.5) || customFontFamily !== textItem.fontFamily) {
+                applyTextReplacement(pageNum, textItem, newText, isBold, isItalic, customFontSize, customFontFamily);
             }
             closeTextEditor();
         } else if (e.key === 'Escape') {
@@ -1015,16 +1463,26 @@ function closeTextEditor() {
         activeEditItem.spanElement.classList.remove('editing');
         activeEditItem = null;
     }
+
+    setActiveTextInput(null);
 }
 
-function applyTextReplacement(pageNum, textItem, newText) {
+function applyTextReplacement(pageNum, textItem, newText, isBold = null, isItalic = null, customFontSize = null, customFontFamily = null) {
     // Get page info for coordinate conversion
     const pageInfo = PdfBridge.getPageInfo(pageNum);
     if (!pageInfo) return;
 
-    // Estimate font size from text height (PDF points)
-    // The pdfHeight from PDF.js is typically close to the font size
-    const fontSize = textItem.pdfHeight || 12.0;
+    // Use explicit bold/italic if provided, otherwise fall back to detected values
+    const useBold = isBold !== null ? isBold : (textItem.isBold || false);
+    const useItalic = isItalic !== null ? isItalic : (textItem.isItalic || false);
+
+    // Use custom font size if provided (from toolbar), otherwise estimate from text height
+    // customFontSize comes in as DOM pixels, need to convert to PDF points
+    const renderScale = 1.5;
+    const fontSize = customFontSize !== null ? (customFontSize / renderScale) : (textItem.pdfHeight || 12.0);
+
+    // Use custom font family if provided (from toolbar)
+    const useFontFamily = customFontFamily || textItem.fontFamily || null;
 
     // Use PDF coordinates from text item
     // Note: The Rust code adds padding to the white cover rectangle
@@ -1045,18 +1503,18 @@ function applyTextReplacement(pageNum, textItem, newText) {
         newText,
         fontSize,
         '#000000',
-        // Font family from PDF.js styles (e.g., "serif", "sans-serif", "monospace")
-        textItem.fontFamily || null,
-        // Font style flags (detected from PDF.js font name)
-        textItem.isItalic || false,
-        textItem.isBold || false
+        // Font family from toolbar or PDF.js styles
+        useFontFamily,
+        // Font style flags
+        useItalic,
+        useBold
     );
 
     operationHistory.push(opId);
 
-    // Calculate DOM font size (scaled by 1.5 render scale)
-    const domFontSize = (textItem.pdfHeight || 12) * 1.5;
-    const fontFamily = mapFontFamilyForPreview(textItem.fontFamily);
+    // Calculate DOM font size (use custom or scale from PDF)
+    const domFontSize = customFontSize !== null ? customFontSize : ((textItem.pdfHeight || 12) * renderScale);
+    const fontFamily = mapFontFamilyForPreview(useFontFamily);
 
     // Add visual indicator (replacement overlay) with matching font
     const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
@@ -1077,8 +1535,8 @@ function applyTextReplacement(pageNum, textItem, newText) {
     replaceEl.style.fontFamily = fontFamily;
     replaceEl.style.fontSize = domFontSize + 'px';
     replaceEl.style.lineHeight = '1';
-    if (textItem.isItalic) replaceEl.style.fontStyle = 'italic';
-    if (textItem.isBold) replaceEl.style.fontWeight = 'bold';
+    if (useItalic) replaceEl.style.fontStyle = 'italic';
+    if (useBold) replaceEl.style.fontWeight = 'bold';
 
     replaceEl.dataset.opId = opId;
     overlay.appendChild(replaceEl);
@@ -1117,6 +1575,161 @@ function mapFontFamilyForPreview(fontFamily) {
 
     // Default to sans-serif
     return 'sans-serif';
+}
+
+// Map detected font family to dropdown option value
+function mapFontFamilyToDropdown(fontFamily) {
+    if (!fontFamily) return 'sans-serif';
+
+    const lower = fontFamily.toLowerCase();
+
+    // Exact matches for dropdown values
+    if (lower === 'sans-serif') return 'sans-serif';
+    if (lower === 'serif') return 'serif';
+    if (lower === 'monospace') return 'monospace';
+    if (lower === 'arial') return 'Arial';
+    if (lower === 'times new roman') return 'Times New Roman';
+    if (lower === 'georgia') return 'Georgia';
+    if (lower === 'courier new') return 'Courier New';
+    if (lower === 'verdana') return 'Verdana';
+    if (lower === 'trebuchet ms') return 'Trebuchet MS';
+
+    // Partial matches for detected fonts
+    if (lower.includes('times')) return 'Times New Roman';
+    if (lower.includes('arial')) return 'Arial';
+    if (lower.includes('helvetica')) return 'sans-serif';
+    if (lower.includes('courier') || lower.includes('mono')) return 'Courier New';
+    if (lower.includes('georgia')) return 'Georgia';
+    if (lower.includes('verdana')) return 'Verdana';
+    if (lower.includes('trebuchet')) return 'Trebuchet MS';
+
+    // Default to sans-serif
+    return 'sans-serif';
+}
+
+// ============ Bold/Italic Style Functions ============
+
+function setActiveTextInput(input) {
+    activeTextInput = input;
+    updateStyleButtons();
+
+    if (input) {
+        // Track focus/blur to update active state
+        input.addEventListener('blur', handleTextInputBlur);
+    }
+}
+
+function handleTextInputBlur() {
+    // Small delay to allow click events on style buttons to process
+    setTimeout(() => {
+        if (activeTextInput && !activeTextInput.matches(':focus')) {
+            activeTextInput.removeEventListener('blur', handleTextInputBlur);
+            activeTextInput = null;
+            updateStyleButtons();
+        }
+    }, 150);
+}
+
+function updateStyleButtons() {
+    const boldBtn = document.getElementById('style-bold');
+    const italicBtn = document.getElementById('style-italic');
+    const fontSizeDecrease = document.getElementById('font-size-decrease');
+    const fontSizeIncrease = document.getElementById('font-size-increase');
+    const fontSizeValue = document.getElementById('font-size-value');
+    const fontFamilySelect = document.getElementById('style-font-family');
+
+    if (!activeTextInput) {
+        boldBtn.disabled = true;
+        italicBtn.disabled = true;
+        fontSizeDecrease.disabled = true;
+        fontSizeIncrease.disabled = true;
+        fontSizeValue.disabled = true;
+        fontFamilySelect.disabled = true;
+        boldBtn.classList.remove('active');
+        italicBtn.classList.remove('active');
+        return;
+    }
+
+    boldBtn.disabled = false;
+    italicBtn.disabled = false;
+    fontSizeDecrease.disabled = false;
+    fontSizeIncrease.disabled = false;
+    fontSizeValue.disabled = false;
+    fontFamilySelect.disabled = false;
+
+    // Check current state from input's dataset or computed style
+    const isBold = activeTextInput.dataset.isBold === 'true' ||
+                   activeTextInput.style.fontWeight === 'bold' ||
+                   activeTextInput.style.fontWeight === '700';
+    const isItalic = activeTextInput.dataset.isItalic === 'true' ||
+                     activeTextInput.style.fontStyle === 'italic';
+
+    boldBtn.classList.toggle('active', isBold);
+    italicBtn.classList.toggle('active', isItalic);
+
+    // Sync font size value
+    const fontSize = activeTextInput.dataset.fontSize || '12';
+    fontSizeValue.value = fontSize;
+
+    // Sync font family dropdown (map detected font to dropdown option)
+    const fontFamily = activeTextInput.dataset.fontFamily || 'sans-serif';
+    fontFamilySelect.value = mapFontFamilyToDropdown(fontFamily);
+}
+
+function toggleBold() {
+    if (!activeTextInput) return;
+
+    const currentBold = activeTextInput.dataset.isBold === 'true';
+    const newBold = !currentBold;
+
+    activeTextInput.dataset.isBold = newBold;
+    activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+}
+
+function toggleItalic() {
+    if (!activeTextInput) return;
+
+    const currentItalic = activeTextInput.dataset.isItalic === 'true';
+    const newItalic = !currentItalic;
+
+    activeTextInput.dataset.isItalic = newItalic;
+    activeTextInput.style.fontStyle = newItalic ? 'italic' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+}
+
+function increaseFontSize() {
+    if (!activeTextInput) return;
+    const current = parseInt(activeTextInput.dataset.fontSize) || 12;
+    setFontSize(Math.min(current + 2, 72));
+}
+
+function decreaseFontSize() {
+    if (!activeTextInput) return;
+    const current = parseInt(activeTextInput.dataset.fontSize) || 12;
+    setFontSize(Math.max(current - 2, 6));
+}
+
+function setFontSize(size) {
+    if (!activeTextInput) return;
+    size = Math.max(6, Math.min(72, parseInt(size) || 12));
+    activeTextInput.dataset.fontSize = size;
+    activeTextInput.style.fontSize = size + 'px';
+    document.getElementById('font-size-value').value = size;
+    updateStyleButtons();
+    activeTextInput.focus();
+}
+
+function setFontFamily(family) {
+    if (!activeTextInput) return;
+    activeTextInput.dataset.fontFamily = family;
+    activeTextInput.style.fontFamily = family;
+    updateStyleButtons();
+    activeTextInput.focus();
 }
 
 function undoLastOperation() {

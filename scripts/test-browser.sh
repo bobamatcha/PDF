@@ -108,9 +108,16 @@ cd "$PROJECT_ROOT"
 
 TEST_FAILED=0
 
+# Determine test runner (nextest is faster with parallel execution)
+if command -v cargo-nextest &> /dev/null; then
+    TEST_CMD="cargo nextest run"
+else
+    TEST_CMD="cargo test"
+fi
+
 # Run docsign browser tests
 echo -e "\n  ${YELLOW}DocSign tests:${NC}"
-if cargo test -p benchmark-harness --test browser_docsign -- --nocapture 2>&1 | tee /tmp/docsign-tests.log; then
+if $TEST_CMD -p benchmark-harness --test browser_docsign 2>&1 | tee /tmp/docsign-tests.log; then
     echo -e "  ${GREEN}✓ DocSign tests passed${NC}"
 else
     echo -e "  ${RED}✗ DocSign tests failed${NC}"
@@ -119,7 +126,7 @@ fi
 
 # Run agentpdf browser tests
 echo -e "\n  ${YELLOW}AgentPDF tests:${NC}"
-if cargo test -p benchmark-harness --test browser_agentpdf -- --nocapture 2>&1 | tee /tmp/agentpdf-tests.log; then
+if $TEST_CMD -p benchmark-harness --test browser_agentpdf 2>&1 | tee /tmp/agentpdf-tests.log; then
     echo -e "  ${GREEN}✓ AgentPDF tests passed${NC}"
 else
     echo -e "  ${RED}✗ AgentPDF tests failed${NC}"

@@ -33,17 +33,32 @@ if ! cargo clippy --all-targets --all-features -- -D warnings; then
 fi
 
 # Unit tests (fast, no browser/server needed)
+# Use cargo nextest for parallel execution if available, otherwise fall back to cargo test
 echo "  Running unit tests..."
-if ! cargo test --all-features --workspace; then
-    echo "❌ Unit tests failed."
-    exit 1
+if command -v cargo-nextest &> /dev/null; then
+    if ! cargo nextest run --all-features --workspace; then
+        echo "❌ Unit tests failed."
+        exit 1
+    fi
+else
+    if ! cargo test --all-features --workspace; then
+        echo "❌ Unit tests failed."
+        exit 1
+    fi
 fi
 
 # Parity tests (fast, catches config drift between apps)
 echo "  Running parity tests..."
-if ! cargo test -p benchmark-harness --test parity_tests; then
-    echo "❌ Parity tests failed. Apps may have diverged configs."
-    exit 1
+if command -v cargo-nextest &> /dev/null; then
+    if ! cargo nextest run -p benchmark-harness --test parity_tests; then
+        echo "❌ Parity tests failed. Apps may have diverged configs."
+        exit 1
+    fi
+else
+    if ! cargo test -p benchmark-harness --test parity_tests; then
+        echo "❌ Parity tests failed. Apps may have diverged configs."
+        exit 1
+    fi
 fi
 
 # Browser tests (requires trunk servers)

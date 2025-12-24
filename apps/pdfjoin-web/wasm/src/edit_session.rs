@@ -79,6 +79,10 @@ impl EditSession {
         text: &str,
         font_size: f64,
         color: &str,
+        // Optional font styling parameters
+        font_name: Option<String>,
+        is_italic: bool,
+        is_bold: bool,
     ) -> u64 {
         let op = EditOperation::AddText {
             id: 0,
@@ -93,9 +97,9 @@ impl EditSession {
             style: TextStyle {
                 font_size,
                 color: color.to_string(),
-                font_name: None, // AddText uses default font
-                is_italic: false,
-                is_bold: false,
+                font_name,
+                is_italic,
+                is_bold,
             },
         };
         self.operations.add(op)
@@ -316,7 +320,9 @@ mod tests {
         let pdf = create_test_pdf();
         let mut session = EditSession::new("test.pdf", &pdf).unwrap();
 
-        let id = session.add_text(1, 100.0, 700.0, 200.0, 20.0, "Hello", 12.0, "#000000");
+        let id = session.add_text(
+            1, 100.0, 700.0, 200.0, 20.0, "Hello", 12.0, "#000000", None, false, false,
+        );
         assert_eq!(id, 0);
         assert!(session.has_changes());
         assert_eq!(session.get_operation_count(), 1);
@@ -327,7 +333,9 @@ mod tests {
         let pdf = create_test_pdf();
         let mut session = EditSession::new("test.pdf", &pdf).unwrap();
 
-        let id = session.add_text(1, 100.0, 700.0, 200.0, 20.0, "Hello", 12.0, "#000000");
+        let id = session.add_text(
+            1, 100.0, 700.0, 200.0, 20.0, "Hello", 12.0, "#000000", None, false, false,
+        );
         assert!(session.has_changes());
 
         assert!(session.remove_operation(id));
@@ -339,10 +347,38 @@ mod tests {
         let pdf = create_test_pdf();
         let mut session = EditSession::new("test.pdf", &pdf).unwrap();
 
-        session.add_text(1, 100.0, 700.0, 200.0, 20.0, "Title", 14.0, "#000000");
+        session.add_text(
+            1, 100.0, 700.0, 200.0, 20.0, "Title", 14.0, "#000000", None, false, false,
+        );
         session.add_highlight(1, 50.0, 600.0, 300.0, 20.0, "#FFFF00", 0.5);
         session.add_checkbox(1, 100.0, 500.0, 20.0, 20.0, true);
 
         assert_eq!(session.get_operation_count(), 3);
+    }
+
+    #[test]
+    fn test_add_bold_text() {
+        let pdf = create_test_pdf();
+        let mut session = EditSession::new("test.pdf", &pdf).unwrap();
+
+        // Bold text
+        let id = session.add_text(
+            1, 100.0, 700.0, 200.0, 20.0, "Bold", 12.0, "#000000", None, false, true,
+        );
+        assert_eq!(id, 0);
+        assert!(session.has_changes());
+    }
+
+    #[test]
+    fn test_add_italic_text() {
+        let pdf = create_test_pdf();
+        let mut session = EditSession::new("test.pdf", &pdf).unwrap();
+
+        // Italic text
+        let id = session.add_text(
+            1, 100.0, 700.0, 200.0, 20.0, "Italic", 12.0, "#000000", None, true, false,
+        );
+        assert_eq!(id, 0);
+        assert!(session.has_changes());
     }
 }

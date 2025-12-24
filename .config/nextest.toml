@@ -1,0 +1,24 @@
+# Nextest configuration
+# https://nexte.st/book/configuration.html
+
+[profile.default]
+# Fail fast by default
+fail-fast = true
+
+# Define a test group for browser tests that limits concurrency
+# Each browser test gets its own Chrome instance, so we run them one at a time
+[test-groups.browser-tests]
+max-threads = 1
+
+# Match browser test binaries and put them in the browser-tests group
+[[profile.default.overrides]]
+filter = 'binary_id(benchmark-harness::browser_agentpdf) | binary_id(benchmark-harness::browser_core) | binary_id(benchmark-harness::browser_docsign) | binary_id(benchmark-harness::browser_pdfjoin)'
+test-group = 'browser-tests'
+
+# CI profile - same settings but no fail-fast
+[profile.ci]
+fail-fast = false
+
+[[profile.ci.overrides]]
+filter = 'binary_id(benchmark-harness::browser_agentpdf) | binary_id(benchmark-harness::browser_core) | binary_id(benchmark-harness::browser_docsign) | binary_id(benchmark-harness::browser_pdfjoin)'
+test-group = 'browser-tests'
