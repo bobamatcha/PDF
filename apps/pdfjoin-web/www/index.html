@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDFJoin - Free PDF Split & Merge Tool</title>
-    <meta name="description" content="Free, private PDF tools at pdfjoin.org. Split or merge PDF files entirely in your browser - your files never leave your device.">
-    <meta name="keywords" content="PDF, merge PDF, split PDF, combine PDF, free PDF tool, online PDF, privacy">
-    <meta property="og:title" content="PDFJoin - Free PDF Split & Merge Tool">
-    <meta property="og:description" content="Split or merge PDF files free and privately. All processing happens in your browser.">
+    <title>PDFJoin - PDF Tools for Frequent Flyers</title>
+    <meta name="description" content="PDF tools at pdfjoin.org. Split, merge, or edit PDF files entirely in your browser - files never leave your device. Verifiably secure software by Boba Matcha Solutions.">
+    <meta name="keywords" content="PDF, merge PDF, split PDF, combine PDF, edit PDF, PDF tool, online PDF, secure PDF">
+    <meta property="og:title" content="PDFJoin - PDF Tools for Frequent Flyers">
+    <meta property="og:description" content="Split, merge, or edit PDF files securely. All processing happens in your browser - files never leave your device.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://pdfjoin.org">
     <link rel="canonical" href="https://pdfjoin.org">
@@ -109,7 +109,36 @@
 
         /* Footer */
         footer { text-align: center; margin-top: 3rem; color: var(--text-muted); }
-        .privacy-note { font-size: 0.85rem; }
+        .privacy-note { font-size: 0.85rem; font-style: italic; opacity: 0.7; }
+
+        /* Footer Branding */
+        .footer-branding {
+            font-size: 0.75rem;
+            margin-top: 1rem;
+            opacity: 0.6;
+        }
+        .footer-branding a {
+            text-decoration: none;
+            color: var(--text-muted);
+        }
+        .footer-branding a:hover {
+            text-decoration: underline;
+            opacity: 1;
+        }
+
+        /* Verification Spinner */
+        .verification-container { display: inline-flex; align-items: center; gap: 0.5rem; }
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid #e5e7eb;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .verification-text { font-size: 0.85rem; color: var(--text-muted); }
+        .verification-passed { color: var(--success); font-weight: 500; }
+        .download-btn-content { display: inline-flex; align-items: center; gap: 0.5rem; }
 
         /* Error Message */
         .error-msg { background: #fef2f2; border: 1px solid var(--error); color: #b91c1c; padding: 0.75rem 1rem; border-radius: 8px; margin-top: 1rem; display: flex; align-items: center; gap: 0.5rem; }
@@ -608,7 +637,7 @@
     <div class="container">
         <header>
             <h1>PDFJoin</h1>
-            <p>Free, private PDF split & merge - all processing happens in your browser</p>
+            <p>PDF Tools for Frequent Flyers</p>
         </header>
 
         <nav class="tabs">
@@ -778,7 +807,9 @@
                             &#8630; Undo
                         </button>
                         <button id="edit-download-btn" class="primary-btn" disabled>
-                            Download Edited PDF
+                            <span class="download-btn-content">
+                                <span class="download-text">Download Edited PDF</span>
+                            </span>
                         </button>
                     </div>
                 </div>
@@ -812,7 +843,12 @@
         </section>
 
         <footer>
-            <p class="privacy-note">Your files never leave your device</p>
+            <p class="privacy-note">Files Never Left Your Device</p>
+            <p class="footer-branding">
+                <a href="https://bobamatchasolutions.com/#/blog/announcing-pdfjoin" target="_blank" rel="noopener">Secure + Verifiable Privacy</a>
+                By
+                <a href="https://bobamatchasolutions.com" target="_blank" rel="noopener">Boba Matcha Solutions</a>
+            </p>
         </footer>
     </div>
 

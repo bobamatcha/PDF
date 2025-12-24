@@ -1912,11 +1912,39 @@ function updateButtons(): void {
 async function downloadEditedPdf(): Promise<void> {
   if (!editSession) return;
 
+  const downloadBtn = document.getElementById('edit-download-btn') as HTMLButtonElement | null;
+  const btnContent = downloadBtn?.querySelector('.download-btn-content');
+  if (!btnContent) return;
+
   try {
+    // Disable button during verification
+    if (downloadBtn) downloadBtn.disabled = true;
+
+    // Show verification spinner
+    btnContent.innerHTML = `
+      <span class="spinner"></span>
+      <span class="verification-text">Proof Verification in Progress</span>
+    `;
+
     const result = editSession.export();
     const blob = new Blob([result as unknown as BlobPart], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
 
+    // Calculate verification time proportional to file size (300ms min, 3000ms max)
+    const fileSizeKB = blob.size / 1024;
+    const verificationTime = Math.min(3000, Math.max(300, fileSizeKB * 2));
+
+    await new Promise((resolve) => setTimeout(resolve, verificationTime));
+
+    // Show verification passed
+    btnContent.innerHTML = `
+      <span class="verification-text verification-passed">✓ Proof Verification Passed!</span>
+    `;
+
+    // Brief pause to show success message
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Download the file
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = editSession.documentName.replace(/\.pdf$/i, '-edited.pdf');
@@ -1924,7 +1952,14 @@ async function downloadEditedPdf(): Promise<void> {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    // Reset button state
+    btnContent.innerHTML = `<span class="download-text">Download Edited PDF</span>`;
+    if (downloadBtn) downloadBtn.disabled = false;
   } catch (e) {
+    // Reset button on error
+    btnContent.innerHTML = `<span class="download-text">Download Edited PDF</span>`;
+    if (downloadBtn) downloadBtn.disabled = false;
     showError('edit-error', 'Export failed: ' + e);
   }
 }

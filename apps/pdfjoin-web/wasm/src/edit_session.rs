@@ -235,6 +235,60 @@ impl EditSession {
         self.operations.remove(id)
     }
 
+    /// Update the checked state of a checkbox operation
+    /// Returns false if the operation is not found or is not a checkbox
+    #[wasm_bindgen(js_name = setCheckbox)]
+    pub fn set_checkbox(&mut self, id: u64, checked: bool) -> bool {
+        self.operations.set_checkbox(id, checked)
+    }
+
+    /// Update the rect (position and size) of an operation
+    /// Works for text, highlight, checkbox, and whiteout operations
+    /// Returns false if the operation is not found
+    #[wasm_bindgen(js_name = updateRect)]
+    pub fn update_rect(&mut self, id: u64, x: f64, y: f64, width: f64, height: f64) -> bool {
+        self.operations.update_rect(
+            id,
+            PdfRect {
+                x,
+                y,
+                width,
+                height,
+            },
+        )
+    }
+
+    /// Update the text content of a text operation
+    /// Returns false if the operation is not found or is not a text operation
+    #[wasm_bindgen(js_name = updateText)]
+    pub fn update_text(&mut self, id: u64, new_text: &str) -> bool {
+        self.operations.update_text(id, new_text, None)
+    }
+
+    /// Update the text content and style of a text operation
+    /// Returns false if the operation is not found or is not a text operation
+    #[wasm_bindgen(js_name = updateTextWithStyle)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_text_with_style(
+        &mut self,
+        id: u64,
+        new_text: &str,
+        font_size: f64,
+        color: &str,
+        font_name: Option<String>,
+        is_italic: bool,
+        is_bold: bool,
+    ) -> bool {
+        let style = TextStyle {
+            font_size,
+            color: color.to_string(),
+            font_name,
+            is_italic,
+            is_bold,
+        };
+        self.operations.update_text(id, new_text, Some(&style))
+    }
+
     /// Check if there are unsaved changes
     #[wasm_bindgen(js_name = hasChanges)]
     pub fn has_changes(&self) -> bool {

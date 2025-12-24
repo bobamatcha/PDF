@@ -2,6 +2,105 @@
 
 > **Development Guidelines**: See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
 
+---
+
+## 🚧 ACTIVE: PDFJoin Editor Architecture Refactoring
+
+**Goal**: Move editor state from TypeScript to Rust ("thin TS / thick Rust")
+
+### Progress Tracker
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| TS Migration | ✅ Done | Converted JS → TypeScript with esbuild + Trunk |
+| Whitebox Bug Fix | ✅ Done | Fixed expansion bug using Range API |
+| Tool Removal | ✅ Done | Checkbox/highlight tools commented out pending testing |
+| Rust Update Methods | ✅ Done | Add `set_checkbox`, `update_rect`, `update_text` to Rust |
+| Action-Based Undo | 🔲 Todo | Transaction model in Rust, remove `operationHistory` from TS |
+| Tab PDF Sharing | 🔲 Todo | Share PDF between Split/Edit tabs without re-upload |
+| Edit→Split Flow | 🔲 Todo | Prompt to save changes when switching from Edit to Split |
+| UX Improvements | ✅ Done | Updated messaging, linked to Boba Matcha blog |
+| Re-enable Checkbox | 🔲 Todo | Restore checkbox tool with proper Rust backing |
+| Re-enable Highlight | 🔲 Todo | Restore highlight tool once implemented |
+
+### Phase 1: Rust Update Methods ✅ Complete
+
+Added update-in-place methods to avoid fragile remove+add pattern:
+
+```rust
+// In pdfjoin-core/src/operations.rs - OperationLog
+pub fn get_operation(&self, id: OpId) -> Option<&EditOperation>
+pub fn set_checkbox(&mut self, id: OpId, checked: bool) -> bool
+pub fn update_rect(&mut self, id: OpId, new_rect: PdfRect) -> bool
+pub fn update_text(&mut self, id: OpId, text: &str, style: Option<TextStyle>) -> bool
+
+// In pdfjoin-wasm/src/edit_session.rs - Expose to JS
+#[wasm_bindgen]
+pub fn set_checkbox(&mut self, op_id: u64, checked: bool) -> bool
+pub fn update_rect(&mut self, op_id: u64, x: f64, y: f64, w: f64, h: f64) -> bool
+pub fn update_text(&mut self, op_id: u64, text: &str) -> bool
+pub fn get_operation_rect(&self, op_id: u64) -> Option<js_sys::Float64Array>
+```
+
+**Tests written and passing:**
+- ✅ `test_set_checkbox_updates_operation`
+- ✅ `test_update_rect_preserves_other_fields`
+- ✅ `test_update_text_preserves_rect`
+- ✅ `test_get_operation_returns_correct_op`
+- ✅ `test_update_text_with_style`
+
+### Phase 2: Action-Based Undo/Redo
+
+Replace JS `operationHistory` with Rust transaction model:
+
+```rust
+pub struct Action {
+    id: ActionId,
+    kind: ActionKind,
+    ops: Vec<OpId>,
+}
+
+// In EditSession
+pub fn begin_action(&mut self, kind: ActionKind) -> ActionId
+pub fn commit_action(&mut self) -> bool
+pub fn undo(&mut self) -> Option<Vec<OpId>>  // Returns op_ids for TS to remove from DOM
+pub fn redo(&mut self) -> Option<Vec<OpId>>  // Returns op_ids for TS to recreate in DOM
+pub fn can_undo(&self) -> bool
+pub fn can_redo(&self) -> bool
+```
+
+### Phase 3: Tab PDF Sharing
+
+**Feature 1**: Split → Edit auto-loads PDF
+- Store PDF bytes in shared state when loaded in any tab
+- When switching to Edit tab, check for existing PDF and auto-load
+
+**Feature 2**: Edit → Split with change detection
+- Track if any operations have been added in Edit
+- If switching to Split with unsaved changes, show modal:
+  - "Save and Split" → export PDF, load into Split
+  - "Discard Changes" → load original into Split
+  - "Cancel" → stay in Edit
+- **Complexity**: Medium - data flow is straightforward (EditSession.export() returns bytes), mainly UI modal work
+
+### Phase 4: UX Improvements
+
+- Remove "Free, private" messaging
+- Replace with: "All Files Stay On Your Computer"
+- Add: "Certified and Verified by Boba Matcha Solutions LLC"
+- Link to: https://bobamatchasolutions.com/#/blog/announcing-pdfjoin
+
+### Phase 5: Re-enable Disabled Tools
+
+When re-enabling checkbox/highlight tools:
+1. Uncomment code in `edit.ts` (search for `TODO: Re-enable`)
+2. Uncomment HTML buttons in `index.html`
+3. Uncomment tests in `browser_pdfjoin.rs`
+4. Update `overlayNeedsClicks` in `updateCursor()`
+5. Ensure Rust backing is complete (especially `set_checkbox`)
+
+---
+
 > Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with two deployable web applications.
 
 ---

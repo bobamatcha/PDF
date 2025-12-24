@@ -308,6 +308,98 @@ impl OperationLog {
         self.operations.is_empty()
     }
 
+    /// Get an operation by its ID
+    pub fn get_operation(&self, id: OpId) -> Option<&EditOperation> {
+        self.operations.iter().find(|op| op.id() == id)
+    }
+
+    /// Get a mutable reference to an operation by its ID
+    fn get_operation_mut(&mut self, id: OpId) -> Option<&mut EditOperation> {
+        self.operations.iter_mut().find(|op| op.id() == id)
+    }
+
+    /// Update the checked state of a checkbox operation
+    /// Returns false if the operation is not found or is not a checkbox
+    pub fn set_checkbox(&mut self, id: OpId, checked: bool) -> bool {
+        if let Some(EditOperation::AddCheckbox {
+            checked: ref mut c, ..
+        }) = self.get_operation_mut(id)
+        {
+            *c = checked;
+            return true;
+        }
+        false
+    }
+
+    /// Update the rect of an operation
+    /// Works for AddText, AddHighlight, AddCheckbox, AddWhiteRect
+    /// Returns false if the operation is not found
+    pub fn update_rect(&mut self, id: OpId, new_rect: PdfRect) -> bool {
+        if let Some(op) = self.get_operation_mut(id) {
+            match op {
+                EditOperation::AddText { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddHighlight { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddCheckbox { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddWhiteRect { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::ReplaceText {
+                    ref mut replacement_rect,
+                    ..
+                } => {
+                    *replacement_rect = new_rect;
+                    true
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Update the text and optionally the style of a text operation
+    /// Returns false if the operation is not found or is not a text operation
+    pub fn update_text(&mut self, id: OpId, new_text: &str, new_style: Option<&TextStyle>) -> bool {
+        if let Some(op) = self.get_operation_mut(id) {
+            match op {
+                EditOperation::AddText {
+                    ref mut text,
+                    ref mut style,
+                    ..
+                } => {
+                    *text = new_text.to_string();
+                    if let Some(s) = new_style {
+                        *style = s.clone();
+                    }
+                    true
+                }
+                EditOperation::ReplaceText {
+                    new_text: ref mut existing_text,
+                    ref mut style,
+                    ..
+                } => {
+                    *existing_text = new_text.to_string();
+                    if let Some(s) = new_style {
+                        *style = s.clone();
+                    }
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
@@ -628,5 +720,237 @@ mod tests {
         } else {
             panic!("Expected ReplaceText operation");
         }
+    }
+
+    // ============ Update Method Tests (Phase 1) ============
+
+    #[test]
+    fn test_get_operation_returns_operation_by_id() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddCheckbox {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            checked: false,
+        });
+
+        let op = log.get_operation(id);
+        assert!(op.is_some());
+        assert_eq!(op.unwrap().id(), id);
+    }
+
+    #[test]
+    fn test_get_operation_returns_none_for_invalid_id() {
+        let log = OperationLog::new();
+        assert!(log.get_operation(999).is_none());
+    }
+
+    #[test]
+    fn test_set_checkbox_updates_checked_state() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddCheckbox {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            checked: false,
+        });
+
+        // Initially unchecked
+        if let Some(EditOperation::AddCheckbox { checked, .. }) = log.get_operation(id) {
+            assert!(!checked);
+        }
+
+        // Update to checked
+        assert!(log.set_checkbox(id, true));
+
+        // Verify it's now checked
+        if let Some(EditOperation::AddCheckbox { checked, .. }) = log.get_operation(id) {
+            assert!(*checked);
+        } else {
+            panic!("Expected AddCheckbox operation");
+        }
+    }
+
+    #[test]
+    fn test_set_checkbox_returns_false_for_non_checkbox() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "Hello".to_string(),
+            style: TextStyle::default(),
+        });
+
+        // Should return false for non-checkbox operations
+        assert!(!log.set_checkbox(id, true));
+    }
+
+    #[test]
+    fn test_update_rect_changes_position_and_size() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Test".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let new_rect = PdfRect {
+            x: 150.0,
+            y: 200.0,
+            width: 250.0,
+            height: 40.0,
+        };
+
+        assert!(log.update_rect(id, new_rect.clone()));
+
+        // Verify rect was updated
+        if let Some(EditOperation::AddText { rect, text, .. }) = log.get_operation(id) {
+            assert_eq!(rect.x, 150.0);
+            assert_eq!(rect.y, 200.0);
+            assert_eq!(rect.width, 250.0);
+            assert_eq!(rect.height, 40.0);
+            // Text should be preserved
+            assert_eq!(text, "Test");
+        } else {
+            panic!("Expected AddText operation");
+        }
+    }
+
+    #[test]
+    fn test_update_rect_works_for_whiteout() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 50.0,
+            },
+        });
+
+        let new_rect = PdfRect {
+            x: 10.0,
+            y: 20.0,
+            width: 150.0,
+            height: 75.0,
+        };
+
+        assert!(log.update_rect(id, new_rect));
+
+        if let Some(EditOperation::AddWhiteRect { rect, .. }) = log.get_operation(id) {
+            assert_eq!(rect.x, 10.0);
+            assert_eq!(rect.y, 20.0);
+            assert_eq!(rect.width, 150.0);
+            assert_eq!(rect.height, 75.0);
+        } else {
+            panic!("Expected AddWhiteRect operation");
+        }
+    }
+
+    #[test]
+    fn test_update_text_changes_text_content() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Original".to_string(),
+            style: TextStyle::default(),
+        });
+
+        assert!(log.update_text(id, "Updated", None));
+
+        if let Some(EditOperation::AddText { text, rect, .. }) = log.get_operation(id) {
+            assert_eq!(text, "Updated");
+            // Rect should be preserved
+            assert_eq!(rect.x, 100.0);
+        } else {
+            panic!("Expected AddText operation");
+        }
+    }
+
+    #[test]
+    fn test_update_text_with_new_style() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Original".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let new_style = TextStyle {
+            font_size: 18.0,
+            color: "#FF0000".to_string(),
+            font_name: Some("serif".to_string()),
+            is_bold: true,
+            is_italic: false,
+        };
+
+        assert!(log.update_text(id, "Bold Red", Some(&new_style)));
+
+        if let Some(EditOperation::AddText { text, style, .. }) = log.get_operation(id) {
+            assert_eq!(text, "Bold Red");
+            assert_eq!(style.font_size, 18.0);
+            assert_eq!(style.color, "#FF0000");
+            assert!(style.is_bold);
+        } else {
+            panic!("Expected AddText operation");
+        }
+    }
+
+    #[test]
+    fn test_update_text_returns_false_for_non_text() {
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddCheckbox {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            checked: false,
+        });
+
+        // Should return false for non-text operations
+        assert!(!log.update_text(id, "Test", None));
     }
 }

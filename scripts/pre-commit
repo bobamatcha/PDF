@@ -25,12 +25,26 @@ if ! cargo fmt --all -- --check; then
     exit 1
 fi
 
-# Clippy
+# Clippy (with auto-fix for safe lints)
 echo "  Running Clippy..."
-if ! cargo clippy --all-targets --all-features -- -D warnings; then
-    echo "❌ Clippy found issues. Fix the warnings above."
-    exit 1
-fi
+CLIPPY_OUTPUT=$(cargo clippy --all-targets --all-features -- -D warnings 2>&1) || {
+    # Check if it's a simple/safe lint that can be auto-fixed (machine-applicable only)
+    SAFE_LINTS="redundant_clone|needless_borrow|clone_on_copy|useless_conversion|needless_return"
+    if echo "$CLIPPY_OUTPUT" | grep -qE "clippy::($SAFE_LINTS)"; then
+        echo "  🔧 Auto-fixing safe clippy lints..."
+        cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>/dev/null || true
+        # Re-run clippy to verify fix worked
+        if ! cargo clippy --all-targets --all-features -- -D warnings; then
+            echo "❌ Clippy still has issues after auto-fix. Manual fix needed."
+            exit 1
+        fi
+        echo "  ✅ Auto-fix successful!"
+    else
+        echo "$CLIPPY_OUTPUT"
+        echo "❌ Clippy found issues. Fix the warnings above."
+        exit 1
+    fi
+}
 
 # Unit tests (fast, no browser/server needed)
 # Use cargo nextest for parallel execution if available, otherwise fall back to cargo test

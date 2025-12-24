@@ -2,6 +2,10 @@
 /target/
 **/target/
 
+# Compiled Rust libraries
+*.rlib
+*.rmeta
+
 # Cargo lock for libraries (keep for binaries)
 # Cargo.lock
 
@@ -36,6 +40,10 @@ lcov.info
 node_modules/
 dist/
 .parcel-cache/
+
+# TypeScript/esbuild build output
+**/dist/js/
+*.js.map
 
 # Typst cache
 .typst-cache/
