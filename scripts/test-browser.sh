@@ -6,6 +6,7 @@
 # Use --quick to skip the full test suite and only run browser tests.
 
 set -e
+set -o pipefail  # Make pipes return the exit code of the first failing command
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
