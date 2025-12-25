@@ -940,6 +940,13 @@ function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement
 
   const id = nextTextBoxId++;
 
+  // Get page dimensions to constrain initial width
+  const pageEl = document.querySelector(`.edit-page[data-page="${pageNum}"]`) as HTMLElement | null;
+  const pageWidth = pageEl?.offsetWidth || 800;
+  const margin = 10;
+  const maxAvailableWidth = Math.max(100, pageWidth - domX - margin);
+  const initialWidth = Math.min(150, maxAvailableWidth);
+
   // Create DOM element (always transparent)
   const box = document.createElement('div');
   box.className = 'text-box transparent';
@@ -947,7 +954,7 @@ function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement
   box.dataset.page = String(pageNum);
   box.style.left = domX + 'px';
   box.style.top = domY + 'px';
-  box.style.width = '150px';
+  box.style.width = initialWidth + 'px';
   box.style.height = '30px';
   // Z-ordering: last-added on top, gets click priority
   box.style.zIndex = String(nextTextBoxZIndex++);
@@ -1169,6 +1176,17 @@ function expandTextBoxForContent(box: HTMLElement, textContent: HTMLElement): vo
   const text = textContent.textContent || '';
   if (!text) return;
 
+  // Get the page element to determine boundary constraints
+  const pageEl = box.closest('.edit-page') as HTMLElement | null;
+  if (!pageEl) return;
+
+  const pageWidth = pageEl.offsetWidth;
+  const boxLeft = parseFloat(box.style.left) || 0;
+
+  // Calculate maximum available width (page width minus box position minus margin)
+  const margin = 10; // Small margin from page edge
+  const maxAvailableWidth = Math.max(100, pageWidth - boxLeft - margin);
+
   // Measure text dimensions using a temporary canvas
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -1187,18 +1205,30 @@ function expandTextBoxForContent(box: HTMLElement, textContent: HTMLElement): vo
   const metrics = ctx.measureText(text);
   const textWidth = metrics.width + 20; // Add padding
   const lineHeight = parseInt(fontSize, 10) * 1.4;
-  const numLines = Math.ceil(textWidth / 500); // Wrap at ~500px
+
+  // Constrain width to page boundary (elderly UX: never overflow page)
+  const constrainedWidth = Math.min(textWidth, maxAvailableWidth);
+
+  // Calculate lines needed when constrained to available width
+  const effectiveWidth = Math.max(100, constrainedWidth - 20); // Account for padding
+  const numLines = Math.max(1, Math.ceil(metrics.width / effectiveWidth));
   const textHeight = lineHeight * numLines + 10; // Add padding
 
-  // Expand box if needed (minimum 150x30)
+  // Expand box if needed (minimum 150x30, but respect page boundary)
   const currentWidth = parseFloat(box.style.width);
   const currentHeight = parseFloat(box.style.height);
-  const newWidth = Math.max(150, Math.min(500, textWidth)); // Cap at 500px
+  const newWidth = Math.max(150, Math.min(constrainedWidth, maxAvailableWidth));
   const newHeight = Math.max(30, textHeight);
 
-  if (newWidth > currentWidth) {
+  // Only expand width if within bounds
+  if (newWidth > currentWidth && newWidth <= maxAvailableWidth) {
     box.style.width = newWidth + 'px';
+  } else if (currentWidth > maxAvailableWidth) {
+    // Shrink width if it exceeds boundary (shouldn't happen, but safety check)
+    box.style.width = maxAvailableWidth + 'px';
   }
+
+  // Always allow height to grow to accommodate wrapped text
   if (newHeight > currentHeight) {
     box.style.height = newHeight + 'px';
   }

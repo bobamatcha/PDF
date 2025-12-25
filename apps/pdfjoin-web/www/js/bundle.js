@@ -826,13 +826,18 @@ var nextTextBoxZIndex = 100;
 function createTextBox(pageNum, domX, domY) {
   if (!editSession) throw new Error("No edit session");
   const id = nextTextBoxId++;
+  const pageEl = document.querySelector(`.edit-page[data-page="${pageNum}"]`);
+  const pageWidth = pageEl?.offsetWidth || 800;
+  const margin = 10;
+  const maxAvailableWidth = Math.max(100, pageWidth - domX - margin);
+  const initialWidth = Math.min(150, maxAvailableWidth);
   const box = document.createElement("div");
   box.className = "text-box transparent";
   box.dataset.textboxId = String(id);
   box.dataset.page = String(pageNum);
   box.style.left = domX + "px";
   box.style.top = domY + "px";
-  box.style.width = "150px";
+  box.style.width = initialWidth + "px";
   box.style.height = "30px";
   box.style.zIndex = String(nextTextBoxZIndex++);
   const deleteBtn = document.createElement("button");
@@ -999,6 +1004,12 @@ function startTextBoxMove(e, box) {
 function expandTextBoxForContent(box, textContent) {
   const text = textContent.textContent || "";
   if (!text) return;
+  const pageEl = box.closest(".edit-page");
+  if (!pageEl) return;
+  const pageWidth = pageEl.offsetWidth;
+  const boxLeft = parseFloat(box.style.left) || 0;
+  const margin = 10;
+  const maxAvailableWidth = Math.max(100, pageWidth - boxLeft - margin);
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -1013,14 +1024,18 @@ function expandTextBoxForContent(box, textContent) {
   const metrics = ctx.measureText(text);
   const textWidth = metrics.width + 20;
   const lineHeight = parseInt(fontSize, 10) * 1.4;
-  const numLines = Math.ceil(textWidth / 500);
+  const constrainedWidth = Math.min(textWidth, maxAvailableWidth);
+  const effectiveWidth = Math.max(100, constrainedWidth - 20);
+  const numLines = Math.max(1, Math.ceil(metrics.width / effectiveWidth));
   const textHeight = lineHeight * numLines + 10;
   const currentWidth = parseFloat(box.style.width);
   const currentHeight = parseFloat(box.style.height);
-  const newWidth = Math.max(150, Math.min(500, textWidth));
+  const newWidth = Math.max(150, Math.min(constrainedWidth, maxAvailableWidth));
   const newHeight = Math.max(30, textHeight);
-  if (newWidth > currentWidth) {
+  if (newWidth > currentWidth && newWidth <= maxAvailableWidth) {
     box.style.width = newWidth + "px";
+  } else if (currentWidth > maxAvailableWidth) {
+    box.style.width = maxAvailableWidth + "px";
   }
   if (newHeight > currentHeight) {
     box.style.height = newHeight + "px";

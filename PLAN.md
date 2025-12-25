@@ -27,8 +27,10 @@
 | UX Improvements | ✅ Done | Updated messaging, linked to Boba Matcha blog |
 | Tab PDF Sharing | ✅ Done | Share PDF between Split/Edit tabs without re-upload |
 | Edit→Split Flow | ✅ Done | Prompt to save changes when switching from Edit to Split |
-| Text Tool Refactor | 🔲 **Next** | Separate tools: TextBox (transparent) + Whiteout (covers content) |
-| Action-Based Undo | 🔲 Todo | Transaction model in Rust, remove `operationHistory` from TS |
+| Text Tool Refactor | ✅ Done | Separate tools: TextBox (transparent) + Whiteout (covers content) |
+| Text Tool Tests | ✅ Done | Browser tests for textbox/whiteout behavior |
+| Text Sizing UX | ✅ Done | Expansion on font size increase, content growth, page boundaries |
+| Action-Based Undo | 🔲 **Next** | Transaction model in Rust, remove `operationHistory` from TS |
 | Re-enable Checkbox | 🔲 Todo | Restore checkbox tool with proper Rust backing |
 | Re-enable Highlight | 🔲 Todo | Restore highlight tool once implemented |
 
@@ -83,45 +85,55 @@ pub fn get_operation_rect(&self, op_id: u64) -> Option<js_sys::Float64Array>
 
 Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_tab_sharing`
 
-### Phase 3: Text Tool Refactoring 🔲 In Progress
+### Phase 3: Text Tool Refactoring ✅ Complete
 
-**Problem**: Text tool was merged with Whiteout causing confusion. Delete button bug creates new textbox when clicked.
+**Implementation Complete:**
 
-**Solution**: Separate tools with clear purposes:
+| Tool | Icon | Purpose | Status |
+|------|------|---------|--------|
+| Select | ☝️ | Select & edit existing elements | ✅ Done |
+| Text Box | T | Always transparent, dashed border | ✅ Done |
+| Whiteout | ⬜ | White rectangle to cover/redact | ✅ Done |
 
-| Tool | Icon | Purpose |
-|------|------|---------|
-| Select | ☝️ | Select & edit existing elements |
-| Text Box | T | Always transparent, dashed border, add text on top of content |
-| Whiteout | ⬜ | White rectangle to cover/redact existing content |
+**Completed Features:**
+- ✅ TextBox always transparent (no mode toggle), resizable, movable
+- ✅ Whiteout has white background, resizable
+- ✅ Z-ordering: last-added gets click priority (`nextTextBoxZIndex++`)
+- ✅ Delete: X button on selection + Delete key (no Trash tool)
+- ✅ Delete button bug fixed: `handleWhiteoutStart` checks for UI elements before starting draw
 
-**Key Behaviors**:
-- **Text Box**: Always transparent (no mode toggle), resizable, movable
-- **Whiteout**: White background, resizable, can have text inside (like before)
-- **Overlap**: Allow with warning, last-added gets click priority (higher z-index)
-- **Delete**: X button on selection + Delete key (no Trash tool)
+**Existing Tests:**
+- ✅ `test_textbox_toolbar_button_exists`
+- ✅ `test_textbox_click_creates_text_box`
 
-**Bug Fixes Needed**:
-- Delete button click triggers mousedown → creates new textbox before delete fires
-- Fix: Check click target in `handleWhiteoutStart`, abort if UI element
+### Phase 3b: Text Tool Browser Tests ✅ Complete
 
-**Files to Modify**:
-| File | Changes |
-|------|---------|
-| `apps/pdfjoin-web/www/index.html` | Remove Trash tool, remove mode toggle, restore Whiteout button |
-| `apps/pdfjoin-web/src/ts/edit.ts` | Separate TextBox/Whiteout logic, fix delete bug, add z-ordering |
-| `crates/benchmark-harness/tests/browser_pdfjoin.rs` | Update tests |
-
-**Tests** (in `crates/benchmark-harness/tests/browser_pdfjoin.rs`):
-- 🔲 `test_textbox_create_transparent`
-- 🔲 `test_textbox_resize`
-- 🔲 `test_textbox_delete_x_button`
-- 🔲 `test_textbox_delete_key`
-- 🔲 `test_textbox_overlap_zorder`
-- 🔲 `test_whiteout_covers_content`
-- 🔲 `test_whiteout_with_text`
+**All tests passing** (in `crates/benchmark-harness/tests/browser_pdfjoin.rs`):
+- ✅ `test_textbox_create_transparent` - verify CSS class and background
+- ✅ `test_textbox_resize` - resize handle exists (note: simulated events limited in headless)
+- ✅ `test_textbox_delete_x_button` - click X deletes box
+- ✅ `test_textbox_delete_key` - Delete key removes selected box
+- ✅ `test_textbox_overlap_zorder` - newer boxes on top
+- ✅ `test_whiteout_covers_content` - white background
+- ✅ `test_whiteout_with_text` - type in whiteout
 
 Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_textbox`
+
+### Phase 3c: Text Sizing UX Tests ✅ Complete
+
+**All tests passing** - validates elderly-friendly UX behavior:
+- ✅ `test_ux_whiteout_matches_covered_text_size` - Whiteout detects covered text font size (36px from PDF)
+- ✅ `test_ux_textbox_expands_on_font_size_increase` - Box grows when font size increases (12→22px, 150x30→180x41)
+- ✅ `test_ux_textbox_expands_with_content` - Box expands for long text (150→500px)
+- ✅ `test_ux_whiteout_expands_with_content` - Whiteout expands for long text (100x30→109x346)
+- ✅ `test_ux_textbox_respects_page_boundary_right` - TextBox width constrained to page (never overflows)
+- ✅ `test_ux_textbox_grows_height_at_boundary` - TextBox height grows when width is constrained (30→161px)
+- ✅ `test_ux_whiteout_respects_page_boundary_right` - Whiteout respects right page edge
+- ✅ `test_ux_whiteout_respects_page_boundary_bottom` - Whiteout respects bottom page edge
+
+**Elderly UX**: Text boxes never overflow page boundaries. When text would exceed the right edge, width is constrained and height grows to wrap text instead.
+
+Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_ux`
 
 ### Phase 4: Action-Based Undo/Redo
 
