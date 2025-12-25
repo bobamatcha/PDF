@@ -3,6 +3,7 @@
 
 import { ensurePdfJsLoaded } from './pdf-loader';
 import { PdfBridge } from './pdf-bridge';
+import { registerEditCallbacks, clearEditCallbacks, setSharedPdf } from './shared-state';
 import type { EditSession, OpId, TextItem, CachedPageInfo } from './types';
 import { getOpId, setOpId } from './types';
 
@@ -10,6 +11,8 @@ let editSession: EditSession | null = null;
 let currentTool = 'select';
 let currentPage = 1;
 let operationHistory: OpId[] = []; // For undo (stores operation IDs as BigInt)
+let currentPdfBytes: Uint8Array | null = null; // Original PDF bytes for Tab PDF Sharing
+let currentPdfFilename: string | null = null;
 let textItemsMap = new Map<number, TextItem[]>(); // pageNum -> array of text items with positions
 let activeEditItem: {
   pageNum: number;
@@ -53,6 +56,13 @@ let textDragStartTop = 0;
 
 // Selected whiteout
 let selectedWhiteout: HTMLElement | null = null;
+
+// Selected text box
+let selectedTextBox: HTMLElement | null = null;
+
+// Text box tracking
+let textBoxes: Map<number, HTMLElement> = new Map();
+let nextTextBoxId = 0;
 
 export function setupEditView(): void {
   const dropZone = document.getElementById('edit-drop-zone');
@@ -106,15 +116,21 @@ export function setupEditView(): void {
     splitTab?.click();
   });
 
-  // Tool buttons
-  document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"]').forEach((btn) => {
+  // Tool buttons - match both old format (tool-*) and new format (edit-tool-*)
+  document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      currentTool = btn.id.replace('tool-', '');
-      document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"]').forEach((b) => b.classList.remove('active'));
+      // Handle different ID formats
+      let toolName = btn.id.replace('tool-', '').replace('edit-', '');
+      currentTool = toolName;
+      document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((b) => {
+        b.classList.remove('active');
+      });
       btn.classList.add('active');
       updateCursor();
-      // Deselect whiteout when changing tools
+      // Deselect any selected elements when changing tools
       deselectWhiteout();
+      deselectTextBox();
+
       // Toggle whiteout-tool-active class for border visibility
       const viewer = document.getElementById('edit-viewer');
       if (viewer) {
@@ -125,6 +141,22 @@ export function setupEditView(): void {
         }
       }
     });
+  });
+
+  // Delete key handler for both text boxes and whiteouts
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      // Only delete if not editing text
+      if (activeTextInput) return;
+
+      if (selectedTextBox) {
+        deleteSelectedTextBox();
+        e.preventDefault();
+      } else if (selectedWhiteout) {
+        deleteWhiteout(selectedWhiteout);
+        e.preventDefault();
+      }
+    }
   });
 
   // Click on viewer to deselect whiteout
@@ -182,40 +214,76 @@ async function handleEditFile(file: File): Promise<void> {
     return;
   }
 
-  const { EditSession, format_bytes } = window.wasmBindings;
-
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    editSession = new EditSession(file.name, bytes);
+    await loadPdfIntoEditInternal(bytes, file.name);
 
-    // Check if signed
-    if (editSession.isSigned) {
-      document.getElementById('edit-drop-zone')?.classList.add('hidden');
-      document.getElementById('edit-signed-warning')?.classList.remove('hidden');
-      return;
-    }
-
-    // Show editor
-    document.getElementById('edit-drop-zone')?.classList.add('hidden');
-    document.getElementById('edit-editor')?.classList.remove('hidden');
-
-    // Update file info
-    const fileNameEl = document.getElementById('edit-file-name');
-    const fileDetailsEl = document.getElementById('edit-file-details');
-    if (fileNameEl) fileNameEl.textContent = file.name;
-    if (fileDetailsEl) fileDetailsEl.textContent = `${editSession.pageCount} pages - ${format_bytes(bytes.length)}`;
-
-    // Lazy load PDF.js and render
-    await ensurePdfJsLoaded();
-    await PdfBridge.loadDocument(editSession.getDocumentBytes());
-    await renderAllPages();
-
-    updatePageNavigation();
-    updateButtons();
+    // Store in shared state for Tab PDF Sharing
+    setSharedPdf(bytes, file.name, 'edit');
   } catch (e) {
     showError('edit-error', 'Failed to load PDF: ' + e);
     console.error(e);
   }
+}
+
+/**
+ * Load a PDF into the Edit tab from external bytes (called from app.ts for Tab PDF Sharing)
+ */
+export async function loadPdfIntoEdit(bytes: Uint8Array, filename: string): Promise<void> {
+  try {
+    await loadPdfIntoEditInternal(bytes, filename);
+  } catch (e) {
+    showError('edit-error', 'Failed to load PDF: ' + e);
+    console.error(e);
+  }
+}
+
+/**
+ * Internal function to load PDF into Edit tab
+ */
+async function loadPdfIntoEditInternal(bytes: Uint8Array, filename: string): Promise<void> {
+  const { EditSession, format_bytes } = window.wasmBindings;
+
+  editSession = new EditSession(filename, bytes);
+  currentPdfBytes = bytes;
+  currentPdfFilename = filename;
+
+  // Register callbacks for change detection
+  registerEditCallbacks(
+    () => editSession?.hasChanges() ?? false,
+    () => {
+      try {
+        return editSession?.export() ?? null;
+      } catch {
+        return null;
+      }
+    }
+  );
+
+  // Check if signed
+  if (editSession.isSigned) {
+    document.getElementById('edit-drop-zone')?.classList.add('hidden');
+    document.getElementById('edit-signed-warning')?.classList.remove('hidden');
+    return;
+  }
+
+  // Show editor
+  document.getElementById('edit-drop-zone')?.classList.add('hidden');
+  document.getElementById('edit-editor')?.classList.remove('hidden');
+
+  // Update file info
+  const fileNameEl = document.getElementById('edit-file-name');
+  const fileDetailsEl = document.getElementById('edit-file-details');
+  if (fileNameEl) fileNameEl.textContent = filename;
+  if (fileDetailsEl) fileDetailsEl.textContent = `${editSession.pageCount} pages - ${format_bytes(bytes.length)}`;
+
+  // Lazy load PDF.js and render
+  await ensurePdfJsLoaded();
+  await PdfBridge.loadDocument(editSession.getDocumentBytes());
+  await renderAllPages();
+
+  updatePageNavigation();
+  updateButtons();
 }
 
 async function renderAllPages(): Promise<void> {
@@ -283,6 +351,18 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
     return;
   }
 
+  // Check if clicking on an existing text-box - if so, focus it for editing
+  const existingTextBox = elementAtClick?.closest('.text-box') || (e.target as HTMLElement).closest('.text-box');
+  if (existingTextBox && currentTool === 'textbox') {
+    // Focus the existing text box's content for editing
+    const textContent = existingTextBox.querySelector('.text-content') as HTMLElement | null;
+    if (textContent) {
+      selectTextBox(existingTextBox as HTMLElement);
+      textContent.focus();
+    }
+    return;
+  }
+
   // Check if clicking on an existing text overlay - if so, edit it
   const textOverlay = elementAtClick?.closest('.edit-text-overlay') || (e.target as HTMLElement).closest('.edit-text-overlay');
   if (textOverlay && currentTool === 'text') {
@@ -309,6 +389,10 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
   switch (currentTool) {
     case 'text':
       addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
+      break;
+    case 'textbox':
+      // Create textbox at click position (alternative to drag creation)
+      createTextBox(pageNum, domX, domY);
       break;
     // TODO: Re-enable checkbox tool after testing
     // case 'checkbox':
@@ -625,7 +709,18 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
 // ============ Whiteout Drawing Functions ============
 
 function handleWhiteoutStart(e: MouseEvent, pageNum: number, overlay: HTMLElement, pageDiv: HTMLElement): void {
-  if (currentTool !== 'whiteout') return;
+  // Handle both whiteout and textbox tools
+  if (currentTool !== 'whiteout' && currentTool !== 'textbox') return;
+
+  // Don't start drawing if clicking on UI elements (delete button, resize handles, etc.)
+  const target = e.target as HTMLElement;
+  if (target.closest('.delete-btn') ||
+      target.closest('.resize-handle') ||
+      target.closest('.text-content') ||
+      target.closest('.text-box') ||
+      target.closest('.edit-whiteout-overlay')) {
+    return;
+  }
 
   // Prevent text selection while drawing
   e.preventDefault();
@@ -643,11 +738,16 @@ function handleWhiteoutStart(e: MouseEvent, pageNum: number, overlay: HTMLElemen
 
   // Create preview rectangle
   drawPreviewEl = document.createElement('div');
-  drawPreviewEl.className = 'whiteout-preview';
+  drawPreviewEl.className = currentTool === 'textbox' ? 'textbox-preview' : 'whiteout-preview';
   drawPreviewEl.style.left = drawStartX + 'px';
   drawPreviewEl.style.top = drawStartY + 'px';
   drawPreviewEl.style.width = '0px';
   drawPreviewEl.style.height = '0px';
+  if (currentTool === 'textbox') {
+    // TextBox is always transparent with dashed border
+    drawPreviewEl.style.border = '2px dashed #666';
+    drawPreviewEl.style.background = 'transparent';
+  }
   pageDiv.appendChild(drawPreviewEl);
 }
 
@@ -673,6 +773,8 @@ function handleWhiteoutMove(e: MouseEvent): void {
 function handleWhiteoutEnd(e: MouseEvent, pageNum: number): void {
   if (!isDrawing || !drawPreviewEl || !drawPageDiv) return;
 
+  const wasTextbox = currentTool === 'textbox';
+
   const rect = drawPageDiv.getBoundingClientRect();
   const endX = e.clientX - rect.left;
   const endY = e.clientY - rect.top;
@@ -689,9 +791,21 @@ function handleWhiteoutEnd(e: MouseEvent, pageNum: number): void {
     drawPreviewEl = null;
   }
 
-  // Only add if rectangle is big enough (at least 5x5 pixels)
-  if (domWidth >= 5 && domHeight >= 5) {
-    addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight);
+  if (wasTextbox) {
+    // For textbox, a click (small drag) creates a default-sized box at that position
+    // Larger drags create a box of that size
+    if (domWidth < 5 || domHeight < 5) {
+      // Click - create at click position
+      createTextBox(pageNum, drawStartX, drawStartY);
+    } else {
+      // Drag - create with specified size (TODO: implement sized creation)
+      createTextBox(pageNum, domX, domY);
+    }
+  } else {
+    // Whiteout - only add if rectangle is big enough (at least 5x5 pixels)
+    if (domWidth >= 5 && domHeight >= 5) {
+      addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight);
+    }
   }
 
   isDrawing = false;
@@ -798,6 +912,337 @@ function deselectWhiteout(): void {
     selectedWhiteout.querySelectorAll('.resize-handle').forEach((h) => h.remove());
     selectedWhiteout = null;
   }
+}
+
+function deleteWhiteout(whiteout: HTMLElement): void {
+  const opId = getOpId(whiteout);
+  if (opId !== null && editSession) {
+    editSession.removeOperation(opId);
+  }
+
+  if (selectedWhiteout === whiteout) {
+    selectedWhiteout = null;
+  }
+
+  whiteout.remove();
+  updateButtons();
+}
+
+// ============================================================================
+// Text Box Functions (always transparent - for adding text on top of content)
+// ============================================================================
+
+// Z-index counter for layering (last-added on top)
+let nextTextBoxZIndex = 100;
+
+function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement {
+  if (!editSession) throw new Error('No edit session');
+
+  const id = nextTextBoxId++;
+
+  // Create DOM element (always transparent)
+  const box = document.createElement('div');
+  box.className = 'text-box transparent';
+  box.dataset.textboxId = String(id);
+  box.dataset.page = String(pageNum);
+  box.style.left = domX + 'px';
+  box.style.top = domY + 'px';
+  box.style.width = '150px';
+  box.style.height = '30px';
+  // Z-ordering: last-added on top, gets click priority
+  box.style.zIndex = String(nextTextBoxZIndex++);
+
+  // Add delete button (X)
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.innerHTML = '&times;';
+  deleteBtn.title = 'Delete';
+  deleteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteTextBox(box);
+  });
+  box.appendChild(deleteBtn);
+
+  // Add text content area
+  const textContent = document.createElement('div');
+  textContent.className = 'text-content';
+  textContent.contentEditable = 'true';
+  // Initialize font styling data attributes (used by style buttons)
+  textContent.dataset.fontSize = '12';
+  textContent.dataset.fontFamily = 'sans-serif';
+  textContent.dataset.isBold = 'false';
+  textContent.dataset.isItalic = 'false';
+  textContent.style.fontSize = '12px';
+  textContent.style.fontFamily = 'sans-serif';
+  textContent.addEventListener('focus', () => {
+    activeTextInput = textContent;
+    updateStyleButtons();
+  });
+  textContent.addEventListener('blur', () => {
+    activeTextInput = null;
+    updateStyleButtons();
+    // Commit text to WASM when done editing
+    commitTextBox(box);
+  });
+  textContent.addEventListener('input', () => {
+    checkTextBoxOverlap(box);
+    // Auto-expand: grow text box to fit content
+    expandTextBoxForContent(box, textContent);
+  });
+  box.appendChild(textContent);
+
+  // Add resize handles
+  const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+  handles.forEach((pos) => {
+    const handle = document.createElement('div');
+    handle.className = `resize-handle resize-handle-${pos}`;
+    handle.dataset.handle = pos;
+    handle.addEventListener('mousedown', (e) => startTextBoxResize(e, box, pos));
+    box.appendChild(handle);
+  });
+
+  // Click to select
+  box.addEventListener('mousedown', (e) => {
+    if ((e.target as HTMLElement).classList.contains('resize-handle') ||
+        (e.target as HTMLElement).classList.contains('delete-btn')) {
+      return;
+    }
+    selectTextBox(box);
+    // Start move if not clicking on text content
+    if (!(e.target as HTMLElement).classList.contains('text-content')) {
+      startTextBoxMove(e, box);
+    }
+  });
+
+  // Add to page overlay
+  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
+  if (overlay) {
+    overlay.appendChild(box);
+  }
+
+  // Track
+  textBoxes.set(id, box);
+
+  // Select immediately
+  selectTextBox(box);
+
+  // Focus text content for immediate typing
+  setTimeout(() => textContent.focus(), 50);
+
+  // Check for overlaps
+  checkTextBoxOverlap(box);
+
+  return box;
+}
+
+function selectTextBox(box: HTMLElement): void {
+  deselectTextBox();
+  deselectWhiteout();
+  selectedTextBox = box;
+  box.classList.add('selected');
+  // Bring to front when selected
+  box.style.zIndex = String(nextTextBoxZIndex++);
+}
+
+function deselectTextBox(): void {
+  if (selectedTextBox) {
+    selectedTextBox.classList.remove('selected');
+    selectedTextBox = null;
+  }
+}
+
+function deleteTextBox(box: HTMLElement): void {
+  const opId = getOpId(box);
+  if (opId !== null && editSession) {
+    editSession.removeOperation(opId);
+  }
+
+  const id = parseInt(box.dataset.textboxId || '0');
+  textBoxes.delete(id);
+
+  if (selectedTextBox === box) {
+    selectedTextBox = null;
+  }
+
+  box.remove();
+  updateButtons();
+}
+
+function deleteSelectedTextBox(): void {
+  if (selectedTextBox) {
+    deleteTextBox(selectedTextBox);
+  }
+}
+
+function commitTextBox(box: HTMLElement): void {
+  if (!editSession) return;
+
+  const textContent = box.querySelector('.text-content') as HTMLElement | null;
+  const text = textContent?.textContent?.trim() || '';
+  const pageNum = parseInt(box.dataset.page || '1');
+
+  // Get page info for coordinate conversion
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+
+  // Get DOM coordinates
+  const domX = parseFloat(box.style.left);
+  const domY = parseFloat(box.style.top);
+  const domWidth = box.offsetWidth;
+  const domHeight = box.offsetHeight;
+
+  // Convert to PDF coordinates
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const pdfX = domX * scaleX;
+  const pdfWidth = domWidth * scaleX;
+  const pdfHeight = domHeight * scaleY;
+  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+
+  // Remove old operation if exists
+  const existingOpId = getOpId(box);
+  if (existingOpId !== null) {
+    editSession.removeOperation(existingOpId);
+  }
+
+  // TextBox is always transparent - just add text, no white rect
+  if (text) {
+    // Get style from text content
+    const style = textContent ? window.getComputedStyle(textContent) : null;
+    const fontSize = style ? parseFloat(style.fontSize) : 12;
+    const isBold = style?.fontWeight === 'bold' || parseInt(style?.fontWeight || '400') >= 700;
+    const isItalic = style?.fontStyle === 'italic';
+
+    const opId = editSession.addText(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      text,
+      fontSize,
+      '#000000',
+      null, // font name
+      isItalic,
+      isBold
+    );
+    setOpId(box, opId);
+    operationHistory.push(opId);
+  }
+
+  updateButtons();
+}
+
+function startTextBoxResize(e: MouseEvent, box: HTMLElement, handle: string): void {
+  e.preventDefault();
+  e.stopPropagation();
+
+  resizing = true;
+  resizeTarget = box;
+  resizeHandle = handle;
+  resizeStartX = e.clientX;
+  resizeStartY = e.clientY;
+  resizeStartRect = {
+    left: parseFloat(box.style.left),
+    top: parseFloat(box.style.top),
+    width: box.offsetWidth,
+    height: box.offsetHeight,
+  };
+}
+
+function startTextBoxMove(e: MouseEvent, box: HTMLElement): void {
+  e.preventDefault();
+
+  moving = true;
+  moveTarget = box;
+  moveStartX = e.clientX;
+  moveStartY = e.clientY;
+  moveStartLeft = parseFloat(box.style.left);
+  moveStartTop = parseFloat(box.style.top);
+
+  // Add document-level listeners for move tracking
+  document.addEventListener('mousemove', handleMove);
+  document.addEventListener('mouseup', endMove);
+}
+
+function expandTextBoxForContent(box: HTMLElement, textContent: HTMLElement): void {
+  const text = textContent.textContent || '';
+  if (!text) return;
+
+  // Measure text dimensions using a temporary canvas
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const fontSize = textContent.dataset.fontSize || '12';
+  const fontFamily = textContent.dataset.fontFamily || 'sans-serif';
+  const isBold = textContent.dataset.isBold === 'true';
+  const isItalic = textContent.dataset.isItalic === 'true';
+
+  let fontStyle = '';
+  if (isItalic) fontStyle += 'italic ';
+  if (isBold) fontStyle += 'bold ';
+  ctx.font = `${fontStyle}${fontSize}px ${fontFamily}`;
+
+  const metrics = ctx.measureText(text);
+  const textWidth = metrics.width + 20; // Add padding
+  const lineHeight = parseInt(fontSize, 10) * 1.4;
+  const numLines = Math.ceil(textWidth / 500); // Wrap at ~500px
+  const textHeight = lineHeight * numLines + 10; // Add padding
+
+  // Expand box if needed (minimum 150x30)
+  const currentWidth = parseFloat(box.style.width);
+  const currentHeight = parseFloat(box.style.height);
+  const newWidth = Math.max(150, Math.min(500, textWidth)); // Cap at 500px
+  const newHeight = Math.max(30, textHeight);
+
+  if (newWidth > currentWidth) {
+    box.style.width = newWidth + 'px';
+  }
+  if (newHeight > currentHeight) {
+    box.style.height = newHeight + 'px';
+  }
+}
+
+function checkTextBoxOverlap(box: HTMLElement): void {
+  const boxRect = box.getBoundingClientRect();
+  const pageNum = box.dataset.page;
+  let hasOverlap = false;
+
+  textBoxes.forEach((otherBox) => {
+    if (otherBox === box) return;
+    if (otherBox.dataset.page !== pageNum) return;
+
+    const otherRect = otherBox.getBoundingClientRect();
+    if (rectsOverlap(boxRect, otherRect)) {
+      hasOverlap = true;
+    }
+  });
+
+  // Also check whiteout overlays
+  document.querySelectorAll<HTMLElement>(`.edit-whiteout-overlay[data-page="${pageNum}"]`).forEach((overlay) => {
+    const overlayRect = overlay.getBoundingClientRect();
+    if (rectsOverlap(boxRect, overlayRect)) {
+      hasOverlap = true;
+    }
+  });
+
+  box.classList.toggle('overlapping', hasOverlap);
+
+  // Add/remove warning tooltip
+  let warning = box.querySelector('.overlap-warning');
+  if (hasOverlap && !warning) {
+    warning = document.createElement('div');
+    warning.className = 'overlap-warning';
+    warning.textContent = 'Overlapping';
+    box.appendChild(warning);
+  } else if (!hasOverlap && warning) {
+    warning.remove();
+  }
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return !(a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top);
 }
 
 function startResize(e: MouseEvent, whiteRect: HTMLElement, handle: string): void {
@@ -1969,8 +2414,13 @@ function resetEditView(): void {
   currentPage = 1;
   operationHistory = [];
   currentTool = 'select';
+  currentPdfBytes = null;
+  currentPdfFilename = null;
   textItemsMap.clear();
   closeTextEditor();
+
+  // Clear shared state callbacks
+  clearEditCallbacks();
 
   // Reset whiteout drawing and selection state
   handleWhiteoutCancel();
@@ -2037,6 +2487,9 @@ function updateCursor(): void {
     case 'text':
       viewer.style.cursor = 'text';
       break;
+    case 'textbox':
+      viewer.style.cursor = 'crosshair';
+      break;
     case 'highlight':
       viewer.style.cursor = 'crosshair';
       break;
@@ -2050,17 +2503,18 @@ function updateCursor(): void {
       viewer.style.cursor = 'default';
   }
 
-  // Disable text layer pointer events when whiteout tool is active
+  // Disable text layer pointer events when drawing tools are active
   // This allows mouse events to reach the page div for drawing
+  const isDrawingTool = currentTool === 'whiteout' || currentTool === 'textbox';
   document.querySelectorAll<HTMLElement>('.text-layer').forEach((layer) => {
-    layer.style.pointerEvents = currentTool === 'whiteout' ? 'none' : 'auto';
+    layer.style.pointerEvents = isDrawingTool ? 'none' : 'auto';
   });
 
   // Enable overlay-container pointer events for tools that need to capture clicks
-  // but not for select or whiteout
-  const overlayNeedsClicks = currentTool === 'text';
+  // textbox needs clicks for both creating new boxes and editing existing ones
+  const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox';
   // TODO: Re-enable when checkbox/highlight tools are restored
-  // const overlayNeedsClicks = currentTool === 'text' || currentTool === 'checkbox' || currentTool === 'highlight';
+  // const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox' || currentTool === 'checkbox' || currentTool === 'highlight';
   document.querySelectorAll<HTMLElement>('.overlay-container').forEach((overlay) => {
     overlay.style.pointerEvents = overlayNeedsClicks ? 'auto' : 'none';
   });

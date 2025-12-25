@@ -1,5 +1,7 @@
 # PDF Monolith
 
+> **UX Principle**: The interface must work FOR users, not make users work. Design for clarity over flexibility. Elderly users should never need to learn workarounds—if they must, the UI is broken.
+
 > **Development Guidelines**: See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
 
 Consolidating agentPDF-server, agentPDF-web, corpus-server, and docsign-web into a unified workspace with three deployable web applications.

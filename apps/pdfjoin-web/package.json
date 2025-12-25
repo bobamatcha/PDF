@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/ts/app.ts --bundle --outfile=dist/js/bundle.js --format=esm --target=es2020 --sourcemap",
+    "build": "esbuild src/ts/app.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --sourcemap",
     "build:watch": "npm run build -- --watch",
     "typecheck": "tsc --noEmit",
     "dev": "concurrently \"npm run build:watch\" \"trunk serve\""

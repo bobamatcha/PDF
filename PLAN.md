@@ -4,6 +4,14 @@
 
 ---
 
+## 🎯 UX Principle: Design for Clarity
+
+> **The interface must work FOR users, not make users work.**
+>
+> Design for clarity over flexibility. Elderly users should never need to learn workarounds—if they must, the UI is broken. Every interaction should be obvious and forgiving.
+
+---
+
 ## 🚧 ACTIVE: PDFJoin Editor Architecture Refactoring
 
 **Goal**: Move editor state from TypeScript to Rust ("thin TS / thick Rust")
@@ -16,10 +24,11 @@
 | Whitebox Bug Fix | ✅ Done | Fixed expansion bug using Range API |
 | Tool Removal | ✅ Done | Checkbox/highlight tools commented out pending testing |
 | Rust Update Methods | ✅ Done | Add `set_checkbox`, `update_rect`, `update_text` to Rust |
-| Action-Based Undo | 🔲 Todo | Transaction model in Rust, remove `operationHistory` from TS |
-| Tab PDF Sharing | 🔲 Todo | Share PDF between Split/Edit tabs without re-upload |
-| Edit→Split Flow | 🔲 Todo | Prompt to save changes when switching from Edit to Split |
 | UX Improvements | ✅ Done | Updated messaging, linked to Boba Matcha blog |
+| Tab PDF Sharing | ✅ Done | Share PDF between Split/Edit tabs without re-upload |
+| Edit→Split Flow | ✅ Done | Prompt to save changes when switching from Edit to Split |
+| Text Tool Refactor | 🔲 **Next** | Separate tools: TextBox (transparent) + Whiteout (covers content) |
+| Action-Based Undo | 🔲 Todo | Transaction model in Rust, remove `operationHistory` from TS |
 | Re-enable Checkbox | 🔲 Todo | Restore checkbox tool with proper Rust backing |
 | Re-enable Highlight | 🔲 Todo | Restore highlight tool once implemented |
 
@@ -49,7 +58,72 @@ pub fn get_operation_rect(&self, op_id: u64) -> Option<js_sys::Float64Array>
 - ✅ `test_get_operation_returns_correct_op`
 - ✅ `test_update_text_with_style`
 
-### Phase 2: Action-Based Undo/Redo
+### Phase 2: Tab PDF Sharing ✅ Complete
+
+**Feature 1**: Split ↔ Edit bidirectional auto-load
+- Store PDF bytes in shared state when loaded in any tab
+- Switching tabs auto-loads the PDF (no re-upload needed)
+
+**Feature 2**: Edit → Split with change detection
+- If no changes: auto-load PDF into Split (no modal)
+- If changes exist: show simple modal asking to download first
+  - "Yes, Download My PDF" → downloads edited PDF, then continues
+  - "No, Continue Without Saving" → continues without saving
+  - "Go Back" → stay in Edit
+
+**Implementation**:
+- `apps/pdfjoin-web/src/ts/shared-state.ts` - Shared PDF state module
+- `apps/pdfjoin-web/src/ts/app.ts` - Tab switching, `loadPdfIntoSplit()`, modal
+- `apps/pdfjoin-web/src/ts/edit.ts` - `loadPdfIntoEdit()` export, change callbacks
+
+**Tests** (in `crates/benchmark-harness/tests/browser_pdfjoin.rs`):
+- ✅ `test_tab_sharing_split_to_edit_autoloads_pdf`
+- ✅ `test_tab_sharing_edit_to_split_autoloads_without_changes`
+- ✅ `test_tab_sharing_edit_to_split_shows_modal_with_changes`
+
+Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_tab_sharing`
+
+### Phase 3: Text Tool Refactoring 🔲 In Progress
+
+**Problem**: Text tool was merged with Whiteout causing confusion. Delete button bug creates new textbox when clicked.
+
+**Solution**: Separate tools with clear purposes:
+
+| Tool | Icon | Purpose |
+|------|------|---------|
+| Select | ☝️ | Select & edit existing elements |
+| Text Box | T | Always transparent, dashed border, add text on top of content |
+| Whiteout | ⬜ | White rectangle to cover/redact existing content |
+
+**Key Behaviors**:
+- **Text Box**: Always transparent (no mode toggle), resizable, movable
+- **Whiteout**: White background, resizable, can have text inside (like before)
+- **Overlap**: Allow with warning, last-added gets click priority (higher z-index)
+- **Delete**: X button on selection + Delete key (no Trash tool)
+
+**Bug Fixes Needed**:
+- Delete button click triggers mousedown → creates new textbox before delete fires
+- Fix: Check click target in `handleWhiteoutStart`, abort if UI element
+
+**Files to Modify**:
+| File | Changes |
+|------|---------|
+| `apps/pdfjoin-web/www/index.html` | Remove Trash tool, remove mode toggle, restore Whiteout button |
+| `apps/pdfjoin-web/src/ts/edit.ts` | Separate TextBox/Whiteout logic, fix delete bug, add z-ordering |
+| `crates/benchmark-harness/tests/browser_pdfjoin.rs` | Update tests |
+
+**Tests** (in `crates/benchmark-harness/tests/browser_pdfjoin.rs`):
+- 🔲 `test_textbox_create_transparent`
+- 🔲 `test_textbox_resize`
+- 🔲 `test_textbox_delete_x_button`
+- 🔲 `test_textbox_delete_key`
+- 🔲 `test_textbox_overlap_zorder`
+- 🔲 `test_whiteout_covers_content`
+- 🔲 `test_whiteout_with_text`
+
+Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_textbox`
+
+### Phase 4: Action-Based Undo/Redo
 
 Replace JS `operationHistory` with Rust transaction model:
 
@@ -69,28 +143,14 @@ pub fn can_undo(&self) -> bool
 pub fn can_redo(&self) -> bool
 ```
 
-### Phase 3: Tab PDF Sharing
-
-**Feature 1**: Split → Edit auto-loads PDF
-- Store PDF bytes in shared state when loaded in any tab
-- When switching to Edit tab, check for existing PDF and auto-load
-
-**Feature 2**: Edit → Split with change detection
-- Track if any operations have been added in Edit
-- If switching to Split with unsaved changes, show modal:
-  - "Save and Split" → export PDF, load into Split
-  - "Discard Changes" → load original into Split
-  - "Cancel" → stay in Edit
-- **Complexity**: Medium - data flow is straightforward (EditSession.export() returns bytes), mainly UI modal work
-
-### Phase 4: UX Improvements
+### Phase 5: UX Improvements
 
 - Remove "Free, private" messaging
 - Replace with: "All Files Stay On Your Computer"
 - Add: "Certified and Verified by Boba Matcha Solutions LLC"
 - Link to: https://bobamatchasolutions.com/#/blog/announcing-pdfjoin
 
-### Phase 5: Re-enable Disabled Tools
+### Phase 6: Re-enable Disabled Tools
 
 When re-enabling checkbox/highlight tools:
 1. Uncomment code in `edit.ts` (search for `TODO: Re-enable`)

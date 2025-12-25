@@ -1,7 +1,8 @@
 // PDFJoin - Single Page App
 // Uses window.wasmBindings from Trunk-injected WASM loader
 
-import { setupEditView } from './edit';
+import { setupEditView, loadPdfIntoEdit } from './edit';
+import { setSharedPdf, getSharedPdf, hasSharedPdf, editHasChanges, exportEditedPdf } from './shared-state';
 import type { PdfJoinSession, PdfInfo, DocumentInfo } from './types';
 
 // Size thresholds
@@ -37,17 +38,179 @@ export function init(): void {
 function setupTabs(): void {
   const tabs = document.querySelectorAll<HTMLElement>('.tab');
   tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
+    tab.addEventListener('click', async () => {
+      const tabName = tab.dataset.tab;
+      const currentTab = document.querySelector('.tab.active')?.getAttribute('data-tab');
+
+      // Edit → Split/Merge: Check for unsaved changes
+      if (currentTab === 'edit' && tabName !== 'edit') {
+        if (editHasChanges()) {
+          // Has changes - show simple modal
+          const action = await showUnsavedChangesModal();
+          if (action === 'cancel') return; // User cancelled
+          // action === 'download' means user downloaded, action === 'continue' means proceed without saving
+        }
+        // Auto-load PDF into target tab (Split or Merge)
+        if (hasSharedPdf()) {
+          const shared = getSharedPdf();
+          if (shared.bytes && shared.filename && tabName === 'split') {
+            loadPdfIntoSplit(shared.bytes, shared.filename);
+          }
+        }
+      }
+
       // Update active tab
       tabs.forEach((t) => t.classList.remove('active'));
       tab.classList.add('active');
 
       // Show corresponding view
-      const tabName = tab.dataset.tab;
       document.querySelectorAll<HTMLElement>('.view').forEach((v) => v.classList.add('hidden'));
       const view = document.getElementById(`${tabName}-view`);
       if (view) view.classList.remove('hidden');
+
+      // Split/Merge → Edit: Auto-load PDF
+      if (tabName === 'edit' && hasSharedPdf()) {
+        const shared = getSharedPdf();
+        const editEditor = document.getElementById('edit-editor');
+        const editAlreadyLoaded = editEditor && !editEditor.classList.contains('hidden');
+
+        if (!editAlreadyLoaded && shared.bytes && shared.filename) {
+          await loadPdfIntoEdit(shared.bytes, shared.filename);
+        }
+      }
     });
+  });
+}
+
+/**
+ * Load PDF bytes directly into the Split tab (for Tab PDF Sharing)
+ */
+function loadPdfIntoSplit(bytes: Uint8Array, filename: string): void {
+  if (!splitSession) return;
+  const { format_bytes } = window.wasmBindings;
+
+  try {
+    // Clear any existing document first
+    if (splitSession.getDocumentCount() > 0) {
+      splitSession.removeDocument(0);
+    }
+
+    const info: PdfInfo = splitSession.addDocument(filename, bytes);
+
+    // Store original filename for smart output naming
+    splitOriginalFilename = filename.replace(/\.pdf$/i, '');
+
+    // Update UI
+    document.getElementById('split-drop-zone')?.classList.add('hidden');
+    document.getElementById('split-editor')?.classList.remove('hidden');
+
+    const fileNameEl = document.getElementById('split-file-name');
+    const fileDetailsEl = document.getElementById('split-file-details');
+    if (fileNameEl) fileNameEl.textContent = filename;
+    if (fileDetailsEl) fileDetailsEl.textContent = `${info.page_count} pages - ${format_bytes(info.size_bytes)}`;
+
+    // Update example chips with page count
+    updateExampleChips(info.page_count);
+
+    // Reset range input
+    const rangeInput = document.getElementById('page-range') as HTMLInputElement | null;
+    const splitBtn = document.getElementById('split-btn') as HTMLButtonElement | null;
+    if (rangeInput) rangeInput.value = '';
+    if (splitBtn) splitBtn.disabled = true;
+  } catch (e) {
+    showError('split-error', String(e));
+  }
+}
+
+// Simple modal for unsaved changes - designed to be clear for all users
+type ModalAction = 'download' | 'continue' | 'cancel';
+
+async function showUnsavedChangesModal(): Promise<ModalAction> {
+  return new Promise((resolve) => {
+    // Create modal if it doesn't exist
+    let modal = document.getElementById('unsaved-changes-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'unsaved-changes-modal';
+      modal.className = 'unsaved-changes-modal';
+      modal.innerHTML = `
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+          <h2>You Made Edits</h2>
+          <p>Would you like to download your edited PDF before continuing?</p>
+          <div class="modal-actions">
+            <button class="primary-btn" data-action="download">Yes, Download My PDF</button>
+            <button class="secondary-btn" data-action="continue">No, Continue Without Saving</button>
+            <button class="text-btn" data-action="cancel">Go Back</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+
+      // Add modal styles if not already present
+      if (!document.getElementById('modal-styles')) {
+        const style = document.createElement('style');
+        style.id = 'modal-styles';
+        style.textContent = `
+          .unsaved-changes-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+          .unsaved-changes-modal.hidden { display: none; }
+          .modal-backdrop { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); }
+          .modal-content { position: relative; background: white; padding: 2rem; border-radius: 12px; max-width: 420px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+          .modal-content h2 { margin-bottom: 0.75rem; font-size: 1.5rem; }
+          .modal-content p { margin-bottom: 1.5rem; color: #64748b; font-size: 1.1rem; line-height: 1.5; }
+          .modal-actions { display: flex; flex-direction: column; gap: 0.75rem; }
+          .modal-actions button { padding: 1rem 1.5rem; border-radius: 8px; font-size: 1.1rem; cursor: pointer; border: none; }
+          .modal-actions .primary-btn { background: #2563eb; color: white; font-weight: 600; }
+          .modal-actions .primary-btn:hover { background: #1d4ed8; }
+          .modal-actions .secondary-btn { background: #f1f5f9; color: #334155; }
+          .modal-actions .secondary-btn:hover { background: #e2e8f0; }
+          .modal-actions .text-btn { background: transparent; color: #64748b; font-size: 1rem; }
+          .modal-actions .text-btn:hover { color: #334155; }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+
+    modal.classList.remove('hidden');
+
+    const cleanup = (): void => {
+      modal?.classList.add('hidden');
+      // Remove old listeners
+      modal?.querySelectorAll('button').forEach(btn => {
+        btn.replaceWith(btn.cloneNode(true));
+      });
+    };
+
+    // Handle button clicks - use fresh listeners each time
+    modal.querySelector('[data-action="download"]')?.addEventListener('click', () => {
+      // Export and download the edited PDF
+      const editedBytes = exportEditedPdf();
+      if (editedBytes) {
+        const shared = getSharedPdf();
+        const filename = (shared.filename || 'document.pdf').replace(/\.pdf$/i, '-edited.pdf');
+        downloadBlob(editedBytes, filename);
+        // Also update shared state with edited version
+        setSharedPdf(editedBytes, filename, 'edit');
+      }
+      cleanup();
+      resolve('download');
+    }, { once: true });
+
+    modal.querySelector('[data-action="continue"]')?.addEventListener('click', () => {
+      cleanup();
+      resolve('continue');
+    }, { once: true });
+
+    modal.querySelector('[data-action="cancel"]')?.addEventListener('click', () => {
+      cleanup();
+      resolve('cancel');
+    }, { once: true });
+
+    // Close on backdrop click
+    modal.querySelector('.modal-backdrop')?.addEventListener('click', () => {
+      cleanup();
+      resolve('cancel');
+    }, { once: true });
   });
 }
 
@@ -112,6 +275,9 @@ async function handleSplitFile(file: File): Promise<void> {
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     const info: PdfInfo = splitSession.addDocument(file.name, bytes);
+
+    // Store PDF bytes in shared state for Tab PDF Sharing (Phase 2)
+    setSharedPdf(bytes, file.name, 'split');
 
     // Store original filename for smart output naming
     splitOriginalFilename = file.name.replace(/\.pdf$/i, '');

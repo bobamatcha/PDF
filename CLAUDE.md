@@ -1,6 +1,43 @@
 # Claude Development Guidelines
 
+> **UX Principle**: The interface must work FOR users, not make users work. Design for clarity over flexibility. Elderly users should never need to learn workarounds—if they must, the UI is broken.
+
 This file defines development practices for Claude Code when working in this repository.
+
+## Puppeteer MCP Testing
+
+When verifying UI functionality with Puppeteer MCP:
+
+### Test PDF Files
+
+**Use PDFs from `/output/*.pdf`** - These are pre-generated valid PDFs:
+- `florida_purchase_contract.pdf` - Multi-page contract (~17 pages)
+- `florida_listing_agreement.pdf` - Listing agreement
+- `florida_escalation_addendum.pdf` - Single page addendum
+
+**DO NOT**:
+- Copy PDFs into web app bundles
+- Try to create PDFs inline with JavaScript
+- Embed base64 PDFs in test code
+
+**Instead**: Serve PDFs via a simple file server or use the browser test infrastructure in `crates/benchmark-harness/tests/browser_*.rs` which has proper PDF loading helpers.
+
+### Browser Test Infrastructure
+
+For automated UI tests, use the existing browser test framework:
+
+```bash
+# Run browser tests (requires trunk serve running)
+cargo test -p benchmark-harness --test browser_pdfjoin test_name
+
+# Start trunk serve first
+cd apps/pdfjoin-web && trunk serve --port 8082
+```
+
+The browser tests in `crates/benchmark-harness/tests/` have:
+- `test_pdf_base64(num_pages)` - Generates valid test PDFs
+- `florida_contract_base64()` - Returns real PDF as base64
+- Proper async test patterns with chromiumoxide
 
 ## Test-First Development Flow
 
@@ -24,17 +61,19 @@ When fixing a bug or adding a feature to fix something broken, **always follow t
 - Implement the minimal fix or feature
 - Don't over-engineer—only change what's necessary
 
-### 4. Confirm Tests Pass
+### 4. Confirm Tests Pass (BEFORE Puppeteer!)
 
 - Run tests again: `cargo test --all-features --workspace`
 - All new tests should now pass
 - Existing tests should still pass (no regressions)
+- **DO NOT skip to Puppeteer MCP verification until tests pass**
 
 ### 5. Verify with Puppeteer MCP
 
 - Use Puppeteer MCP to verify the fix in the actual UI
 - Navigate to the affected pages and test the functionality
 - Take screenshots if helpful
+- See "Puppeteer MCP Testing" section above for PDF handling
 
 ### 6. If Puppeteer Shows Bugs Still Exist
 
@@ -139,3 +178,26 @@ apps/             # Deployable applications
 2. **Keep tests** - Maintain the 150+ existing tests during migration
 3. **Local-first** - Both web apps run entirely in browser with IndexedDB
 4. **WASM target** - Web apps compile to wasm32-unknown-unknown
+
+## Build Configuration Rules
+
+**CRITICAL: Fix build commands, don't manually copy files!**
+
+When dealing with build output location issues:
+1. **NEVER** manually copy/move build artifacts between directories
+2. **NEVER** create hacky symlinks to work around build issues
+3. **ALWAYS** fix the build configuration (package.json, Trunk.toml, etc.) at the source
+4. **ALWAYS** ensure build outputs go directly where they need to be
+
+Bad example (DON'T DO THIS):
+```bash
+cp dist/js/bundle.js www/js/bundle.js  # WRONG - hacky workaround
+```
+
+Good example (DO THIS):
+```json
+// Fix package.json to output to correct location
+"build": "esbuild ... --outfile=www/js/bundle.js"
+```
+
+**Today's date context**: When searching for documentation or solutions online, use the current year (2025) to find up-to-date information. Avoid outdated solutions from 2023 or earlier.
