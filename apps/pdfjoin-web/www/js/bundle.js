@@ -240,6 +240,7 @@ var selectedWhiteout = null;
 var selectedTextBox = null;
 var textBoxes = /* @__PURE__ */ new Map();
 var nextTextBoxId = 0;
+var currentHighlightColor = "#FFFF00";
 function setupEditView() {
   const dropZone = document.getElementById("edit-drop-zone");
   const fileInput = document.getElementById("edit-file-input");
@@ -302,6 +303,39 @@ function setupEditView() {
           viewer.classList.remove("whiteout-tool-active");
         }
       }
+      const highlightWrapper = document.querySelector(".highlight-color-wrapper");
+      if (highlightWrapper) {
+        if (currentTool === "highlight") {
+          highlightWrapper.classList.add("tool-active");
+        } else {
+          highlightWrapper.classList.remove("tool-active");
+        }
+      }
+    });
+  });
+  const highlightColorBtn = document.getElementById("highlight-color-btn");
+  const highlightColorDropdown = document.getElementById("highlight-color-dropdown");
+  highlightColorBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    highlightColorDropdown?.classList.toggle("show");
+  });
+  document.addEventListener("click", (e) => {
+    if (!highlightColorBtn?.contains(e.target) && !highlightColorDropdown?.contains(e.target)) {
+      highlightColorDropdown?.classList.remove("show");
+    }
+  });
+  document.querySelectorAll(".highlight-color-swatch").forEach((swatch) => {
+    swatch.addEventListener("click", () => {
+      const color = swatch.dataset.color;
+      if (color) {
+        currentHighlightColor = color;
+        if (highlightColorBtn) {
+          highlightColorBtn.style.background = color;
+        }
+        document.querySelectorAll(".highlight-color-swatch").forEach((s) => s.classList.remove("active"));
+        swatch.classList.add("active");
+        highlightColorDropdown?.classList.remove("show");
+      }
     });
   });
   document.addEventListener("keydown", (e) => {
@@ -335,8 +369,11 @@ function setupEditView() {
     }
   });
   document.addEventListener("mouseup", () => {
-    if (currentTool !== "highlight") return;
-    handleHighlightTextSelection();
+    if (currentTool === "highlight") {
+      handleHighlightTextSelection();
+    } else if (currentTool === "underline") {
+      handleUnderlineTextSelection();
+    }
   });
   document.getElementById("edit-prev-page")?.addEventListener("click", () => navigatePage(-1));
   document.getElementById("edit-next-page")?.addEventListener("click", () => navigatePage(1));
@@ -482,10 +519,7 @@ function handleOverlayClick(e, pageNum) {
   const domY = e.clientY - rect.top;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfY = pageInfo.page.view[3] - domY * scaleY;
+  const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(domX, domY);
   switch (currentTool) {
     case "text":
       addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
@@ -629,10 +663,7 @@ function editExistingTextOverlay(textOverlay, pageNum) {
   setActiveTextInput(input);
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfY = pageInfo.page.view[3] - domY * scaleY;
+  const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(domX, domY);
   function saveEditedText() {
     if (!editSession) return;
     const text = (input.textContent || "").trim();
@@ -692,22 +723,73 @@ function editExistingTextOverlay(textOverlay, pageNum) {
 }
 function addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
   if (!editSession) return;
+  const defaultSize = 24;
   editSession.beginAction("checkbox");
-  const opId = editSession.addCheckbox(pageNum, pdfX - 10, pdfY - 10, 20, 20, true);
+  const opId = editSession.addCheckbox(pageNum, pdfX - defaultSize / 2, pdfY - defaultSize / 2, defaultSize, defaultSize, false);
   editSession.commitAction();
   const checkbox = document.createElement("div");
-  checkbox.className = "edit-checkbox-overlay checked";
-  checkbox.textContent = "\u2713";
-  checkbox.style.left = domX - 10 + "px";
-  checkbox.style.top = domY - 10 + "px";
+  checkbox.className = "edit-checkbox-overlay";
+  checkbox.textContent = "";
+  checkbox.style.left = domX - defaultSize / 2 + "px";
+  checkbox.style.top = domY - defaultSize / 2 + "px";
+  checkbox.style.width = defaultSize + "px";
+  checkbox.style.height = defaultSize + "px";
   checkbox.dataset.page = String(pageNum);
   setOpId(checkbox, opId);
+  const resizeHandle2 = document.createElement("div");
+  resizeHandle2.className = "resize-handle resize-handle-se";
+  checkbox.appendChild(resizeHandle2);
   checkbox.addEventListener("click", (e) => {
+    if (e.target.classList.contains("resize-handle")) return;
     e.stopPropagation();
     checkbox.classList.toggle("checked");
     const isChecked = checkbox.classList.contains("checked");
     checkbox.textContent = isChecked ? "\u2713" : "";
+    if (!checkbox.querySelector(".resize-handle")) {
+      checkbox.appendChild(resizeHandle2);
+    }
     editSession?.setCheckbox(opId, isChecked);
+  });
+  let isResizing = false;
+  let startX = 0;
+  let startY = 0;
+  let startSize = defaultSize;
+  resizeHandle2.addEventListener("mousedown", (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizing = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startSize = checkbox.offsetWidth;
+    const onMouseMove = (moveEvent) => {
+      if (!isResizing) return;
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      const delta = Math.max(deltaX, deltaY);
+      const newSize = Math.max(16, Math.min(100, startSize + delta));
+      checkbox.style.width = newSize + "px";
+      checkbox.style.height = newSize + "px";
+    };
+    const onMouseUp = () => {
+      isResizing = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      const newSize = checkbox.offsetWidth;
+      const newLeft = parseFloat(checkbox.style.left);
+      const newTop = parseFloat(checkbox.style.top);
+      const pageInfo = PdfBridge.getPageInfo(pageNum);
+      if (pageInfo) {
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(newLeft + newSize, newTop + newSize);
+        const pdfX3 = Math.min(pdfX1, pdfX2);
+        const pdfY3 = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
+        editSession?.updateRect(opId, pdfX3, pdfY3, pdfWidth, pdfHeight);
+      }
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
   });
   overlay.appendChild(checkbox);
   updateButtons();
@@ -733,37 +815,39 @@ function handleHighlightTextSelection() {
   }
   const pageDiv = textLayer.closest(".edit-page");
   const overlay = pageDiv?.querySelector(".overlay-container");
-  if (!pageDiv || !overlay) {
+  const canvas = pageDiv?.querySelector("canvas");
+  if (!pageDiv || !overlay || !canvas) {
     selection.removeAllRanges();
     return;
   }
-  const pageRect = pageDiv.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) {
     selection.removeAllRanges();
     return;
   }
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const viewport = pageInfo.viewport;
   editSession.beginAction("highlight");
   for (let i = 0; i < rects.length; i++) {
     const rect = rects[i];
-    const domX = rect.left - pageRect.left;
-    const domY = rect.top - pageRect.top;
+    if (rect.width < 2 || rect.height < 2) continue;
+    const domX = rect.left - canvasRect.left;
+    const domY = rect.top - canvasRect.top;
     const domWidth = rect.width;
     const domHeight = rect.height;
-    if (domWidth < 2 || domHeight < 2) continue;
-    const pdfX = domX * scaleX;
-    const pdfWidth = domWidth * scaleX;
-    const pdfHeight = domHeight * scaleY;
-    const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
+    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+    const pdfX = Math.min(pdfX1, pdfX2);
+    const pdfY = Math.min(pdfY1, pdfY2);
+    const pdfWidth = Math.abs(pdfX2 - pdfX1);
+    const pdfHeight = Math.abs(pdfY2 - pdfY1);
     const opId = editSession.addHighlight(
       pageNum,
       pdfX,
       pdfY,
       pdfWidth,
       pdfHeight,
-      "#FFFF00",
+      currentHighlightColor,
       0.3
     );
     const highlight = document.createElement("div");
@@ -772,9 +856,99 @@ function handleHighlightTextSelection() {
     highlight.style.top = domY + "px";
     highlight.style.width = domWidth + "px";
     highlight.style.height = domHeight + "px";
+    highlight.style.background = currentHighlightColor;
+    highlight.style.opacity = "0.3";
     highlight.dataset.page = String(pageNum);
     setOpId(highlight, opId);
     overlay.appendChild(highlight);
+  }
+  editSession.commitAction();
+  selection.removeAllRanges();
+  updateButtons();
+}
+function handleUnderlineTextSelection() {
+  if (!editSession) return;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const textLayer = (container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement)?.closest(".text-layer");
+  if (!textLayer) {
+    selection.removeAllRanges();
+    return;
+  }
+  const pageNum = parseInt(textLayer.getAttribute("data-page") || "1");
+  const rects = range.getClientRects();
+  if (rects.length === 0) {
+    selection.removeAllRanges();
+    return;
+  }
+  const pageDiv = textLayer.closest(".edit-page");
+  const overlay = pageDiv?.querySelector(".overlay-container");
+  const canvas = pageDiv?.querySelector("canvas");
+  if (!pageDiv || !overlay || !canvas) {
+    selection.removeAllRanges();
+    return;
+  }
+  const canvasRect = canvas.getBoundingClientRect();
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) {
+    selection.removeAllRanges();
+    return;
+  }
+  const viewport = pageInfo.viewport;
+  let underlineColor = "#000000";
+  const startNode = range.startContainer;
+  const textElement = startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode;
+  if (textElement) {
+    const computedStyle = window.getComputedStyle(textElement);
+    const rgbColor = computedStyle.color;
+    const match = rgbColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (match) {
+      const r = parseInt(match[1]).toString(16).padStart(2, "0");
+      const g = parseInt(match[2]).toString(16).padStart(2, "0");
+      const b = parseInt(match[3]).toString(16).padStart(2, "0");
+      underlineColor = `#${r}${g}${b}`;
+    }
+  }
+  editSession.beginAction("underline");
+  const underlineHeight = 2;
+  const underlineGap = 2;
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+    if (rect.width < 2) continue;
+    const domX = rect.left - canvasRect.left;
+    const domY = rect.bottom - canvasRect.top + underlineGap;
+    const domWidth = rect.width;
+    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
+    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + underlineHeight);
+    const pdfX = Math.min(pdfX1, pdfX2);
+    const pdfY = Math.min(pdfY1, pdfY2);
+    const pdfWidth = Math.abs(pdfX2 - pdfX1);
+    const pdfHeight = Math.abs(pdfY2 - pdfY1);
+    const opId = editSession.addUnderline(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      underlineColor,
+      // Match text color
+      1
+      // Full opacity
+    );
+    const underline = document.createElement("div");
+    underline.className = "edit-underline-overlay";
+    underline.style.left = domX + "px";
+    underline.style.top = domY + "px";
+    underline.style.width = domWidth + "px";
+    underline.style.height = underlineHeight + "px";
+    underline.style.background = underlineColor;
+    underline.dataset.page = String(pageNum);
+    setOpId(underline, opId);
+    overlay.appendChild(underline);
   }
   editSession.commitAction();
   selection.removeAllRanges();
@@ -865,12 +1039,12 @@ function addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight) {
   if (!editSession) return;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
   editSession.beginAction("whiteout");
   const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
   editSession.commitAction();
@@ -1052,12 +1226,12 @@ function commitTextBox(box) {
   const domY = parseFloat(box.style.top);
   const domWidth = box.offsetWidth;
   const domHeight = box.offsetHeight;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
   const existingOpId = getOpId(box);
   if (existingOpId !== null) {
     editSession.removeOperation(existingOpId);
@@ -1256,16 +1430,16 @@ function endResize() {
       editSession.removeOperation(opId);
       const pageInfo = PdfBridge.getPageInfo(pageNum);
       if (pageInfo) {
-        const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-        const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
         const domX = parseFloat(target.style.left);
         const domY = parseFloat(target.style.top);
         const domWidth = parseFloat(target.style.width);
         const domHeight = parseFloat(target.style.height);
-        const pdfX = domX * scaleX;
-        const pdfWidth = domWidth * scaleX;
-        const pdfHeight = domHeight * scaleY;
-        const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+        const pdfX = Math.min(pdfX1, pdfX2);
+        const pdfY = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
         editSession.beginAction("resize");
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
         editSession.commitAction();
@@ -1311,16 +1485,16 @@ function endMove() {
       editSession.removeOperation(opId);
       const pageInfo = PdfBridge.getPageInfo(pageNum);
       if (pageInfo) {
-        const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-        const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
         const domX = parseFloat(target.style.left);
         const domY = parseFloat(target.style.top);
         const domWidth = parseFloat(target.style.width);
         const domHeight = parseFloat(target.style.height);
-        const pdfX = domX * scaleX;
-        const pdfWidth = domWidth * scaleX;
-        const pdfHeight = domHeight * scaleY;
-        const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+        const pdfX = Math.min(pdfX1, pdfX2);
+        const pdfY = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
         editSession.beginAction("move");
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
         editSession.commitAction();
@@ -1421,10 +1595,7 @@ function endTextDrag() {
   }
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (pageInfo && editSession) {
-    const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-    const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-    const pdfX = newLeft * scaleX;
-    const pdfY = pageInfo.page.view[3] - newTop * scaleY;
+    const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
     editSession.beginAction("move");
     const newOpId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, fontSize, "#000000", fontFamily, isItalic, isBold);
     editSession.commitAction();
@@ -1578,12 +1749,12 @@ function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeig
     input.remove();
     return;
   }
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
   editSession.beginAction("whiteout");
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
@@ -1985,13 +2156,17 @@ function recreateWhiteRect(opId, data) {
   const pageNum = data.page;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const whiteRect = document.createElement("div");
@@ -2019,13 +2194,17 @@ function recreateTextBox(opId, data) {
   const pageNum = data.page;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const box = document.createElement("div");
@@ -2091,17 +2270,21 @@ function recreateCheckbox(opId, data) {
   const pageNum = data.page;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const checkbox = document.createElement("div");
-  checkbox.className = "edit-checkbox";
+  checkbox.className = "edit-checkbox-overlay";
   checkbox.style.left = domX + "px";
   checkbox.style.top = domY + "px";
   checkbox.style.width = domWidth + "px";
@@ -2126,13 +2309,17 @@ function recreateHighlight(opId, data) {
   const pageNum = data.page;
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const highlight = document.createElement("div");

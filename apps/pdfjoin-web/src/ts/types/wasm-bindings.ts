@@ -122,6 +122,16 @@ export interface EditSession {
     opacity: number
   ): OpId;
 
+  addUnderline(
+    page: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    color: string,
+    opacity: number
+  ): OpId;
+
   addCheckbox(
     page: number,
     x: number,
@@ -176,6 +186,7 @@ export interface EditSession {
   getOperationJson(id: OpId): string | null;
   recordRemovedOp(id: OpId): boolean;
   setCheckbox(id: OpId, checked: boolean): boolean;
+  updateRect(id: OpId, x: number, y: number, width: number, height: number): boolean;
 }
 
 /**
@@ -186,6 +197,7 @@ export type ActionKind =
   | 'whiteout'
   | 'checkbox'
   | 'highlight'
+  | 'underline'
   | 'replacetext'
   | 'move'
   | 'resize'

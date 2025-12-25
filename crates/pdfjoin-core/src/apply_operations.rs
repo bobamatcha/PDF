@@ -163,6 +163,28 @@ fn flatten_operation_to_content(
             .unwrap();
             writeln!(content, "Q").unwrap();
         }
+        EditOperation::AddUnderline { rect, color, .. } => {
+            let (r, g, b) = parse_hex_color(color);
+
+            writeln!(content, "q").unwrap();
+            // Set stroke color
+            writeln!(content, "{} {} {} RG", r, g, b).unwrap();
+            // Set line width (1-2 points for underline)
+            writeln!(content, "1 w").unwrap();
+            // Draw a line at the bottom of the rect
+            // Move to start, line to end, stroke
+            let y = rect.y; // Bottom of rect (underline goes below text)
+            writeln!(
+                content,
+                "{} {} m {} {} l S",
+                rect.x,
+                y,
+                rect.x + rect.width,
+                y
+            )
+            .unwrap();
+            writeln!(content, "Q").unwrap();
+        }
         EditOperation::AddCheckbox { rect, checked, .. } => {
             // Draw checkbox as a rectangle with optional checkmark
             writeln!(content, "q").unwrap();
@@ -387,6 +409,9 @@ fn apply_single_operation(
             opacity,
             ..
         } => add_highlight_annotation(doc, page_id, rect, color, *opacity),
+        EditOperation::AddUnderline { rect, color, .. } => {
+            add_underline_annotation(doc, page_id, rect, color)
+        }
         EditOperation::AddCheckbox { rect, checked, .. } => {
             add_checkbox_annotation(doc, page_id, rect, *checked)
         }
@@ -587,6 +612,52 @@ fn add_highlight_annotation(
             Object::Real(1.0),
             Object::Real(0.0),
         ]),
+    );
+
+    let annot_id = doc.add_object(Object::Dictionary(annot));
+    add_annotation_to_page(doc, page_id, annot_id)
+}
+
+/// Add an Underline annotation to the PDF
+/// Uses the standard PDF Underline annotation type (distinct from Highlight)
+fn add_underline_annotation(
+    doc: &mut Document,
+    page_id: ObjectId,
+    rect: &PdfRect,
+    color: &str,
+) -> Result<(), PdfJoinError> {
+    let (r, g, b) = parse_hex_color(color);
+
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Underline".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(rect.x as f32),
+            Object::Real(rect.y as f32),
+            Object::Real((rect.x + rect.width) as f32),
+            Object::Real((rect.y + rect.height) as f32),
+        ]),
+    );
+    // QuadPoints for underline (required for text markup annotations)
+    annot.set(
+        "QuadPoints",
+        Object::Array(vec![
+            Object::Real(rect.x as f32),
+            Object::Real((rect.y + rect.height) as f32),
+            Object::Real((rect.x + rect.width) as f32),
+            Object::Real((rect.y + rect.height) as f32),
+            Object::Real(rect.x as f32),
+            Object::Real(rect.y as f32),
+            Object::Real((rect.x + rect.width) as f32),
+            Object::Real(rect.y as f32),
+        ]),
+    );
+    // Use the specified color (unlike highlight which hardcodes yellow)
+    annot.set(
+        "C",
+        Object::Array(vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
     );
 
     let annot_id = doc.add_object(Object::Dictionary(annot));
@@ -1751,6 +1822,134 @@ mod tests {
         assert!(
             result_str.contains("1 1 1 rg"),
             "Flattened whiteout should have white fill color (1 1 1 rg)"
+        );
+    }
+
+    // ============ Underline Annotation Tests (Bug 5 fix) ============
+
+    #[test]
+    fn test_add_underline_produces_underline_annotation_not_highlight() {
+        // Bug 5: Underlines were being saved as Highlight annotations instead of Underline
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 2.0,
+            },
+            color: "#000000".to_string(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let doc = Document::load_mem(&result).unwrap();
+
+        // Get the page and its annotations
+        let pages: Vec<_> = doc.get_pages().into_iter().collect();
+        let (_page_num, page_id) = pages[0];
+
+        let page = doc.get_object(page_id).unwrap();
+        if let Object::Dictionary(page_dict) = page {
+            if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                assert_eq!(annots.len(), 1, "Should have exactly 1 annotation");
+
+                // Find the annotation and check its subtype
+                if let Object::Reference(annot_id) = &annots[0] {
+                    if let Ok(Object::Dictionary(annot)) = doc.get_object(*annot_id) {
+                        if let Ok(Object::Name(subtype)) = annot.get(b"Subtype") {
+                            let subtype_str = String::from_utf8_lossy(subtype);
+                            assert_eq!(
+                                subtype_str, "Underline",
+                                "Underline operations must create Underline annotations, not {} annotations",
+                                subtype_str
+                            );
+                        } else {
+                            panic!("Annotation missing Subtype");
+                        }
+                    }
+                }
+            } else {
+                panic!("Page should have Annots array");
+            }
+        }
+    }
+
+    #[test]
+    fn test_underline_annotation_uses_correct_color() {
+        // Verify the underline uses the specified color, not hardcoded yellow like highlight
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 2.0,
+            },
+            color: "#FF0000".to_string(), // Red underline
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let doc = Document::load_mem(&result).unwrap();
+
+        let pages: Vec<_> = doc.get_pages().into_iter().collect();
+        let (_page_num, page_id) = pages[0];
+
+        let page = doc.get_object(page_id).unwrap();
+        if let Object::Dictionary(page_dict) = page {
+            if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                if let Object::Reference(annot_id) = &annots[0] {
+                    if let Ok(Object::Dictionary(annot)) = doc.get_object(*annot_id) {
+                        // Check color (C key)
+                        if let Ok(Object::Array(color)) = annot.get(b"C") {
+                            let r = match &color[0] {
+                                Object::Real(v) => *v,
+                                Object::Integer(v) => *v as f32,
+                                _ => 0.0,
+                            };
+                            // Red = 1.0, not yellow (1.0, 1.0, 0.0)
+                            assert!(
+                                r > 0.9,
+                                "Underline color should be red (specified), not yellow (highlight default)"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_flattened_underline_draws_thin_line_not_filled_rect() {
+        // In flattened mode, underline should draw a thin line, not a filled rectangle
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 2.0,
+            },
+            color: "#000000".to_string(),
+        });
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        // Underline should use stroke (S) not fill (f)
+        // It should draw a line from x to x+width at the baseline
+        assert!(
+            result_str.contains(" l S") || result_str.contains(" l\nS"),
+            "Flattened underline should draw a stroked line, not a filled rectangle. Content: {}",
+            &result_str[..std::cmp::min(1000, result_str.len())]
         );
     }
 

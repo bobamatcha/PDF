@@ -253,6 +253,65 @@
             margin: 0 0.5rem;
         }
 
+        /* Highlight Color Picker */
+        .highlight-color-wrapper {
+            position: relative;
+            display: inline-flex;
+        }
+        .highlight-color-btn {
+            display: none; /* Hidden by default - only show when highlight tool is active */
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid #999;
+            margin-left: 4px;
+            margin-top: 4px;
+        }
+        /* Show color picker only when highlight tool is active */
+        .highlight-color-wrapper.tool-active .highlight-color-btn {
+            display: flex;
+        }
+        .highlight-color-btn:hover {
+            border-color: var(--primary);
+        }
+        .highlight-color-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            display: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            width: 120px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+        }
+        .highlight-color-dropdown.show {
+            display: flex;
+        }
+        .highlight-color-swatch {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: transform 0.1s;
+        }
+        .highlight-color-swatch:hover {
+            transform: scale(1.1);
+            border-color: #333;
+        }
+        .highlight-color-swatch.active {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3);
+        }
+
         /* Text Box Styles */
         .text-box {
             position: absolute;
@@ -527,6 +586,7 @@
             border: 1px solid #ccc;
             padding: 4px 8px;
             cursor: move;
+            pointer-events: auto; /* Ensure clicks work even when parent has pointer-events: none */
             min-width: 50px;
             min-height: 20px;
             font-size: 14px;
@@ -537,8 +597,9 @@
         }
         .edit-highlight-overlay {
             position: absolute;
-            background: rgba(255, 255, 0, 0.3);
+            /* background set inline via JavaScript for color picker support */
             cursor: move;
+            pointer-events: auto; /* Ensure clicks work even when parent has pointer-events: none */
             border: 1px dashed transparent;
             z-index: 10; /* Above text-layer */
         }
@@ -547,21 +608,51 @@
         }
         .edit-checkbox-overlay {
             position: absolute;
-            width: 20px;
-            height: 20px;
-            border: 2px solid #333;
+            box-sizing: border-box;
+            border: 3px solid #000; /* Bold black border */
             background: white;
             cursor: pointer;
+            pointer-events: auto; /* Ensure clicks work even when parent has pointer-events: none */
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
+            font-size: 16px;
             font-weight: bold;
+            color: #000;
             z-index: 10; /* Above text-layer */
         }
         .edit-checkbox-overlay.checked {
-            background: #4ade80;
-            color: white;
+            background: white; /* Stay white when checked */
+            color: #000; /* Black checkmark */
+        }
+        .edit-checkbox-overlay .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: var(--primary);
+            border: 1px solid white;
+            border-radius: 2px;
+            z-index: 11;
+        }
+        .edit-checkbox-overlay .resize-handle-se {
+            right: -5px;
+            bottom: -5px;
+            cursor: se-resize;
+        }
+        .edit-checkbox-overlay:hover .resize-handle {
+            opacity: 1;
+        }
+        /* Underline overlay */
+        .edit-underline-overlay {
+            position: absolute;
+            height: 2px;
+            /* background set inline via JavaScript to match text color */
+            cursor: move;
+            pointer-events: auto; /* Ensure clicks work even when parent has pointer-events: none */
+            z-index: 10;
+        }
+        .edit-underline-overlay:hover {
+            background: var(--primary);
         }
 
         /* Text Layer for hover/edit */
@@ -852,7 +943,7 @@
                 <div class="edit-toolbar">
                     <div class="toolbar-section">
                         <button id="tool-select" class="tool-btn active" title="Select &amp; Edit Text">
-                            <span class="tool-icon">&#9757;</span>
+                            <span class="tool-icon">&#8598;</span>
                             <span class="tool-label">Select</span>
                         </button>
                         <button id="edit-tool-textbox" class="tool-btn" title="Add Text Box">
@@ -863,9 +954,23 @@
                             <span class="tool-icon">&#9634;</span>
                             <span class="tool-label">Whiteout</span>
                         </button>
-                        <button id="edit-tool-highlight" class="tool-btn" title="Highlight (select text)">
-                            <span class="tool-icon">&#128396;</span>
-                            <span class="tool-label">Highlight</span>
+                        <div class="highlight-color-wrapper">
+                            <button id="edit-tool-highlight" class="tool-btn" title="Highlight (select text)">
+                                <span class="tool-icon">&#128397;</span>
+                                <span class="tool-label">Highlight</span>
+                            </button>
+                            <button id="highlight-color-btn" class="highlight-color-btn" style="background: #FFFF00;" title="Change highlight color"></button>
+                            <div id="highlight-color-dropdown" class="highlight-color-dropdown">
+                                <div class="highlight-color-swatch active" data-color="#FFFF00" style="background: #FFFF00;" title="Yellow"></div>
+                                <div class="highlight-color-swatch" data-color="#FFD580" style="background: #FFD580;" title="Orange"></div>
+                                <div class="highlight-color-swatch" data-color="#90EE90" style="background: #90EE90;" title="Green"></div>
+                                <div class="highlight-color-swatch" data-color="#87CEEB" style="background: #87CEEB;" title="Blue"></div>
+                                <div class="highlight-color-swatch" data-color="#FFB6C1" style="background: #FFB6C1;" title="Pink"></div>
+                            </div>
+                        </div>
+                        <button id="edit-tool-underline" class="tool-btn" title="Underline (select text)">
+                            <span class="tool-icon" style="text-decoration: underline;">U</span>
+                            <span class="tool-label">Underline</span>
                         </button>
                         <button id="edit-tool-checkbox" class="tool-btn" title="Checkbox">
                             <span class="tool-icon">&#9745;</span>

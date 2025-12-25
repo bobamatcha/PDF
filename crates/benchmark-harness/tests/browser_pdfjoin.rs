@@ -7637,6 +7637,357 @@ async fn test_pdfjoin_highlight_tool_creates_annotation_on_text_selection() {
     );
 }
 
+/// BUG TEST: Should be able to highlight text even after editing other text on the page
+/// Bug: When text tool is used to edit text, trying to use highlight tool on ANY text
+/// (including non-edited text) opens the text editor instead of allowing text selection.
+#[tokio::test]
+async fn test_pdfjoin_highlight_works_after_text_edit() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Use Florida contract PDF which has lots of text
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to render
+                await new Promise(r => setTimeout(r, 3000));
+
+                // STEP 1: Select tool is active by default - use it to edit text
+                const selectToolBtn = document.getElementById('tool-select');
+                if (selectToolBtn) {{
+                    selectToolBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                // Click on a text item to edit it
+                const textItems = document.querySelectorAll('.text-item');
+                if (textItems.length < 2) {{
+                    // This is expected to have multiple items since we have a multi-page PDF
+                    return {{ success: false, error: 'Need at least 2 text items, found: ' + textItems.length }};
+                }}
+
+                // Edit the first text item
+                const firstTextItem = textItems[0];
+                const firstRect = firstTextItem.getBoundingClientRect();
+                firstTextItem.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: firstRect.left + 5,
+                    clientY: firstRect.top + 5,
+                    view: window
+                }}));
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check if editor opened
+                const editor = document.querySelector('.text-editor-overlay');
+                if (editor) {{
+                    // Type something and save
+                    const input = editor.querySelector('.text-editor-input');
+                    if (input) {{
+                        input.value = 'EDITED';
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    }}
+                    const saveBtn = editor.querySelector('.text-editor-save');
+                    if (saveBtn) saveBtn.click();
+                    await new Promise(r => setTimeout(r, 300));
+                }}
+
+                // STEP 2: Switch to highlight tool
+                const highlightBtn = document.getElementById('tool-highlight') || document.getElementById('edit-tool-highlight');
+                if (!highlightBtn) {{
+                    return {{ success: false, error: 'Highlight tool button not found' }};
+                }}
+                highlightBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Count highlights before
+                const beforeCount = document.querySelectorAll('.edit-highlight-overlay').length;
+
+                // STEP 3: Try to highlight near the EDITED text (the replacement overlay area)
+                // First check if a replacement overlay was created
+                const replacementOverlay = document.querySelector('.text-replace-overlay, .edit-text-overlay');
+                let targetForHighlight = replacementOverlay || textItems[0];
+                const targetRect = targetForHighlight.getBoundingClientRect();
+
+                // Also try to select text in the text layer near the edited area
+                // Use the second text item if available (to test general highlighting still works)
+                const secondTextItem = textItems.length > 1 ? textItems[1] : textItems[0];
+                const secondRect = secondTextItem.getBoundingClientRect();
+
+                // Create a text selection on the second item
+                const range = document.createRange();
+                range.selectNodeContents(secondTextItem);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                // Dispatch mouseup to trigger highlight creation
+                document.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: secondRect.right,
+                    clientY: secondRect.top + secondRect.height / 2,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Count highlights after
+                const afterCount = document.querySelectorAll('.edit-highlight-overlay').length;
+
+                // Check if text editor opened (bug condition)
+                const editorStillOpen = document.querySelector('.text-editor-overlay') !== null;
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    highlightAdded: afterCount > beforeCount,
+                    editorOpened: editorStillOpen,
+                    textItemCount: textItems.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test highlight after edit")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Highlight after text edit test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        !result["editorOpened"].as_bool().unwrap_or(true),
+        "Text editor should NOT open when highlight tool is selected"
+    );
+
+    assert!(
+        result["highlightAdded"].as_bool().unwrap_or(false),
+        "Should be able to highlight text after editing. Before: {}, After: {}",
+        result["beforeCount"].as_i64().unwrap_or(0),
+        result["afterCount"].as_i64().unwrap_or(0)
+    );
+}
+
+/// BUG TEST: Highlight overlay should precisely cover the selected text bounds
+/// Bug: Highlight appears shifted up from the text it should cover
+#[tokio::test]
+async fn test_pdfjoin_highlight_position_matches_text_bounds() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to render
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Select highlight tool
+                const highlightBtn = document.getElementById('tool-highlight') || document.getElementById('edit-tool-highlight');
+                if (!highlightBtn) {{
+                    return {{ success: false, error: 'Highlight tool button not found' }};
+                }}
+                highlightBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Find a text item to highlight
+                const textItems = document.querySelectorAll('.text-item');
+                if (textItems.length === 0) {{
+                    return {{ success: false, error: 'No text items found' }};
+                }}
+
+                const textItem = textItems[0];
+                const textRect = textItem.getBoundingClientRect();
+
+                // Create a text selection
+                const range = document.createRange();
+                range.selectNodeContents(textItem);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                // Get the selection rect (this is what the code uses)
+                const selectionRects = range.getClientRects();
+                const selectionRect = selectionRects[0];
+
+                // Dispatch mouseup to trigger highlight creation
+                document.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: textRect.right,
+                    clientY: textRect.top + textRect.height / 2,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find the created highlight
+                const highlights = document.querySelectorAll('.edit-highlight-overlay');
+                if (highlights.length === 0) {{
+                    return {{ success: false, error: 'No highlight created' }};
+                }}
+
+                const highlight = highlights[highlights.length - 1];
+                const highlightRect = highlight.getBoundingClientRect();
+
+                // Calculate overlap/alignment
+                // The highlight should cover the text - check vertical alignment
+                const textTop = textRect.top;
+                const textBottom = textRect.bottom;
+                const highlightTop = highlightRect.top;
+                const highlightBottom = highlightRect.bottom;
+
+                // Acceptable tolerance in pixels (should be very small)
+                const tolerance = 5;
+
+                // Check if highlight covers the text vertically
+                const topOffset = textTop - highlightTop;  // Positive = highlight above text
+                const bottomOffset = highlightBottom - textBottom;  // Positive = highlight below text
+
+                // The highlight should span from text top to text bottom with minimal extra
+                const highlightCoversText = highlightTop <= textTop + tolerance && highlightBottom >= textBottom - tolerance;
+
+                return {{
+                    success: true,
+                    textRect: {{ top: textTop, bottom: textBottom, height: textRect.height }},
+                    highlightRect: {{ top: highlightTop, bottom: highlightBottom, height: highlightRect.height }},
+                    selectionRect: selectionRect ? {{ top: selectionRect.top, bottom: selectionRect.bottom, height: selectionRect.height }} : null,
+                    topOffset: topOffset,
+                    bottomOffset: bottomOffset,
+                    highlightCoversText: highlightCoversText,
+                    // Extra diagnostics
+                    highlightStyle: {{
+                        top: highlight.style.top,
+                        height: highlight.style.height
+                    }}
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test highlight position")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Highlight position test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let top_offset = result["topOffset"].as_f64().unwrap_or(999.0);
+    let bottom_offset = result["bottomOffset"].as_f64().unwrap_or(999.0);
+
+    // Highlight should not be significantly shifted up (positive topOffset means highlight is above text)
+    assert!(
+        top_offset.abs() < 5.0,
+        "Highlight should align with text top. Top offset: {}px (highlight rect: {:?}, text rect: {:?})",
+        top_offset,
+        result["highlightRect"],
+        result["textRect"]
+    );
+
+    assert!(
+        result["highlightCoversText"].as_bool().unwrap_or(false),
+        "Highlight should cover the text bounds. Text: {:?}, Highlight: {:?}, Offsets: top={}, bottom={}",
+        result["textRect"],
+        result["highlightRect"],
+        top_offset,
+        bottom_offset
+    );
+}
+
 /// BUG TEST: Whiteout box should NOT expand when typing short text that fits
 /// The bug: Every time something is typed, the whitebox expands even if the text
 /// doesn't require additional space.
@@ -10922,5 +11273,833 @@ async fn test_undo_redo_button_clicks() {
         "Redo button should restore the whiteout. canRedo: {:?}, hasEditSession: {:?}",
         result["canRedoBefore"],
         result["hasEditSession"]
+    );
+}
+
+/// TEST: Checkbox should be created unchecked by default with bold square border
+#[tokio::test]
+async fn test_pdfjoin_checkbox_default_unchecked_with_bold_border() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Click checkbox tool
+                const checkboxBtn = document.getElementById('edit-tool-checkbox');
+                if (!checkboxBtn) {{
+                    return {{ success: false, error: 'Checkbox tool button not found' }};
+                }}
+                checkboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Click on PDF to create checkbox
+                const overlay = document.querySelector('.overlay-container[data-page="1"]');
+                if (!overlay) {{
+                    return {{ success: false, error: 'Overlay not found' }};
+                }}
+
+                const rect = overlay.getBoundingClientRect();
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: rect.left + 100,
+                    clientY: rect.top + 100,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the checkbox
+                const checkbox = document.querySelector('.edit-checkbox-overlay');
+                if (!checkbox) {{
+                    return {{ success: false, error: 'Checkbox not created' }};
+                }}
+
+                // Check properties
+                const isChecked = checkbox.classList.contains('checked');
+                const hasCheckmark = checkbox.textContent.includes('✓') || checkbox.textContent.includes('\u2713');
+                const computedStyle = window.getComputedStyle(checkbox);
+                const borderWidth = computedStyle.borderWidth;
+                const backgroundColor = computedStyle.backgroundColor;
+
+                return {{
+                    success: true,
+                    isChecked: isChecked,
+                    hasCheckmark: hasCheckmark,
+                    borderWidth: borderWidth,
+                    backgroundColor: backgroundColor,
+                    textContent: checkbox.textContent
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test checkbox default state")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Checkbox default state test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Checkbox should NOT be checked by default
+    assert!(
+        !result["isChecked"].as_bool().unwrap_or(true),
+        "Checkbox should NOT be checked by default"
+    );
+
+    // Should NOT have checkmark text
+    assert!(
+        !result["hasCheckmark"].as_bool().unwrap_or(true),
+        "Checkbox should NOT have checkmark when unchecked. Content: {:?}",
+        result["textContent"]
+    );
+}
+
+/// TEST: Checkbox should toggle when clicked inside, regardless of current tool
+#[tokio::test]
+async fn test_pdfjoin_checkbox_toggle_any_tool() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Click checkbox tool and create a checkbox
+                const checkboxBtn = document.getElementById('edit-tool-checkbox');
+                checkboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container[data-page="1"]');
+                const rect = overlay.getBoundingClientRect();
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: rect.left + 100,
+                    clientY: rect.top + 100,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const checkbox = document.querySelector('.edit-checkbox-overlay');
+                if (!checkbox) {{
+                    return {{ success: false, error: 'Checkbox not created' }};
+                }}
+
+                const initialChecked = checkbox.classList.contains('checked');
+
+                // Switch to SELECT tool (different tool)
+                const selectBtn = document.getElementById('tool-select');
+                selectBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Click inside the checkbox to toggle
+                const cbRect = checkbox.getBoundingClientRect();
+                checkbox.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: cbRect.left + cbRect.width / 2,
+                    clientY: cbRect.top + cbRect.height / 2,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 200));
+
+                const afterFirstClick = checkbox.classList.contains('checked');
+
+                // Click again to toggle back
+                checkbox.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: cbRect.left + cbRect.width / 2,
+                    clientY: cbRect.top + cbRect.height / 2,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 200));
+
+                const afterSecondClick = checkbox.classList.contains('checked');
+
+                return {{
+                    success: true,
+                    initialChecked: initialChecked,
+                    afterFirstClick: afterFirstClick,
+                    afterSecondClick: afterSecondClick,
+                    toggledOnFirstClick: afterFirstClick !== initialChecked,
+                    toggledOnSecondClick: afterSecondClick !== afterFirstClick
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test checkbox toggle")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Checkbox toggle test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["toggledOnFirstClick"].as_bool().unwrap_or(false),
+        "Checkbox should toggle on first click (with Select tool active)"
+    );
+
+    assert!(
+        result["toggledOnSecondClick"].as_bool().unwrap_or(false),
+        "Checkbox should toggle on second click"
+    );
+}
+
+/// TEST: Checkbox should be resizable via corner drag and maintain square shape
+#[tokio::test]
+async fn test_pdfjoin_checkbox_resize_maintains_square() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Create a checkbox
+                const checkboxBtn = document.getElementById('edit-tool-checkbox');
+                checkboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const overlay = document.querySelector('.overlay-container[data-page="1"]');
+                const overlayRect = overlay.getBoundingClientRect();
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: overlayRect.left + 100,
+                    clientY: overlayRect.top + 100,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const checkbox = document.querySelector('.edit-checkbox-overlay');
+                if (!checkbox) {{
+                    return {{ success: false, error: 'Checkbox not created' }};
+                }}
+
+                // Get initial size
+                const initialWidth = checkbox.offsetWidth;
+                const initialHeight = checkbox.offsetHeight;
+
+                // Check for resize handle
+                const resizeHandle = checkbox.querySelector('.resize-handle');
+                const hasResizeHandle = !!resizeHandle;
+
+                // Try to resize if handle exists
+                let afterResizeWidth = initialWidth;
+                let afterResizeHeight = initialHeight;
+
+                if (resizeHandle) {{
+                    const handleRect = resizeHandle.getBoundingClientRect();
+
+                    // Simulate drag from corner
+                    resizeHandle.dispatchEvent(new MouseEvent('mousedown', {{
+                        bubbles: true,
+                        clientX: handleRect.left + 5,
+                        clientY: handleRect.top + 5,
+                        view: window
+                    }}));
+
+                    // Move to expand
+                    document.dispatchEvent(new MouseEvent('mousemove', {{
+                        bubbles: true,
+                        clientX: handleRect.left + 30,
+                        clientY: handleRect.top + 30,
+                        view: window
+                    }}));
+
+                    document.dispatchEvent(new MouseEvent('mouseup', {{
+                        bubbles: true,
+                        view: window
+                    }}));
+
+                    await new Promise(r => setTimeout(r, 200));
+
+                    afterResizeWidth = checkbox.offsetWidth;
+                    afterResizeHeight = checkbox.offsetHeight;
+                }}
+
+                const isSquare = Math.abs(afterResizeWidth - afterResizeHeight) < 2;
+
+                return {{
+                    success: true,
+                    initialWidth: initialWidth,
+                    initialHeight: initialHeight,
+                    hasResizeHandle: hasResizeHandle,
+                    afterResizeWidth: afterResizeWidth,
+                    afterResizeHeight: afterResizeHeight,
+                    isSquare: isSquare,
+                    wasResized: afterResizeWidth !== initialWidth || afterResizeHeight !== initialHeight
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test checkbox resize")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Checkbox resize test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["hasResizeHandle"].as_bool().unwrap_or(false),
+        "Checkbox should have resize handle"
+    );
+
+    assert!(
+        result["isSquare"].as_bool().unwrap_or(false),
+        "Checkbox should maintain square shape. Width: {}, Height: {}",
+        result["afterResizeWidth"].as_f64().unwrap_or(0.0),
+        result["afterResizeHeight"].as_f64().unwrap_or(0.0)
+    );
+}
+
+/// TEST: Underline tool should underline selected text
+#[tokio::test]
+async fn test_pdfjoin_underline_tool_underlines_text() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Check for underline tool button
+                const underlineBtn = document.getElementById('edit-tool-underline') ||
+                                     document.getElementById('tool-underline');
+                if (!underlineBtn) {{
+                    return {{ success: false, error: 'Underline tool button not found', needsImplementation: true }};
+                }}
+
+                underlineBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Select text
+                const textItems = document.querySelectorAll('.text-item');
+                if (textItems.length === 0) {{
+                    return {{ success: false, error: 'No text items found' }};
+                }}
+
+                const textItem = textItems[0];
+                const range = document.createRange();
+                range.selectNodeContents(textItem);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                // Trigger mouseup
+                document.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check for underline overlay
+                const underlines = document.querySelectorAll('.edit-underline-overlay');
+
+                return {{
+                    success: true,
+                    underlineCount: underlines.length,
+                    underlineAdded: underlines.length > 0
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test underline tool")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Underline tool test: {:?}", result);
+
+    // This test will fail if underline tool is not implemented
+    if result["needsImplementation"].as_bool().unwrap_or(false) {
+        panic!("Underline tool button not found - needs implementation");
+    }
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["underlineAdded"].as_bool().unwrap_or(false),
+        "Underline should be added when text is selected with underline tool"
+    );
+}
+
+/// TEST: Highlight color picker should allow changing highlight colors
+#[tokio::test]
+async fn test_pdfjoin_highlight_color_picker() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r##"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Check for color picker button
+                const colorBtn = document.getElementById('highlight-color-btn');
+                if (!colorBtn) {{
+                    return {{ success: false, needsImplementation: true, error: 'Highlight color button not found' }};
+                }}
+
+                // Get initial color
+                const initialColor = colorBtn.style.backgroundColor || window.getComputedStyle(colorBtn).backgroundColor;
+
+                // Click to open dropdown
+                colorBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Check dropdown is visible
+                const dropdown = document.getElementById('highlight-color-dropdown');
+                const dropdownVisible = dropdown && dropdown.classList.contains('show');
+
+                // Click orange swatch (second color)
+                const orangeSwatch = dropdown?.querySelector('[data-color="#FFD580"]');
+                if (!orangeSwatch) {{
+                    return {{ success: false, error: 'Orange swatch not found in dropdown' }};
+                }}
+                orangeSwatch.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Get new color
+                const newColor = colorBtn.style.backgroundColor || window.getComputedStyle(colorBtn).backgroundColor;
+
+                // Check if orange swatch is now active
+                const orangeIsActive = orangeSwatch.classList.contains('active');
+
+                // Check dropdown closed
+                const dropdownClosed = !dropdown.classList.contains('show');
+
+                return {{
+                    success: true,
+                    initialColor: initialColor,
+                    newColor: newColor,
+                    dropdownVisible: dropdownVisible,
+                    orangeIsActive: orangeIsActive,
+                    dropdownClosed: dropdownClosed,
+                    colorChanged: initialColor !== newColor
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"##,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test highlight color picker")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Highlight color picker test: {:?}", result);
+
+    if result["needsImplementation"].as_bool().unwrap_or(false) {
+        panic!("Highlight color picker not found - needs implementation");
+    }
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["dropdownVisible"].as_bool().unwrap_or(false),
+        "Dropdown should open when color button is clicked"
+    );
+
+    assert!(
+        result["colorChanged"].as_bool().unwrap_or(false),
+        "Color should change when different swatch is clicked. Initial: {:?}, New: {:?}",
+        result["initialColor"],
+        result["newColor"]
+    );
+
+    assert!(
+        result["orangeIsActive"].as_bool().unwrap_or(false),
+        "Orange swatch should be marked as active after selection"
+    );
+
+    assert!(
+        result["dropdownClosed"].as_bool().unwrap_or(false),
+        "Dropdown should close after color selection"
+    );
+}
+
+/// TEST: Underline color should match text color (default black)
+#[tokio::test]
+async fn test_pdfjoin_underline_matches_text_color() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Click underline tool
+                const underlineBtn = document.getElementById('edit-tool-underline');
+                if (!underlineBtn) {{
+                    return {{ success: false, error: 'Underline tool button not found' }};
+                }}
+                underlineBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Find text layer and select some text
+                const textLayer = document.querySelector('.text-layer[data-page="1"]');
+                if (!textLayer) {{
+                    return {{ success: false, error: 'Text layer not found' }};
+                }}
+
+                const textSpan = textLayer.querySelector('span');
+                if (!textSpan) {{
+                    return {{ success: false, error: 'No text span found in text layer' }};
+                }}
+
+                // Get the text color
+                const textColor = window.getComputedStyle(textSpan).color;
+
+                // Select the text
+                const range = document.createRange();
+                range.selectNodeContents(textSpan);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                // Trigger mouseup to create underline
+                textLayer.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find the underline
+                const underline = document.querySelector('.edit-underline-overlay');
+                if (!underline) {{
+                    return {{ success: false, error: 'Underline not created', textColor: textColor }};
+                }}
+
+                // Get underline color
+                const underlineColor = underline.style.backgroundColor || window.getComputedStyle(underline).backgroundColor;
+
+                // Convert text color to comparable format
+                // Text color is usually rgb(0, 0, 0) for black
+                const isBlackText = textColor === 'rgb(0, 0, 0)' || textColor === '#000000' || textColor === 'black';
+                const isBlackUnderline = underlineColor === 'rgb(0, 0, 0)' || underlineColor === '#000000' || underlineColor === 'black';
+
+                return {{
+                    success: true,
+                    textColor: textColor,
+                    underlineColor: underlineColor,
+                    isBlackText: isBlackText,
+                    isBlackUnderline: isBlackUnderline,
+                    colorsMatch: (isBlackText && isBlackUnderline) || textColor === underlineColor
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test underline color")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Underline color test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // For black text, underline should be black
+    // The underline should match or default to black
+    let underline_color = result["underlineColor"].as_str().unwrap_or("");
+    let is_black_or_dark = underline_color.contains("0, 0, 0")
+        || underline_color == "#000000"
+        || underline_color == "black"
+        || underline_color.is_empty(); // Empty means CSS default which is black
+
+    assert!(
+        is_black_or_dark || result["colorsMatch"].as_bool().unwrap_or(false),
+        "Underline should be black (matching text) or match text color. Text: {:?}, Underline: {:?}",
+        result["textColor"],
+        result["underlineColor"]
     );
 }

@@ -67,7 +67,12 @@ export interface PDFJSViewport {
   width: number;
   height: number;
   scale: number;
+  /** Convert PDF coordinates to viewport (DOM) coordinates */
   convertToViewportPoint(x: number, y: number): [number, number];
+  /** Convert viewport (DOM) coordinates to PDF coordinates */
+  convertToPdfPoint(x: number, y: number): [number, number];
+  /** Convert PDF rectangle [x1, y1, x2, y2] to viewport rectangle */
+  convertToViewportRectangle(rect: [number, number, number, number]): [number, number, number, number];
 }
 
 /**

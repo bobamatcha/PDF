@@ -42,9 +42,14 @@ check_port() {
     local port=$1
     local name=$2
     if lsof -i:$port >/dev/null 2>&1; then
-        echo -e "${RED}Error: Port $port is already in use (needed for $name)${NC}"
-        echo "  Kill the process with: lsof -ti:$port | xargs kill"
-        exit 1
+        echo -e "${YELLOW}Port $port in use (needed for $name), killing...${NC}"
+        lsof -ti:$port | xargs kill -9 2>/dev/null || true
+        sleep 1  # Give OS time to release port
+        if lsof -i:$port >/dev/null 2>&1; then
+            echo -e "${RED}Error: Could not free port $port${NC}"
+            exit 1
+        fi
+        echo -e "  ${GREEN}✓${NC} Port $port freed"
     fi
 }
 

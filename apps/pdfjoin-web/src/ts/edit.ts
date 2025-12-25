@@ -64,6 +64,9 @@ let selectedTextBox: HTMLElement | null = null;
 let textBoxes: Map<number, HTMLElement> = new Map();
 let nextTextBoxId = 0;
 
+// Highlight color
+let currentHighlightColor = '#FFFF00'; // Default yellow
+
 export function setupEditView(): void {
   const dropZone = document.getElementById('edit-drop-zone');
   const fileInput = document.getElementById('edit-file-input') as HTMLInputElement | null;
@@ -144,6 +147,51 @@ export function setupEditView(): void {
           viewer.classList.remove('whiteout-tool-active');
         }
       }
+
+      // Toggle highlight color picker visibility based on tool selection
+      const highlightWrapper = document.querySelector('.highlight-color-wrapper');
+      if (highlightWrapper) {
+        if (currentTool === 'highlight') {
+          highlightWrapper.classList.add('tool-active');
+        } else {
+          highlightWrapper.classList.remove('tool-active');
+        }
+      }
+    });
+  });
+
+  // Highlight color picker
+  const highlightColorBtn = document.getElementById('highlight-color-btn');
+  const highlightColorDropdown = document.getElementById('highlight-color-dropdown');
+
+  highlightColorBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    highlightColorDropdown?.classList.toggle('show');
+  });
+
+  // Close dropdown when clicking elsewhere
+  document.addEventListener('click', (e) => {
+    if (!highlightColorBtn?.contains(e.target as Node) && !highlightColorDropdown?.contains(e.target as Node)) {
+      highlightColorDropdown?.classList.remove('show');
+    }
+  });
+
+  // Color swatch selection
+  document.querySelectorAll<HTMLElement>('.highlight-color-swatch').forEach((swatch) => {
+    swatch.addEventListener('click', () => {
+      const color = swatch.dataset.color;
+      if (color) {
+        currentHighlightColor = color;
+        // Update button color
+        if (highlightColorBtn) {
+          highlightColorBtn.style.background = color;
+        }
+        // Update active state
+        document.querySelectorAll('.highlight-color-swatch').forEach((s) => s.classList.remove('active'));
+        swatch.classList.add('active');
+        // Close dropdown
+        highlightColorDropdown?.classList.remove('show');
+      }
     });
   });
 
@@ -190,10 +238,13 @@ export function setupEditView(): void {
     }
   });
 
-  // Mouseup handler for text selection highlight
+  // Mouseup handler for text selection highlight and underline
   document.addEventListener('mouseup', () => {
-    if (currentTool !== 'highlight') return;
-    handleHighlightTextSelection();
+    if (currentTool === 'highlight') {
+      handleHighlightTextSelection();
+    } else if (currentTool === 'underline') {
+      handleUnderlineTextSelection();
+    }
   });
 
   // Page navigation
@@ -411,11 +462,9 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  // Convert to PDF coordinates (origin at bottom-left)
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfY = pageInfo.page.view[3] - domY * scaleY; // Flip Y
+  // Convert to PDF coordinates using PDF.js viewport method
+  // This properly handles Y-flip, scaling, and any page rotation
+  const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(domX, domY);
 
   switch (currentTool) {
     case 'text':
@@ -608,10 +657,8 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfY = pageInfo.page.view[3] - domY * scaleY;
+  // Convert to PDF coordinates using PDF.js viewport method
+  const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(domX, domY);
 
   function saveEditedText(): void {
     if (!editSession) return;
@@ -689,27 +736,93 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
 function addCheckboxAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay: HTMLElement, domX: number, domY: number): void {
   if (!editSession) return;
 
+  const defaultSize = 24; // Default checkbox size in pixels
+
   // Use action system for undo/redo
   editSession.beginAction('checkbox');
-  const opId = editSession.addCheckbox(pageNum, pdfX - 10, pdfY - 10, 20, 20, true);
+  const opId = editSession.addCheckbox(pageNum, pdfX - defaultSize/2, pdfY - defaultSize/2, defaultSize, defaultSize, false); // Default unchecked
   editSession.commitAction();
 
   const checkbox = document.createElement('div');
-  checkbox.className = 'edit-checkbox-overlay checked';
-  checkbox.textContent = '\u2713'; // Checkmark
-  checkbox.style.left = domX - 10 + 'px';
-  checkbox.style.top = domY - 10 + 'px';
+  checkbox.className = 'edit-checkbox-overlay'; // No 'checked' class by default
+  checkbox.textContent = ''; // Empty by default (unchecked)
+  checkbox.style.left = (domX - defaultSize/2) + 'px';
+  checkbox.style.top = (domY - defaultSize/2) + 'px';
+  checkbox.style.width = defaultSize + 'px';
+  checkbox.style.height = defaultSize + 'px';
   checkbox.dataset.page = String(pageNum);
   setOpId(checkbox, opId);
 
-  // Toggle on click - updates both DOM and Rust state
+  // Add resize handle (bottom-right corner)
+  const resizeHandle = document.createElement('div');
+  resizeHandle.className = 'resize-handle resize-handle-se';
+  checkbox.appendChild(resizeHandle);
+
+  // Toggle on click inside checkbox (not on resize handle) - works with any tool
   checkbox.addEventListener('click', (e) => {
+    // Don't toggle if clicking on resize handle
+    if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
     e.stopPropagation();
     checkbox.classList.toggle('checked');
     const isChecked = checkbox.classList.contains('checked');
-    checkbox.textContent = isChecked ? '\u2713' : '';
+    checkbox.textContent = isChecked ? '✓' : '';
+    // Re-add resize handle since textContent clears it
+    if (!checkbox.querySelector('.resize-handle')) {
+      checkbox.appendChild(resizeHandle);
+    }
     // Update Rust state
     editSession?.setCheckbox(opId, isChecked);
+  });
+
+  // Resize functionality - maintains square shape
+  let isResizing = false;
+  let startX = 0;
+  let startY = 0;
+  let startSize = defaultSize;
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizing = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startSize = checkbox.offsetWidth;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!isResizing) return;
+      // Calculate delta (use max of X and Y for square constraint)
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      const delta = Math.max(deltaX, deltaY);
+      const newSize = Math.max(16, Math.min(100, startSize + delta)); // Min 16px, max 100px
+      checkbox.style.width = newSize + 'px';
+      checkbox.style.height = newSize + 'px';
+    };
+
+    const onMouseUp = () => {
+      isResizing = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Update Rust with new size and position using PDF.js viewport methods
+      const newSize = checkbox.offsetWidth;
+      const newLeft = parseFloat(checkbox.style.left);
+      const newTop = parseFloat(checkbox.style.top);
+      const pageInfo = PdfBridge.getPageInfo(pageNum);
+      if (pageInfo) {
+        // Convert top-left and bottom-right corners to PDF coordinates
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(newLeft + newSize, newTop + newSize);
+        // Normalize rectangle (PDF Y increases upward, so y1 > y2)
+        const pdfX = Math.min(pdfX1, pdfX2);
+        const pdfY = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
+        editSession?.updateRect(opId, pdfX, pdfY, pdfWidth, pdfHeight);
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   });
 
   overlay.appendChild(checkbox);
@@ -754,12 +867,14 @@ function handleHighlightTextSelection(): void {
   // Find the page container to get relative coordinates
   const pageDiv = textLayer.closest('.edit-page') as HTMLElement;
   const overlay = pageDiv?.querySelector('.overlay-container') as HTMLElement;
-  if (!pageDiv || !overlay) {
+  const canvas = pageDiv?.querySelector('canvas') as HTMLCanvasElement;
+  if (!pageDiv || !overlay || !canvas) {
     selection.removeAllRanges();
     return;
   }
 
-  const pageRect = pageDiv.getBoundingClientRect();
+  // Get canvas rect for coordinate conversion (canvas has exact viewport dimensions)
+  const canvasRect = canvas.getBoundingClientRect();
 
   // Get page info for coordinate conversion
   const pageInfo = PdfBridge.getPageInfo(pageNum);
@@ -768,9 +883,7 @@ function handleHighlightTextSelection(): void {
     return;
   }
 
-  // Calculate scale factors
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const viewport = pageInfo.viewport;
 
   // Use action system for undo/redo
   editSession.beginAction('highlight');
@@ -779,21 +892,25 @@ function handleHighlightTextSelection(): void {
   for (let i = 0; i < rects.length; i++) {
     const rect = rects[i];
 
-    // Convert to page-relative DOM coordinates
-    const domX = rect.left - pageRect.left;
-    const domY = rect.top - pageRect.top;
+    // Skip tiny rects (artifacts from text selection)
+    if (rect.width < 2 || rect.height < 2) continue;
+
+    // Convert to canvas-relative DOM coordinates
+    const domX = rect.left - canvasRect.left;
+    const domY = rect.top - canvasRect.top;
     const domWidth = rect.width;
     const domHeight = rect.height;
 
-    // Skip tiny rects (artifacts)
-    if (domWidth < 2 || domHeight < 2) continue;
+    // Convert DOM coordinates to PDF coordinates using PDF.js viewport methods
+    // This properly handles Y-flip, scaling, and any page rotation
+    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
+    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
 
-    // Convert DOM coordinates to PDF coordinates (origin at bottom-left, Y flipped)
-    const pdfX = domX * scaleX;
-    const pdfWidth = domWidth * scaleX;
-    const pdfHeight = domHeight * scaleY;
-    // PDF Y is from bottom, so we need to flip
-    const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+    // Normalize rectangle (PDF Y increases upward, so y1 > y2)
+    const pdfX = Math.min(pdfX1, pdfX2);
+    const pdfY = Math.min(pdfY1, pdfY2);
+    const pdfWidth = Math.abs(pdfX2 - pdfX1);
+    const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
     // Add highlight to Rust session
     const opId = editSession.addHighlight(
@@ -802,21 +919,162 @@ function handleHighlightTextSelection(): void {
       pdfY,
       pdfWidth,
       pdfHeight,
-      '#FFFF00',
+      currentHighlightColor,
       0.3
     );
 
-    // Create DOM element for the highlight
+    // Create DOM element for the highlight preview
     const highlight = document.createElement('div');
     highlight.className = 'edit-highlight-overlay';
     highlight.style.left = domX + 'px';
     highlight.style.top = domY + 'px';
     highlight.style.width = domWidth + 'px';
     highlight.style.height = domHeight + 'px';
+    highlight.style.background = currentHighlightColor;
+    highlight.style.opacity = '0.3';
     highlight.dataset.page = String(pageNum);
     setOpId(highlight, opId);
 
     overlay.appendChild(highlight);
+  }
+
+  editSession.commitAction();
+
+  // Clear the selection
+  selection.removeAllRanges();
+
+  updateButtons();
+}
+
+/**
+ * Handle text selection for underline tool
+ * Called on mouseup when underline tool is active
+ * Creates a thin line under the selected text with proper spacing
+ */
+function handleUnderlineTextSelection(): void {
+  if (!editSession) return;
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+    return; // No text selected
+  }
+
+  // Check if selection is within a text-layer
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const textLayer = (container.nodeType === Node.ELEMENT_NODE
+    ? container as Element
+    : container.parentElement
+  )?.closest('.text-layer');
+
+  if (!textLayer) {
+    selection.removeAllRanges();
+    return; // Selection not in text layer
+  }
+
+  // Get the page number from the text layer
+  const pageNum = parseInt(textLayer.getAttribute('data-page') || '1');
+
+  // Get selection bounding rects
+  const rects = range.getClientRects();
+  if (rects.length === 0) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  // Find the page container to get relative coordinates
+  const pageDiv = textLayer.closest('.edit-page') as HTMLElement;
+  const overlay = pageDiv?.querySelector('.overlay-container') as HTMLElement;
+  const canvas = pageDiv?.querySelector('canvas') as HTMLCanvasElement;
+  if (!pageDiv || !overlay || !canvas) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  // Get canvas rect for coordinate conversion (canvas has exact viewport dimensions)
+  const canvasRect = canvas.getBoundingClientRect();
+
+  // Get page info for coordinate conversion
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  const viewport = pageInfo.viewport;
+
+  // Detect text color from the selection
+  let underlineColor = '#000000'; // Default black
+  const startNode = range.startContainer;
+  const textElement = startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode as Element;
+  if (textElement) {
+    const computedStyle = window.getComputedStyle(textElement);
+    const rgbColor = computedStyle.color;
+    // Convert rgb(r, g, b) to hex
+    const match = rgbColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+    if (match) {
+      const r = parseInt(match[1]).toString(16).padStart(2, '0');
+      const g = parseInt(match[2]).toString(16).padStart(2, '0');
+      const b = parseInt(match[3]).toString(16).padStart(2, '0');
+      underlineColor = `#${r}${g}${b}`;
+    }
+  }
+
+  // Use action system for undo/redo
+  editSession.beginAction('underline');
+
+  // Underline styling constants
+  const underlineHeight = 2; // 2px thick underline in DOM
+  const underlineGap = 2; // 2px gap below text baseline
+
+  // Create an underline for each rect (handles multi-line selections)
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+
+    // Skip tiny rects (artifacts from text selection)
+    if (rect.width < 2) continue;
+
+    // Convert to canvas-relative DOM coordinates
+    const domX = rect.left - canvasRect.left;
+    // Position underline below the text with a gap
+    // rect.bottom is the bottom edge of the text including descenders
+    const domY = rect.bottom - canvasRect.top + underlineGap;
+    const domWidth = rect.width;
+
+    // Convert DOM coordinates to PDF coordinates using PDF.js viewport methods
+    // Convert the line's start and end points
+    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
+    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + underlineHeight);
+
+    // Normalize rectangle
+    const pdfX = Math.min(pdfX1, pdfX2);
+    const pdfY = Math.min(pdfY1, pdfY2);
+    const pdfWidth = Math.abs(pdfX2 - pdfX1);
+    const pdfHeight = Math.abs(pdfY2 - pdfY1);
+
+    // Add underline to Rust session
+    const opId = editSession.addUnderline(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      underlineColor, // Match text color
+      1.0 // Full opacity
+    );
+
+    // Create DOM element for the underline preview
+    const underline = document.createElement('div');
+    underline.className = 'edit-underline-overlay';
+    underline.style.left = domX + 'px';
+    underline.style.top = domY + 'px';
+    underline.style.width = domWidth + 'px';
+    underline.style.height = underlineHeight + 'px';
+    underline.style.background = underlineColor;
+    underline.dataset.page = String(pageNum);
+    setOpId(underline, opId);
+
+    overlay.appendChild(underline);
   }
 
   editSession.commitAction();
@@ -953,15 +1211,15 @@ function addWhiteoutAtPosition(pageNum: number, domX: number, domY: number, domW
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  // Convert DOM coordinates to PDF coordinates
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  // PDF Y is from bottom, DOM Y is from top
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  // Convert DOM coordinates to PDF coordinates using PDF.js viewport method
+  // Convert top-left and bottom-right corners
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  // Normalize rectangle (PDF Y increases upward, so y1 > y2)
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
   // Add to session
   editSession.beginAction('whiteout');
@@ -1220,13 +1478,14 @@ function commitTextBox(box: HTMLElement): void {
   const domWidth = box.offsetWidth;
   const domHeight = box.offsetHeight;
 
-  // Convert to PDF coordinates
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  // Convert to PDF coordinates using PDF.js viewport method
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  // Normalize rectangle (PDF Y increases upward, so y1 > y2)
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
   // Remove old operation if exists
   const existingOpId = getOpId(box);
@@ -1489,18 +1748,18 @@ function endResize(): void {
 
       const pageInfo = PdfBridge.getPageInfo(pageNum);
       if (pageInfo) {
-        const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-        const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
         const domX = parseFloat(target.style.left);
         const domY = parseFloat(target.style.top);
         const domWidth = parseFloat(target.style.width);
         const domHeight = parseFloat(target.style.height);
 
-        const pdfX = domX * scaleX;
-        const pdfWidth = domWidth * scaleX;
-        const pdfHeight = domHeight * scaleY;
-        const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        // Convert to PDF coordinates using PDF.js viewport method
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+        const pdfX = Math.min(pdfX1, pdfX2);
+        const pdfY = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
         editSession.beginAction('resize');
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
@@ -1569,18 +1828,18 @@ function endMove(): void {
 
       const pageInfo = PdfBridge.getPageInfo(pageNum);
       if (pageInfo) {
-        const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-        const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
         const domX = parseFloat(target.style.left);
         const domY = parseFloat(target.style.top);
         const domWidth = parseFloat(target.style.width);
         const domHeight = parseFloat(target.style.height);
 
-        const pdfX = domX * scaleX;
-        const pdfWidth = domWidth * scaleX;
-        const pdfHeight = domHeight * scaleY;
-        const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        // Convert to PDF coordinates using PDF.js viewport method
+        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+        const pdfX = Math.min(pdfX1, pdfX2);
+        const pdfY = Math.min(pdfY1, pdfY2);
+        const pdfWidth = Math.abs(pdfX2 - pdfX1);
+        const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
         editSession.beginAction('move');
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
@@ -1729,14 +1988,10 @@ function endTextDrag(): void {
     }
   }
 
-  // Convert new position to PDF coordinates
+  // Convert new position to PDF coordinates using PDF.js viewport method
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (pageInfo && editSession) {
-    const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-    const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
-    const pdfX = newLeft * scaleX;
-    const pdfY = pageInfo.page.view[3] - newTop * scaleY;
+    const [pdfX, pdfY] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
 
     // Add new text operation at new position
     // NOTE: This uses hardcoded 200x20 dimensions - this is a known bug
@@ -1947,20 +2202,20 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
   const isBold = input.dataset.isBold === 'true';
   const isItalic = input.dataset.isItalic === 'true';
 
-  // Convert to PDF coordinates
+  // Convert to PDF coordinates using PDF.js viewport method
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) {
     input.remove();
     return;
   }
 
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
-  const pdfX = domX * scaleX;
-  const pdfWidth = domWidth * scaleX;
-  const pdfHeight = domHeight * scaleY;
-  const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  // Convert top-left and bottom-right corners
+  const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(domX, domY);
+  const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
+  const pdfX = Math.min(pdfX1, pdfX2);
+  const pdfY = Math.min(pdfY1, pdfY2);
+  const pdfWidth = Math.abs(pdfX2 - pdfX1);
+  const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
   // Begin whiteout action (may include whiteout resize + text)
   editSession.beginAction('whiteout');
@@ -2550,16 +2805,19 @@ function recreateWhiteRect(opId: bigint, data: { page: number; rect: PdfRect }):
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  // Convert PDF coords to DOM coords
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
+  // Convert PDF coords to DOM coords using PDF.js viewport method
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  // PDF Y is from bottom, DOM Y is from top
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  // Normalize (viewport may swap coordinates)
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
 
   const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
@@ -2595,14 +2853,19 @@ function recreateTextBox(opId: bigint, data: { page: number; rect: PdfRect; text
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
+  // Convert PDF coords to DOM coords using PDF.js viewport method
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  // Normalize (viewport may swap coordinates)
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
 
   const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
@@ -2683,20 +2946,25 @@ function recreateCheckbox(opId: bigint, data: { page: number; rect: PdfRect; che
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
+  // Convert PDF coords to DOM coords using PDF.js viewport method
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  // Normalize (viewport may swap coordinates)
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
 
   const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
 
   const checkbox = document.createElement('div');
-  checkbox.className = 'edit-checkbox';
+  checkbox.className = 'edit-checkbox-overlay'; // Match CSS class
   checkbox.style.left = domX + 'px';
   checkbox.style.top = domY + 'px';
   checkbox.style.width = domWidth + 'px';
@@ -2726,14 +2994,19 @@ function recreateHighlight(opId: bigint, data: { page: number; rect: PdfRect }):
   const pageInfo = PdfBridge.getPageInfo(pageNum);
   if (!pageInfo) return;
 
-  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
-  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
-
+  // Convert PDF coords to DOM coords using PDF.js viewport method
   const pdfRect = data.rect;
-  const domX = pdfRect.x / scaleX;
-  const domWidth = pdfRect.width / scaleX;
-  const domHeight = pdfRect.height / scaleY;
-  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
+    pdfRect.x,
+    pdfRect.y,
+    pdfRect.x + pdfRect.width,
+    pdfRect.y + pdfRect.height
+  ]);
+  // Normalize (viewport may swap coordinates)
+  const domX = Math.min(viewportRect[0], viewportRect[2]);
+  const domY = Math.min(viewportRect[1], viewportRect[3]);
+  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
+  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
 
   const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;

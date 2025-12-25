@@ -215,6 +215,14 @@ pub enum EditOperation {
         color: String,
         opacity: f64,
     },
+    /// Add an underline annotation (thin line below text)
+    /// Distinct from highlight - draws a line, not a filled rectangle
+    AddUnderline {
+        id: OpId,
+        page: u32,
+        rect: PdfRect,
+        color: String,
+    },
     AddCheckbox {
         id: OpId,
         page: u32,
@@ -245,6 +253,8 @@ pub enum ActionKind {
     AddCheckbox,
     /// Adding a highlight
     AddHighlight,
+    /// Adding an underline
+    AddUnderline,
     /// Replacing existing PDF text
     ReplaceText,
     /// Moving an element
@@ -280,6 +290,7 @@ impl EditOperation {
         match self {
             EditOperation::AddText { id, .. } => *id,
             EditOperation::AddHighlight { id, .. } => *id,
+            EditOperation::AddUnderline { id, .. } => *id,
             EditOperation::AddCheckbox { id, .. } => *id,
             EditOperation::ReplaceText { id, .. } => *id,
             EditOperation::AddWhiteRect { id, .. } => *id,
@@ -290,6 +301,7 @@ impl EditOperation {
         match self {
             EditOperation::AddText { page, .. } => *page,
             EditOperation::AddHighlight { page, .. } => *page,
+            EditOperation::AddUnderline { page, .. } => *page,
             EditOperation::AddCheckbox { page, .. } => *page,
             EditOperation::ReplaceText { page, .. } => *page,
             EditOperation::AddWhiteRect { page, .. } => *page,
@@ -325,6 +337,7 @@ impl OperationLog {
         match &mut op {
             EditOperation::AddText { id: op_id, .. } => *op_id = id,
             EditOperation::AddHighlight { id: op_id, .. } => *op_id = id,
+            EditOperation::AddUnderline { id: op_id, .. } => *op_id = id,
             EditOperation::AddCheckbox { id: op_id, .. } => *op_id = id,
             EditOperation::ReplaceText { id: op_id, .. } => *op_id = id,
             EditOperation::AddWhiteRect { id: op_id, .. } => *op_id = id,
@@ -387,7 +400,7 @@ impl OperationLog {
     }
 
     /// Update the rect of an operation
-    /// Works for AddText, AddHighlight, AddCheckbox, AddWhiteRect
+    /// Works for AddText, AddHighlight, AddUnderline, AddCheckbox, AddWhiteRect
     /// Returns false if the operation is not found
     pub fn update_rect(&mut self, id: OpId, new_rect: PdfRect) -> bool {
         if let Some(op) = self.get_operation_mut(id) {
@@ -397,6 +410,10 @@ impl OperationLog {
                     true
                 }
                 EditOperation::AddHighlight { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddUnderline { ref mut rect, .. } => {
                     *rect = new_rect;
                     true
                 }
@@ -1442,5 +1459,116 @@ mod tests {
         // Undo should restore the deleted operation
         log.undo();
         assert!(log.get_operation(id).is_some());
+    }
+
+    // ============ Underline Operation Tests (Bug 5 fix) ============
+
+    #[test]
+    fn test_add_underline_operation_exists() {
+        // Bug 5: Underline should be a separate operation from highlight
+        let mut log = OperationLog::new();
+        let id = log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 2.0, // Underline is thin
+            },
+            color: "#000000".to_string(),
+        });
+
+        assert!(id == 0);
+        assert!(!log.is_empty());
+
+        // Verify it's stored as AddUnderline, not AddHighlight
+        if let EditOperation::AddUnderline { color, rect, .. } = &log.operations()[0] {
+            assert_eq!(color, "#000000");
+            assert_eq!(rect.height, 2.0); // Underlines should be thin
+        } else {
+            panic!("Expected AddUnderline operation, got something else");
+        }
+    }
+
+    #[test]
+    fn test_underline_operation_id_getter() {
+        let op = EditOperation::AddUnderline {
+            id: 42,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 2.0,
+            },
+            color: "#000000".to_string(),
+        };
+        assert_eq!(op.id(), 42);
+    }
+
+    #[test]
+    fn test_underline_operation_page_getter() {
+        let op = EditOperation::AddUnderline {
+            id: 0,
+            page: 5,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 2.0,
+            },
+            color: "#FF0000".to_string(),
+        };
+        assert_eq!(op.page(), 5);
+    }
+
+    #[test]
+    fn test_underline_json_roundtrip() {
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 100.0,
+                width: 150.0,
+                height: 2.0,
+            },
+            color: "#0000FF".to_string(),
+        });
+
+        let json = log.to_json().unwrap();
+        let restored = OperationLog::from_json(&json).unwrap();
+
+        assert_eq!(log.operations().len(), restored.operations().len());
+
+        // Verify it deserializes as AddUnderline, not AddHighlight
+        if let EditOperation::AddUnderline { color, .. } = &restored.operations()[0] {
+            assert_eq!(color, "#0000FF");
+        } else {
+            panic!("Expected AddUnderline after JSON roundtrip");
+        }
+    }
+
+    #[test]
+    fn test_action_kind_add_underline_exists() {
+        // ActionKind should have AddUnderline variant for undo/redo
+        let mut log = OperationLog::new();
+        log.begin_action(ActionKind::AddUnderline);
+        log.add(EditOperation::AddUnderline {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 2.0,
+            },
+            color: "#000000".to_string(),
+        });
+        log.commit_action();
+
+        assert!(log.can_undo());
     }
 }

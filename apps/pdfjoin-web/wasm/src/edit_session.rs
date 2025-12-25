@@ -133,6 +133,35 @@ impl EditSession {
         self.operations.add(op)
     }
 
+    /// Add an underline annotation (thin line below text)
+    /// Distinct from highlight - creates a proper PDF Underline annotation
+    #[wasm_bindgen(js_name = addUnderline)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_underline(
+        &mut self,
+        page: u32,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        color: &str,
+        _opacity: f64, // Kept for API compatibility but not used
+    ) -> u64 {
+        // Use the dedicated AddUnderline operation (not AddHighlight!)
+        let op = EditOperation::AddUnderline {
+            id: 0,
+            page,
+            rect: PdfRect {
+                x,
+                y,
+                width,
+                height,
+            },
+            color: color.to_string(),
+        };
+        self.operations.add(op)
+    }
+
     /// Add a checkbox annotation
     #[wasm_bindgen(js_name = addCheckbox)]
     pub fn add_checkbox(
