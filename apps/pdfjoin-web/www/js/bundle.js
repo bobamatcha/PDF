@@ -207,7 +207,6 @@ function setOpId(element, opId) {
 var editSession = null;
 var currentTool = "select";
 var currentPage = 1;
-var operationHistory = [];
 var currentPdfBytes = null;
 var currentPdfFilename = null;
 var textItemsMap = /* @__PURE__ */ new Map();
@@ -517,8 +516,9 @@ function addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
     if (!text) return;
     const textWidth = Math.max(input.offsetWidth, 50);
     const textHeight = Math.max(input.offsetHeight, 20);
+    editSession.beginAction("textbox");
     const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
-    operationHistory.push(opId);
+    editSession.commitAction();
     const textEl = document.createElement("div");
     textEl.className = "edit-text-overlay";
     textEl.textContent = text;
@@ -569,10 +569,6 @@ function editExistingTextOverlay(textOverlay, pageNum) {
   if (!overlay) return;
   if (existingOpId !== null) {
     editSession.removeOperation(existingOpId);
-    const historyIndex = operationHistory.findIndex((id) => id === existingOpId);
-    if (historyIndex > -1) {
-      operationHistory.splice(historyIndex, 1);
-    }
   }
   textOverlay.style.display = "none";
   const input = document.createElement("span");
@@ -631,8 +627,9 @@ function editExistingTextOverlay(textOverlay, pageNum) {
       updateButtons();
       return;
     }
+    editSession.beginAction("textbox");
     const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, newFontSize, "#000000", newFontFamily, newIsItalic, newIsBold);
-    operationHistory.push(opId);
+    editSession.commitAction();
     textOverlay.textContent = text;
     textOverlay.style.display = "";
     textOverlay.style.fontSize = newFontSize + "px";
@@ -656,8 +653,9 @@ function editExistingTextOverlay(textOverlay, pageNum) {
       setActiveTextInput(null);
       textOverlay.style.display = "";
       if (existingText && editSession) {
+        editSession.beginAction("textbox");
         const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, existingText, fontSize, "#000000", fontFamily, isItalic, isBold);
-        operationHistory.push(opId);
+        editSession.commitAction();
         setOpId(textOverlay, opId);
       }
     }
@@ -761,8 +759,9 @@ function addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight) {
   const pdfWidth = domWidth * scaleX;
   const pdfHeight = domHeight * scaleY;
   const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  editSession.beginAction("whiteout");
   const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
-  operationHistory.push(opId);
+  editSession.commitAction();
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const whiteRect = document.createElement("div");
@@ -956,6 +955,7 @@ function commitTextBox(box) {
     const fontSize = style ? parseFloat(style.fontSize) : 12;
     const isBold = style?.fontWeight === "bold" || parseInt(style?.fontWeight || "400") >= 700;
     const isItalic = style?.fontStyle === "italic";
+    editSession.beginAction("textbox");
     const opId = editSession.addText(
       pageNum,
       pdfX,
@@ -970,8 +970,8 @@ function commitTextBox(box) {
       isItalic,
       isBold
     );
+    editSession.commitAction();
     setOpId(box, opId);
-    operationHistory.push(opId);
   }
   updateButtons();
 }
@@ -1154,12 +1154,10 @@ function endResize() {
         const pdfWidth = domWidth * scaleX;
         const pdfHeight = domHeight * scaleY;
         const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        editSession.beginAction("resize");
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        editSession.commitAction();
         setOpId(target, newOpId);
-        const idx = operationHistory.findIndex((id) => id === opId);
-        if (idx !== -1) {
-          operationHistory[idx] = newOpId;
-        }
       }
     }
   } catch (err) {
@@ -1211,12 +1209,10 @@ function endMove() {
         const pdfWidth = domWidth * scaleX;
         const pdfHeight = domHeight * scaleY;
         const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+        editSession.beginAction("move");
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        editSession.commitAction();
         setOpId(target, newOpId);
-        const idx = operationHistory.findIndex((id) => id === opId);
-        if (idx !== -1) {
-          operationHistory[idx] = newOpId;
-        }
       }
     }
   } catch (err) {
@@ -1262,10 +1258,6 @@ function makeReplaceOverlayEditable(replaceEl, pageNum) {
     textItem.str = intermediateText;
     if (opId !== null && editSession) {
       editSession.removeOperation(opId);
-      const historyIndex = operationHistory.findIndex((id) => id === opId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
     }
     replaceEl.dataset.pendingRemoval = "true";
     const originalSpan = document.querySelector(`.text-item[data-page="${pageNum}"][data-index="${textItemIndex}"]`);
@@ -1311,10 +1303,6 @@ function endTextDrag() {
   if (opId !== null && editSession) {
     try {
       editSession.removeOperation(opId);
-      const historyIndex = operationHistory.findIndex((id) => id === opId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
     } catch (err) {
       console.error("Error removing text operation:", err);
     }
@@ -1325,8 +1313,9 @@ function endTextDrag() {
     const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
     const pdfX = newLeft * scaleX;
     const pdfY = pageInfo.page.view[3] - newTop * scaleY;
+    editSession.beginAction("move");
     const newOpId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, fontSize, "#000000", fontFamily, isItalic, isBold);
-    operationHistory.push(newOpId);
+    editSession.commitAction();
     setOpId(textEl, newOpId);
   }
 }
@@ -1483,21 +1472,17 @@ function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeig
   const pdfWidth = domWidth * scaleX;
   const pdfHeight = domHeight * scaleY;
   const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+  editSession.beginAction("whiteout");
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
-      const historyIndex = operationHistory.findIndex((id) => id === existingOpId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
       const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
-      operationHistory.push(newWhiteOpId);
       setOpId(whiteRect, newWhiteOpId);
     }
   }
   const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
-  operationHistory.push(opId);
+  editSession.commitAction();
   const textSpan = document.createElement("span");
   textSpan.className = "whiteout-text-content";
   textSpan.textContent = text;
@@ -1636,6 +1621,7 @@ function applyTextReplacement(pageNum, textItem, newText, isBold = null, isItali
   const renderScale = 1.5;
   const fontSize = customFontSize !== null ? customFontSize / renderScale : textItem.pdfHeight || 12;
   const useFontFamily = customFontFamily || textItem.fontFamily || null;
+  editSession.beginAction("replacetext");
   const opId = editSession.replaceText(
     pageNum,
     // Original rect (to cover)
@@ -1659,7 +1645,7 @@ function applyTextReplacement(pageNum, textItem, newText, isBold = null, isItali
     useItalic,
     useBold
   );
-  operationHistory.push(opId);
+  editSession.commitAction();
   const domFontSize = customFontSize !== null ? customFontSize : (textItem.pdfHeight || 12) * renderScale;
   const fontFamily = mapFontFamilyForPreview(useFontFamily);
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
@@ -1840,19 +1826,24 @@ function setFontFamily(family) {
   activeTextInput.focus();
 }
 function undoLastOperation() {
-  if (operationHistory.length === 0 || !editSession) return;
-  const opId = operationHistory.pop();
-  editSession.removeOperation(opId);
-  const el = document.querySelector(`[data-op-id="${opId}"]`);
-  if (el) el.remove();
+  if (!editSession || !editSession.canUndo()) return;
+  const undoneIds = editSession.undo();
+  if (!undoneIds) return;
+  for (let i = 0; i < undoneIds.length; i++) {
+    const opId = undoneIds[i];
+    const el = document.querySelector(`[data-op-id="${opId}"]`);
+    if (el) el.remove();
+  }
   updateButtons();
 }
 function updateButtons() {
   const downloadBtn = document.getElementById("edit-download-btn");
   const undoBtn = document.getElementById("edit-undo-btn");
+  const redoBtn = document.getElementById("edit-redo-btn");
   const hasChanges = editSession && editSession.hasChanges();
   if (downloadBtn) downloadBtn.disabled = !hasChanges;
-  if (undoBtn) undoBtn.disabled = operationHistory.length === 0;
+  if (undoBtn) undoBtn.disabled = !editSession || !editSession.canUndo();
+  if (redoBtn) redoBtn.disabled = !editSession || !editSession.canRedo();
 }
 async function downloadEditedPdf() {
   if (!editSession) return;
@@ -1893,7 +1884,6 @@ async function downloadEditedPdf() {
 function resetEditView() {
   editSession = null;
   currentPage = 1;
-  operationHistory = [];
   currentTool = "select";
   currentPdfBytes = null;
   currentPdfFilename = null;

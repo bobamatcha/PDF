@@ -163,7 +163,31 @@ export interface EditSession {
   getOperationCount(): number;
   getOperationsJson(): string;
   export(): Uint8Array;
+
+  // Action-based undo/redo (Phase 4)
+  beginAction(kind: ActionKind): void;
+  commitAction(): boolean;
+  abortAction(): void;
+  undo(): BigInt64Array | null;
+  redo(): BigInt64Array | null;
+  canUndo(): boolean;
+  canRedo(): boolean;
+  getOperationJson(id: OpId): string | null;
+  recordRemovedOp(id: OpId): boolean;
 }
+
+/**
+ * Action kinds for grouping operations
+ */
+export type ActionKind =
+  | 'textbox'
+  | 'whiteout'
+  | 'checkbox'
+  | 'highlight'
+  | 'replacetext'
+  | 'move'
+  | 'resize'
+  | 'delete';
 
 /**
  * EditSession constructor

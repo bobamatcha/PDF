@@ -4,13 +4,13 @@
 import { ensurePdfJsLoaded } from './pdf-loader';
 import { PdfBridge } from './pdf-bridge';
 import { registerEditCallbacks, clearEditCallbacks, setSharedPdf } from './shared-state';
-import type { EditSession, OpId, TextItem, CachedPageInfo } from './types';
+import type { EditSession, OpId, TextItem, CachedPageInfo, ActionKind } from './types';
 import { getOpId, setOpId } from './types';
 
 let editSession: EditSession | null = null;
 let currentTool = 'select';
 let currentPage = 1;
-let operationHistory: OpId[] = []; // For undo (stores operation IDs as BigInt)
+// Note: operationHistory removed - undo/redo now handled by Rust via editSession
 let currentPdfBytes: Uint8Array | null = null; // Original PDF bytes for Tab PDF Sharing
 let currentPdfFilename: string | null = null;
 let textItemsMap = new Map<number, TextItem[]>(); // pageNum -> array of text items with positions
@@ -457,8 +457,9 @@ function addTextAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay:
     const textHeight = Math.max(input.offsetHeight, 20);
 
     // Add to session (PDF coordinates, height adjusted)
+    editSession.beginAction('textbox');
     const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
-    operationHistory.push(opId);
+    editSession.commitAction();
 
     // Add visual overlay
     const textEl = document.createElement('div');
@@ -525,13 +526,9 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
   if (!overlay) return;
 
   // Remove the old operation from session
+  // Note: This is part of an edit, not tracked as a separate undoable action
   if (existingOpId !== null) {
     editSession.removeOperation(existingOpId);
-    // Remove from history
-    const historyIndex = operationHistory.findIndex((id) => id === existingOpId);
-    if (historyIndex > -1) {
-      operationHistory.splice(historyIndex, 1);
-    }
   }
 
   // Hide the text overlay while editing (don't remove yet in case of cancel)
@@ -610,8 +607,9 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
     }
 
     // Add new operation with updated text and dimensions
+    editSession.beginAction('textbox');
     const opId = editSession.addText(pageNum, pdfX, pdfY - 20, textWidth, textHeight, text, newFontSize, '#000000', newFontFamily, newIsItalic, newIsBold);
-    operationHistory.push(opId);
+    editSession.commitAction();
 
     // Update existing overlay IN PLACE (don't remove and recreate - that changes DOM order)
     textOverlay.textContent = text;
@@ -641,8 +639,9 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
       textOverlay.style.display = '';
       // Re-add the operation that was removed
       if (existingText && editSession) {
+        editSession.beginAction('textbox');
         const opId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, existingText, fontSize, '#000000', fontFamily, isItalic, isBold);
-        operationHistory.push(opId);
+        editSession.commitAction();
         setOpId(textOverlay, opId);
       }
     }
@@ -843,8 +842,9 @@ function addWhiteoutAtPosition(pageNum: number, domX: number, domY: number, domW
   const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
 
   // Add to session
+  editSession.beginAction('whiteout');
   const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
-  operationHistory.push(opId);
+  editSession.commitAction();
 
   // Add visual overlay
   const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
@@ -1120,6 +1120,7 @@ function commitTextBox(box: HTMLElement): void {
     const isBold = style?.fontWeight === 'bold' || parseInt(style?.fontWeight || '400') >= 700;
     const isItalic = style?.fontStyle === 'italic';
 
+    editSession.beginAction('textbox');
     const opId = editSession.addText(
       pageNum,
       pdfX,
@@ -1133,8 +1134,8 @@ function commitTextBox(box: HTMLElement): void {
       isItalic,
       isBold
     );
+    editSession.commitAction();
     setOpId(box, opId);
-    operationHistory.push(opId);
   }
 
   updateButtons();
@@ -1379,14 +1380,10 @@ function endResize(): void {
         const pdfHeight = domHeight * scaleY;
         const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
 
+        editSession.beginAction('resize');
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        editSession.commitAction();
         setOpId(target, newOpId);
-
-        // Update operation history
-        const idx = operationHistory.findIndex((id) => id === opId);
-        if (idx !== -1) {
-          operationHistory[idx] = newOpId;
-        }
       }
     }
   } catch (err) {
@@ -1463,14 +1460,10 @@ function endMove(): void {
         const pdfHeight = domHeight * scaleY;
         const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
 
+        editSession.beginAction('move');
         const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        editSession.commitAction();
         setOpId(target, newOpId);
-
-        // Update operation history
-        const idx = operationHistory.findIndex((id) => id === opId);
-        if (idx !== -1) {
-          operationHistory[idx] = newOpId;
-        }
       }
     }
   } catch (err) {
@@ -1539,13 +1532,9 @@ function makeReplaceOverlayEditable(replaceEl: HTMLElement, pageNum: number): vo
     textItem.str = intermediateText;
 
     // 2. Remove the replacement operation from the edit session
+    // Note: Rust handles history tracking now
     if (opId !== null && editSession) {
       editSession.removeOperation(opId);
-      // Remove from history
-      const historyIndex = operationHistory.findIndex((id) => id === opId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
     }
 
     // 3. Keep the replacement overlay visible to cover the canvas during editing
@@ -1609,14 +1598,10 @@ function endTextDrag(): void {
   const isBold = textEl.dataset.isBold === 'true';
   const isItalic = textEl.dataset.isItalic === 'true';
 
-  // Remove old operation
+  // Remove old operation (Rust handles history tracking)
   if (opId !== null && editSession) {
     try {
       editSession.removeOperation(opId);
-      const historyIndex = operationHistory.findIndex((id) => id === opId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
     } catch (err) {
       console.error('Error removing text operation:', err);
     }
@@ -1634,8 +1619,9 @@ function endTextDrag(): void {
     // Add new text operation at new position
     // NOTE: This uses hardcoded 200x20 dimensions - this is a known bug
     // TODO: Preserve original dimensions using updateRect when that method is added
+    editSession.beginAction('move');
     const newOpId = editSession.addText(pageNum, pdfX, pdfY - 20, 200, 20, text, fontSize, '#000000', fontFamily, isItalic, isBold);
-    operationHistory.push(newOpId);
+    editSession.commitAction();
     setOpId(textEl, newOpId);
   }
 }
@@ -1854,26 +1840,23 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
   const pdfHeight = domHeight * scaleY;
   const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
 
+  // Begin whiteout action (may include whiteout resize + text)
+  editSession.beginAction('whiteout');
+
   // If whiteout was resized, update the whiteout operation
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
-      // Remove from history
-      const historyIndex = operationHistory.findIndex((id) => id === existingOpId);
-      if (historyIndex > -1) {
-        operationHistory.splice(historyIndex, 1);
-      }
       // Add new whiteout with updated dimensions
       const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
-      operationHistory.push(newWhiteOpId);
       setOpId(whiteRect, newWhiteOpId);
     }
   }
 
   // Add text annotation at the whiteout position (with font styling)
   const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
-  operationHistory.push(opId);
+  editSession.commitAction();
 
   // Replace input with text span INSIDE the whiteout (auto-sizing)
   const textSpan = document.createElement('span');
@@ -2090,6 +2073,7 @@ function applyTextReplacement(
 
   // Use PDF coordinates from text item
   // Note: The Rust code adds padding to the white cover rectangle
+  editSession.beginAction('replacetext');
   const opId = editSession.replaceText(
     pageNum,
     // Original rect (to cover)
@@ -2113,8 +2097,7 @@ function applyTextReplacement(
     useItalic,
     useBold
   );
-
-  operationHistory.push(opId);
+  editSession.commitAction();
 
   // Calculate DOM font size (use custom or scale from PDF)
   const domFontSize = customFontSize !== null ? customFontSize : (textItem.pdfHeight || 12) * renderScale;
@@ -2363,14 +2346,32 @@ function setFontFamily(family: string): void {
 }
 
 function undoLastOperation(): void {
-  if (operationHistory.length === 0 || !editSession) return;
+  if (!editSession || !editSession.canUndo()) return;
 
-  const opId = operationHistory.pop()!;
-  editSession.removeOperation(opId);
+  // Call Rust undo - returns array of OpIds that were removed
+  const undoneIds = editSession.undo();
+  if (!undoneIds) return;
 
-  // Remove from DOM
-  const el = document.querySelector(`[data-op-id="${opId}"]`);
-  if (el) el.remove();
+  // Remove all undone elements from DOM
+  for (let i = 0; i < undoneIds.length; i++) {
+    const opId = undoneIds[i];
+    const el = document.querySelector(`[data-op-id="${opId}"]`);
+    if (el) el.remove();
+  }
+
+  updateButtons();
+}
+
+function redoLastOperation(): void {
+  if (!editSession || !editSession.canRedo()) return;
+
+  // Call Rust redo - returns array of OpIds that were restored
+  const redoneIds = editSession.redo();
+  if (!redoneIds) return;
+
+  // For now, we can't recreate DOM elements easily without operation details
+  // The operations are restored in Rust, so export will work correctly
+  // TODO: Recreate DOM elements using getOperationJson if needed for visual feedback
 
   updateButtons();
 }
@@ -2378,10 +2379,12 @@ function undoLastOperation(): void {
 function updateButtons(): void {
   const downloadBtn = document.getElementById('edit-download-btn') as HTMLButtonElement | null;
   const undoBtn = document.getElementById('edit-undo-btn') as HTMLButtonElement | null;
+  const redoBtn = document.getElementById('edit-redo-btn') as HTMLButtonElement | null;
 
   const hasChanges = editSession && editSession.hasChanges();
   if (downloadBtn) downloadBtn.disabled = !hasChanges;
-  if (undoBtn) undoBtn.disabled = operationHistory.length === 0;
+  if (undoBtn) undoBtn.disabled = !editSession || !editSession.canUndo();
+  if (redoBtn) redoBtn.disabled = !editSession || !editSession.canRedo();
 }
 
 async function downloadEditedPdf(): Promise<void> {
@@ -2442,7 +2445,7 @@ async function downloadEditedPdf(): Promise<void> {
 function resetEditView(): void {
   editSession = null;
   currentPage = 1;
-  operationHistory = [];
+  // Note: undo/redo history is cleared when editSession is set to null
   currentTool = 'select';
   currentPdfBytes = null;
   currentPdfFilename = null;

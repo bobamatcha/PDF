@@ -234,6 +234,47 @@ pub enum EditOperation {
     AddWhiteRect { id: OpId, page: u32, rect: PdfRect },
 }
 
+/// The kind of user action that groups one or more operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionKind {
+    /// Adding a text box
+    AddTextBox,
+    /// Adding a whiteout (white rectangle, optionally with text)
+    AddWhiteout,
+    /// Adding a checkbox
+    AddCheckbox,
+    /// Adding a highlight
+    AddHighlight,
+    /// Replacing existing PDF text
+    ReplaceText,
+    /// Moving an element
+    Move,
+    /// Resizing an element
+    Resize,
+    /// Deleting an element
+    Delete,
+}
+
+/// An action groups one or more operations that should be undone/redone together
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Action {
+    pub kind: ActionKind,
+    /// Operations that were added by this action
+    pub added_ops: Vec<EditOperation>,
+    /// Operations that were removed by this action (for Delete actions)
+    pub removed_ops: Vec<EditOperation>,
+}
+
+impl Action {
+    fn new(kind: ActionKind) -> Self {
+        Self {
+            kind,
+            added_ops: Vec::new(),
+            removed_ops: Vec::new(),
+        }
+    }
+}
+
 impl EditOperation {
     pub fn id(&self) -> OpId {
         match self {
@@ -260,6 +301,15 @@ impl EditOperation {
 pub struct OperationLog {
     next_id: OpId,
     operations: Vec<EditOperation>,
+    /// Stack of committed actions (for undo)
+    #[serde(default)]
+    undo_stack: Vec<Action>,
+    /// Stack of undone actions (for redo)
+    #[serde(default)]
+    redo_stack: Vec<Action>,
+    /// Action currently being built (between begin_action and commit_action)
+    #[serde(skip)]
+    pending_action: Option<Action>,
 }
 
 impl OperationLog {
@@ -278,6 +328,11 @@ impl OperationLog {
             EditOperation::AddCheckbox { id: op_id, .. } => *op_id = id,
             EditOperation::ReplaceText { id: op_id, .. } => *op_id = id,
             EditOperation::AddWhiteRect { id: op_id, .. } => *op_id = id,
+        }
+
+        // Track in pending action if one is being built
+        if let Some(ref mut action) = self.pending_action {
+            action.added_ops.push(op.clone());
         }
 
         self.operations.push(op);
@@ -406,6 +461,129 @@ impl OperationLog {
 
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+
+    // ============ Action-Based Undo/Redo (Phase 4) ============
+
+    /// Start building a new action. Operations added after this will be grouped.
+    pub fn begin_action(&mut self, kind: ActionKind) {
+        // If there's already a pending action, commit it first
+        if self.pending_action.is_some() {
+            self.commit_action();
+        }
+        self.pending_action = Some(Action::new(kind));
+        // Clear redo stack when starting a new action
+        self.redo_stack.clear();
+    }
+
+    /// Commit the pending action to the undo stack.
+    /// Returns true if an action was committed.
+    pub fn commit_action(&mut self) -> bool {
+        if let Some(action) = self.pending_action.take() {
+            // Only commit if the action has operations
+            if !action.added_ops.is_empty() || !action.removed_ops.is_empty() {
+                self.undo_stack.push(action);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Abort the pending action and remove any operations that were added.
+    pub fn abort_action(&mut self) {
+        if let Some(action) = self.pending_action.take() {
+            // Remove all operations that were added as part of this action
+            for op in &action.added_ops {
+                self.remove(op.id());
+            }
+            // Restore any operations that were removed as part of this action
+            for op in action.removed_ops {
+                self.operations.push(op);
+            }
+        }
+    }
+
+    /// Record an operation that was removed (for Delete actions).
+    /// This allows undo to restore the deleted operation.
+    pub fn record_removed_op(&mut self, op: EditOperation) {
+        if let Some(ref mut action) = self.pending_action {
+            action.removed_ops.push(op);
+        }
+    }
+
+    /// Undo the last action.
+    /// Returns the OpIds that were removed (for DOM cleanup by TS).
+    pub fn undo(&mut self) -> Option<Vec<OpId>> {
+        let action = self.undo_stack.pop()?;
+
+        // Collect the op_ids that will be removed
+        let op_ids: Vec<OpId> = action.added_ops.iter().map(|op| op.id()).collect();
+
+        // Remove added operations
+        for op in &action.added_ops {
+            self.remove(op.id());
+        }
+
+        // Restore removed operations
+        for op in &action.removed_ops {
+            self.operations.push(op.clone());
+        }
+
+        // Push to redo stack
+        self.redo_stack.push(action);
+
+        Some(op_ids)
+    }
+
+    /// Redo the last undone action.
+    /// Returns the OpIds that were restored (for DOM recreation by TS).
+    pub fn redo(&mut self) -> Option<Vec<OpId>> {
+        let action = self.redo_stack.pop()?;
+
+        // Remove the operations that were restored by undo (the removed_ops)
+        for op in &action.removed_ops {
+            self.remove(op.id());
+        }
+
+        // Restore the added operations
+        for op in &action.added_ops {
+            self.operations.push(op.clone());
+        }
+
+        // Collect the op_ids that were restored
+        let op_ids: Vec<OpId> = action.added_ops.iter().map(|op| op.id()).collect();
+
+        // Push back to undo stack
+        self.undo_stack.push(action);
+
+        Some(op_ids)
+    }
+
+    /// Check if there are actions that can be undone.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Check if there are actions that can be redone.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    /// Get an operation by ID for redo purposes (returns a clone)
+    pub fn get_operation_for_redo(&self, id: OpId) -> Option<EditOperation> {
+        // First check in current operations
+        if let Some(op) = self.get_operation(id) {
+            return Some(op.clone());
+        }
+        // Then check in redo stack
+        for action in &self.redo_stack {
+            for op in &action.added_ops {
+                if op.id() == id {
+                    return Some(op.clone());
+                }
+            }
+        }
+        None
     }
 }
 
@@ -952,5 +1130,317 @@ mod tests {
 
         // Should return false for non-text operations
         assert!(!log.update_text(id, "Test", None));
+    }
+
+    // ============ Action-Based Undo/Redo Tests (Phase 4) ============
+
+    #[test]
+    fn test_initial_state_cannot_undo_or_redo() {
+        let log = OperationLog::new();
+        assert!(!log.can_undo());
+        assert!(!log.can_redo());
+    }
+
+    #[test]
+    fn test_begin_and_commit_action_enables_undo() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Test".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        assert!(log.can_undo());
+        assert!(!log.can_redo());
+    }
+
+    #[test]
+    fn test_undo_returns_op_ids_for_dom_removal() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Test".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        let undone = log.undo();
+        assert!(undone.is_some());
+        let op_ids = undone.unwrap();
+        assert_eq!(op_ids.len(), 1);
+        assert_eq!(op_ids[0], id);
+
+        // Operation should be removed from the log
+        assert!(log.get_operation(id).is_none());
+        assert!(!log.can_undo());
+        assert!(log.can_redo());
+    }
+
+    #[test]
+    fn test_redo_returns_op_ids_for_dom_recreation() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 100.0,
+                width: 200.0,
+                height: 30.0,
+            },
+            text: "Redo test".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        log.undo();
+        assert!(!log.can_undo());
+        assert!(log.can_redo());
+
+        let redone = log.redo();
+        assert!(redone.is_some());
+        let op_ids = redone.unwrap();
+        assert_eq!(op_ids.len(), 1);
+        // ID should be the same as original
+        assert_eq!(op_ids[0], id);
+
+        // Operation should be back in the log
+        assert!(log.get_operation(id).is_some());
+        assert!(log.can_undo());
+        assert!(!log.can_redo());
+    }
+
+    #[test]
+    fn test_action_with_multiple_operations() {
+        let mut log = OperationLog::new();
+
+        // A whiteout with text creates 2 operations in one action
+        log.begin_action(ActionKind::AddWhiteout);
+        let white_id = log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 100.0,
+                height: 30.0,
+            },
+        });
+        let text_id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 100.0,
+                height: 30.0,
+            },
+            text: "Over whiteout".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        assert_eq!(log.operations().len(), 2);
+
+        // Undo should remove BOTH operations
+        let undone = log.undo();
+        assert!(undone.is_some());
+        let op_ids = undone.unwrap();
+        assert_eq!(op_ids.len(), 2);
+        assert!(op_ids.contains(&white_id));
+        assert!(op_ids.contains(&text_id));
+
+        // Both should be gone
+        assert!(log.operations().is_empty());
+    }
+
+    #[test]
+    fn test_new_action_clears_redo_stack() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "First".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        log.undo();
+        assert!(log.can_redo());
+
+        // Adding a new action should clear redo stack
+        log.begin_action(ActionKind::AddTextBox);
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "Second".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        assert!(!log.can_redo());
+    }
+
+    #[test]
+    fn test_undo_multiple_actions() {
+        let mut log = OperationLog::new();
+
+        // Action 1
+        log.begin_action(ActionKind::AddTextBox);
+        let id1 = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "First".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        // Action 2
+        log.begin_action(ActionKind::AddTextBox);
+        let id2 = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 50.0,
+                y: 50.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "Second".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        assert_eq!(log.operations().len(), 2);
+
+        // Undo second action
+        let undone1 = log.undo().unwrap();
+        assert_eq!(undone1, vec![id2]);
+        assert_eq!(log.operations().len(), 1);
+
+        // Undo first action
+        let undone2 = log.undo().unwrap();
+        assert_eq!(undone2, vec![id1]);
+        assert!(log.operations().is_empty());
+    }
+
+    #[test]
+    fn test_undo_without_commit_does_nothing() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "Uncommitted".to_string(),
+            style: TextStyle::default(),
+        });
+        // NOT committing
+
+        assert!(!log.can_undo()); // Can't undo uncommitted action
+    }
+
+    #[test]
+    fn test_abort_action_removes_uncommitted_ops() {
+        let mut log = OperationLog::new();
+
+        log.begin_action(ActionKind::AddTextBox);
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "Will be aborted".to_string(),
+            style: TextStyle::default(),
+        });
+
+        log.abort_action();
+
+        // Operation should be removed
+        assert!(log.operations().is_empty());
+        assert!(!log.can_undo());
+    }
+
+    #[test]
+    fn test_delete_action_type() {
+        let mut log = OperationLog::new();
+
+        // First add something
+        log.begin_action(ActionKind::AddTextBox);
+        let id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            text: "To delete".to_string(),
+            style: TextStyle::default(),
+        });
+        log.commit_action();
+
+        // Now delete it via action
+        log.begin_action(ActionKind::Delete);
+        let removed_op = log.get_operation(id).cloned();
+        log.remove(id);
+        log.record_removed_op(removed_op.unwrap());
+        log.commit_action();
+
+        // Undo should restore the deleted operation
+        log.undo();
+        assert!(log.get_operation(id).is_some());
     }
 }

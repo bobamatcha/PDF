@@ -5,7 +5,7 @@
 
 use pdfjoin_core::apply_operations::apply_operations;
 use pdfjoin_core::has_signatures;
-use pdfjoin_core::operations::{EditOperation, OperationLog, PdfRect, TextStyle};
+use pdfjoin_core::operations::{ActionKind, EditOperation, OperationLog, PdfRect, TextStyle};
 use wasm_bindgen::prelude::*;
 
 /// Session for editing a single PDF document
@@ -307,6 +307,94 @@ impl EditSession {
         self.operations
             .to_json()
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+
+    // ============ Action-Based Undo/Redo (Phase 4) ============
+
+    /// Begin a new action of the given kind.
+    /// Kind values: "textbox", "whiteout", "checkbox", "highlight", "replacetext", "move", "resize", "delete"
+    #[wasm_bindgen(js_name = beginAction)]
+    pub fn begin_action(&mut self, kind: &str) {
+        let action_kind = match kind.to_lowercase().as_str() {
+            "textbox" => ActionKind::AddTextBox,
+            "whiteout" => ActionKind::AddWhiteout,
+            "checkbox" => ActionKind::AddCheckbox,
+            "highlight" => ActionKind::AddHighlight,
+            "replacetext" => ActionKind::ReplaceText,
+            "move" => ActionKind::Move,
+            "resize" => ActionKind::Resize,
+            "delete" => ActionKind::Delete,
+            _ => ActionKind::AddTextBox, // Default fallback
+        };
+        self.operations.begin_action(action_kind);
+    }
+
+    /// Commit the current action to the undo stack.
+    /// Returns true if an action was committed.
+    #[wasm_bindgen(js_name = commitAction)]
+    pub fn commit_action(&mut self) -> bool {
+        self.operations.commit_action()
+    }
+
+    /// Abort the current action and remove any operations that were added.
+    #[wasm_bindgen(js_name = abortAction)]
+    pub fn abort_action(&mut self) {
+        self.operations.abort_action()
+    }
+
+    /// Undo the last action.
+    /// Returns an array of operation IDs that were removed (for DOM cleanup).
+    /// Returns null if there's nothing to undo.
+    #[wasm_bindgen]
+    pub fn undo(&mut self) -> Option<js_sys::BigInt64Array> {
+        self.operations.undo().map(|ids| {
+            let signed_ids: Vec<i64> = ids.iter().map(|&id| id as i64).collect();
+            js_sys::BigInt64Array::from(&signed_ids[..])
+        })
+    }
+
+    /// Redo the last undone action.
+    /// Returns an array of operation IDs that were restored (for DOM recreation).
+    /// Returns null if there's nothing to redo.
+    #[wasm_bindgen]
+    pub fn redo(&mut self) -> Option<js_sys::BigInt64Array> {
+        self.operations.redo().map(|ids| {
+            let signed_ids: Vec<i64> = ids.iter().map(|&id| id as i64).collect();
+            js_sys::BigInt64Array::from(&signed_ids[..])
+        })
+    }
+
+    /// Check if there are actions that can be undone.
+    #[wasm_bindgen(js_name = canUndo)]
+    pub fn can_undo(&self) -> bool {
+        self.operations.can_undo()
+    }
+
+    /// Check if there are actions that can be redone.
+    #[wasm_bindgen(js_name = canRedo)]
+    pub fn can_redo(&self) -> bool {
+        self.operations.can_redo()
+    }
+
+    /// Get operation details as JSON for recreation during redo.
+    /// Returns null if operation not found.
+    #[wasm_bindgen(js_name = getOperationJson)]
+    pub fn get_operation_json(&self, id: u64) -> Option<String> {
+        self.operations
+            .get_operation(id)
+            .and_then(|op| serde_json::to_string(op).ok())
+    }
+
+    /// Record that an operation was removed (for Delete actions).
+    /// This stores the operation so it can be restored on undo.
+    #[wasm_bindgen(js_name = recordRemovedOp)]
+    pub fn record_removed_op(&mut self, id: u64) -> bool {
+        if let Some(op) = self.operations.get_operation(id).cloned() {
+            self.operations.record_removed_op(op);
+            true
+        } else {
+            false
+        }
     }
 
     /// Apply all operations and return the modified PDF

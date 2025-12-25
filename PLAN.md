@@ -30,8 +30,8 @@
 | Text Tool Refactor | ✅ Done | Separate tools: TextBox (transparent) + Whiteout (covers content) |
 | Text Tool Tests | ✅ Done | Browser tests for textbox/whiteout behavior |
 | Text Sizing UX | ✅ Done | Expansion on font size increase, content growth, page boundaries |
-| Action-Based Undo | 🔲 **Next** | Transaction model in Rust, remove `operationHistory` from TS |
-| Re-enable Checkbox | 🔲 Todo | Restore checkbox tool with proper Rust backing |
+| Action-Based Undo | ✅ Done | Transaction model in Rust, removed `operationHistory` from TS |
+| Re-enable Checkbox | 🔲 **Next** | Restore checkbox tool with proper Rust backing |
 | Re-enable Highlight | 🔲 Todo | Restore highlight tool once implemented |
 
 ### Phase 1: Rust Update Methods ✅ Complete
@@ -135,25 +135,60 @@ Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_textbox`
 
 Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_ux`
 
-### Phase 4: Action-Based Undo/Redo
+### Phase 4: Action-Based Undo/Redo ✅ Complete
 
-Replace JS `operationHistory` with Rust transaction model:
+Replaced JS `operationHistory` with Rust transaction model ("thin TS / thick Rust"):
 
+**Rust Implementation** (`pdfjoin-core/src/operations.rs`):
 ```rust
-pub struct Action {
-    id: ActionId,
-    kind: ActionKind,
-    ops: Vec<OpId>,
+pub enum ActionKind {
+    AddTextBox, AddWhiteout, AddCheckbox, AddHighlight,
+    ReplaceText, Move, Resize, Delete,
 }
 
-// In EditSession
-pub fn begin_action(&mut self, kind: ActionKind) -> ActionId
+pub struct Action {
+    pub kind: ActionKind,
+    pub added_ops: Vec<EditOperation>,
+    pub removed_ops: Vec<EditOperation>,  // For delete undo
+}
+
+// OperationLog methods
+pub fn begin_action(&mut self, kind: ActionKind)
 pub fn commit_action(&mut self) -> bool
-pub fn undo(&mut self) -> Option<Vec<OpId>>  // Returns op_ids for TS to remove from DOM
-pub fn redo(&mut self) -> Option<Vec<OpId>>  // Returns op_ids for TS to recreate in DOM
+pub fn abort_action(&mut self)
+pub fn undo(&mut self) -> Option<Vec<OpId>>
+pub fn redo(&mut self) -> Option<Vec<OpId>>
 pub fn can_undo(&self) -> bool
 pub fn can_redo(&self) -> bool
+pub fn record_removed_op(&mut self, op: EditOperation)
 ```
+
+**WASM Bindings** (`edit_session.rs`):
+- `beginAction(kind: string)` - Start action ("textbox", "whiteout", etc.)
+- `commitAction() -> bool` - Finalize and push to undo stack
+- `abortAction()` - Cancel pending action
+- `undo() -> BigInt64Array | null` - Returns removed OpIds for DOM cleanup
+- `redo() -> BigInt64Array | null` - Returns restored OpIds
+- `canUndo() / canRedo()` - State queries
+
+**TypeScript Changes** (`edit.ts`):
+- Removed `operationHistory: OpId[]` array
+- All operation adds wrapped with `beginAction`/`commitAction`
+- `undoLastOperation()` now calls Rust `undo()` and removes DOM elements
+- Added `redoLastOperation()` function
+- `updateButtons()` uses `canUndo()`/`canRedo()` from Rust
+
+**Tests passing**: 10 new tests in `pdfjoin-core/src/operations.rs`:
+- ✅ `test_initial_state_cannot_undo_or_redo`
+- ✅ `test_begin_and_commit_action_enables_undo`
+- ✅ `test_undo_returns_op_ids_for_dom_removal`
+- ✅ `test_redo_returns_op_ids_for_dom_recreation`
+- ✅ `test_action_with_multiple_operations`
+- ✅ `test_new_action_clears_redo_stack`
+- ✅ `test_undo_multiple_actions`
+- ✅ `test_undo_without_commit_does_nothing`
+- ✅ `test_abort_action_removes_uncommitted_ops`
+- ✅ `test_delete_action_type`
 
 ### Phase 5: UX Improvements
 
