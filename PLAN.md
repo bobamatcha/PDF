@@ -31,8 +31,8 @@
 | Text Tool Tests | ✅ Done | Browser tests for textbox/whiteout behavior |
 | Text Sizing UX | ✅ Done | Expansion on font size increase, content growth, page boundaries |
 | Action-Based Undo | ✅ Done | Transaction model in Rust, removed `operationHistory` from TS |
-| Re-enable Checkbox | 🔲 **Next** | Restore checkbox tool with proper Rust backing |
-| Re-enable Highlight | 🔲 Todo | Restore highlight tool once implemented |
+| Re-enable Checkbox | ✅ Done | Checkbox tool with action system for undo/redo |
+| Highlight Tool | ✅ Done | Text selection-based highlight with action system |
 
 ### Phase 1: Rust Update Methods ✅ Complete
 
@@ -190,6 +190,19 @@ pub fn record_removed_op(&mut self, op: EditOperation)
 - ✅ `test_abort_action_removes_uncommitted_ops`
 - ✅ `test_delete_action_type`
 
+**Browser Tests** (`benchmark-harness/tests/browser_pdfjoin.rs`):
+- ✅ `test_undo_redo_buttons_exist` - Both Undo and Redo buttons in toolbar
+- ✅ `test_undo_keyboard_shortcut` - Ctrl+Z removes whiteout
+- ✅ `test_redo_keyboard_shortcut` - Ctrl+Shift+Z restores whiteout
+- ✅ `test_undo_redo_button_clicks` - Full undo/redo cycle with DOM recreation
+
+**UI Features Added**:
+- Redo button (`#edit-redo-btn`) in HTML toolbar
+- Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Shift+Z (redo)
+- DOM recreation on redo via `recreateOperationElement()` parsing Rust JSON
+
+Run tests: `cargo test -p benchmark-harness --test browser_pdfjoin test_undo`
+
 ### Phase 5: UX Improvements
 
 - Remove "Free, private" messaging
@@ -199,12 +212,25 @@ pub fn record_removed_op(&mut self, op: EditOperation)
 
 ### Phase 6: Re-enable Disabled Tools
 
-When re-enabling checkbox/highlight tools:
-1. Uncomment code in `edit.ts` (search for `TODO: Re-enable`)
-2. Uncomment HTML buttons in `index.html`
-3. Uncomment tests in `browser_pdfjoin.rs`
-4. Update `overlayNeedsClicks` in `updateCursor()`
-5. Ensure Rust backing is complete (especially `set_checkbox`)
+**Checkbox Tool - Done**
+- Uncommented `addCheckboxAtPosition()` in `edit.ts` with action system
+- Uncommented `#edit-tool-checkbox` button in `index.html`
+- Uncommented browser test `test_pdfjoin_checkbox_tool_creates_annotation_on_click`
+- Updated `overlayNeedsClicks` to include checkbox tool
+- Rust backing complete with `set_checkbox` method
+
+Run test: `cargo test -p benchmark-harness --test browser_pdfjoin test_pdfjoin_checkbox -- --nocapture`
+
+**Highlight Tool - Done**
+- Implemented text selection-based highlighting (not click-to-place)
+- User selects text in PDF, highlight is created on mouseup
+- Handles multi-line selections (creates highlight for each rect)
+- Proper PDF coordinate conversion
+- Uses action system for undo/redo
+
+Run test: `cargo test -p benchmark-harness --test browser_pdfjoin test_pdfjoin_highlight_tool -- --nocapture`
+
+**Phase 6 Complete** - Both checkbox and highlight tools working with action system support.
 
 ---
 

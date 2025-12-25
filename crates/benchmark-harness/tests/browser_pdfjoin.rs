@@ -7195,7 +7195,7 @@ async fn test_pdfjoin_text_input_auto_expands() {
 /// Bug: overlay-container had pointer-events: none which prevented clicks from reaching the click handler
 /// that adds annotations (text). Clicks passed through to the text layer below.
 /// Fix: updateCursor() now sets overlay-container pointer-events to 'auto' for annotation tools.
-/// NOTE: checkbox and highlight tools are currently disabled, so only text tool is tested.
+/// NOTE: checkbox and text tools are tested. Highlight requires text selection implementation.
 #[tokio::test]
 async fn test_pdfjoin_overlay_pointer_events_enabled_for_annotation_tools() {
     skip_if_no_chrome!();
@@ -7315,128 +7315,273 @@ async fn test_pdfjoin_overlay_pointer_events_enabled_for_annotation_tools() {
     );
 }
 
-// TODO: Re-enable when checkbox tool is restored
-// /// Regression test: Clicking with checkbox tool should actually add a checkbox annotation
-// /// Bug: overlay-container had pointer-events: none, so clicks didn't reach the handler
-// #[tokio::test]
-// async fn test_pdfjoin_checkbox_tool_creates_annotation_on_click() {
-//     skip_if_no_chrome!();
-//     require_local_server!("http://127.0.0.1:8082");
-//
-//     let Some((browser, _handle)) = browser::require_browser().await else {
-//         return;
-//     };
-//
-//     let page = browser
-//         .new_page("about:blank")
-//         .await
-//         .expect("Should create page");
-//
-//     page.goto("http://127.0.0.1:8082")
-//         .await
-//         .expect("Should navigate to PDFJoin");
-//
-//     tokio::time::sleep(Duration::from_secs(3)).await;
-//
-//     let pdf_b64 = test_pdf_base64(1);
-//     let js_code = format!(
-//         r#"(async () => {{
-//             try {{
-//                 // Click Edit tab
-//                 document.querySelector('[data-tab="edit"]').click();
-//                 await new Promise(r => setTimeout(r, 300));
-//
-//                 // Load PDF
-//                 const b64 = "{}";
-//                 const binary = atob(b64);
-//                 const pdfBytes = new Uint8Array(binary.length);
-//                 for (let i = 0; i < binary.length; i++) {{
-//                     pdfBytes[i] = binary.charCodeAt(i);
-//                 }}
-//
-//                 const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
-//                 const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
-//                 const dt = new DataTransfer();
-//                 dt.items.add(file);
-//                 const inp = document.getElementById('edit-file-input');
-//                 inp.files = dt.files;
-//                 inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-//
-//                 // Wait for PDF to render
-//                 await new Promise(r => setTimeout(r, 3000));
-//
-//                 // Click checkbox tool
-//                 document.getElementById('tool-checkbox').click();
-//                 await new Promise(r => setTimeout(r, 100));
-//
-//                 // Count overlays before
-//                 const beforeCount = document.querySelectorAll('[data-op-id]').length;
-//
-//                 // Click on the overlay-container to add a checkbox
-//                 const overlay = document.querySelector('.overlay-container');
-//                 if (!overlay) {{
-//                     return {{ success: false, error: 'overlay-container not found' }};
-//                 }}
-//
-//                 const rect = overlay.getBoundingClientRect();
-//                 overlay.dispatchEvent(new MouseEvent('click', {{
-//                     bubbles: true,
-//                     cancelable: true,
-//                     clientX: rect.left + 200,
-//                     clientY: rect.top + 200,
-//                     view: window
-//                 }}));
-//
-//                 await new Promise(r => setTimeout(r, 500));
-//
-//                 // Count overlays after
-//                 const afterCount = document.querySelectorAll('[data-op-id]').length;
-//
-//                 // Check download button state
-//                 const downloadBtn = document.getElementById('edit-download-btn');
-//                 const downloadEnabled = downloadBtn && !downloadBtn.disabled;
-//
-//                 return {{
-//                     success: true,
-//                     beforeCount: beforeCount,
-//                     afterCount: afterCount,
-//                     checkboxAdded: afterCount > beforeCount,
-//                     downloadEnabled: downloadEnabled
-//                 }};
-//             }} catch (err) {{
-//                 return {{ success: false, error: err.toString() }};
-//             }}
-//         }})()"#,
-//         pdf_b64
-//     );
-//
-//     let result: serde_json::Value = page
-//         .evaluate(js_code.as_str())
-//         .await
-//         .expect("Should test checkbox creation")
-//         .into_value()
-//         .expect("Should get value");
-//
-//     eprintln!("Checkbox tool click test: {:?}", result);
-//
-//     assert!(
-//         result["success"].as_bool().unwrap_or(false),
-//         "Test should succeed. Error: {:?}",
-//         result["error"]
-//     );
-//
-//     assert!(
-//         result["checkboxAdded"].as_bool().unwrap_or(false),
-//         "Clicking with checkbox tool should add a checkbox. Before: {}, After: {}",
-//         result["beforeCount"].as_i64().unwrap_or(0),
-//         result["afterCount"].as_i64().unwrap_or(0)
-//     );
-//
-//     assert!(
-//         result["downloadEnabled"].as_bool().unwrap_or(false),
-//         "Download button should be enabled after adding annotation"
-//     );
-// }
+/// Regression test: Clicking with checkbox tool should actually add a checkbox annotation
+/// Bug: overlay-container had pointer-events: none, so clicks didn't reach the handler
+#[tokio::test]
+async fn test_pdfjoin_checkbox_tool_creates_annotation_on_click() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to render
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Click checkbox tool
+                const checkboxBtn = document.getElementById('tool-checkbox') || document.getElementById('edit-tool-checkbox');
+                if (!checkboxBtn) {{
+                    return {{ success: false, error: 'Checkbox tool button not found' }};
+                }}
+                checkboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Count overlays before
+                const beforeCount = document.querySelectorAll('[data-op-id]').length;
+
+                // Click on the overlay-container to add a checkbox
+                const overlay = document.querySelector('.overlay-container');
+                if (!overlay) {{
+                    return {{ success: false, error: 'overlay-container not found' }};
+                }}
+
+                const rect = overlay.getBoundingClientRect();
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: rect.left + 200,
+                    clientY: rect.top + 200,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Count overlays after
+                const afterCount = document.querySelectorAll('[data-op-id]').length;
+
+                // Check download button state
+                const downloadBtn = document.getElementById('edit-download-btn');
+                const downloadEnabled = downloadBtn && !downloadBtn.disabled;
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    checkboxAdded: afterCount > beforeCount,
+                    downloadEnabled: downloadEnabled
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test checkbox creation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Checkbox tool click test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["checkboxAdded"].as_bool().unwrap_or(false),
+        "Clicking with checkbox tool should add a checkbox. Before: {}, After: {}",
+        result["beforeCount"].as_i64().unwrap_or(0),
+        result["afterCount"].as_i64().unwrap_or(0)
+    );
+
+    assert!(
+        result["downloadEnabled"].as_bool().unwrap_or(false),
+        "Download button should be enabled after adding annotation"
+    );
+}
+
+/// Test: Highlight tool creates annotation when text is selected
+/// This tests the text selection highlight workflow:
+/// 1. Load PDF in edit mode
+/// 2. Select highlight tool
+/// 3. Select text by clicking and dragging on text-layer
+/// 4. Verify highlight annotation is created covering the selected text
+#[tokio::test]
+async fn test_pdfjoin_highlight_tool_creates_annotation_on_text_selection() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
+                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
+                const dt = new DataTransfer();
+                dt.items.add(file);
+                const inp = document.getElementById('edit-file-input');
+                inp.files = dt.files;
+                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                // Wait for PDF to render and text layer to populate
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Click highlight tool
+                const highlightBtn = document.getElementById('tool-highlight') || document.getElementById('edit-tool-highlight');
+                if (!highlightBtn) {{
+                    return {{ success: false, error: 'Highlight tool button not found' }};
+                }}
+                highlightBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Find text items in the text layer
+                const textItems = document.querySelectorAll('.text-item');
+                if (textItems.length === 0) {{
+                    return {{ success: false, error: 'No text items found in text layer' }};
+                }}
+
+                // Count highlights before
+                const beforeCount = document.querySelectorAll('.edit-highlight-overlay, [data-op-id]').length;
+
+                // Select text by simulating mousedown, then mouseup with selection
+                const firstTextItem = textItems[0];
+                const rect = firstTextItem.getBoundingClientRect();
+
+                // Create a text selection programmatically
+                const range = document.createRange();
+                range.selectNodeContents(firstTextItem);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+
+                // Dispatch mouseup to trigger highlight creation
+                document.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: rect.right,
+                    clientY: rect.top + rect.height / 2,
+                    view: window
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Count highlights after
+                const afterCount = document.querySelectorAll('.edit-highlight-overlay, [data-op-id]').length;
+
+                // Check download button state
+                const downloadBtn = document.getElementById('edit-download-btn');
+                const downloadEnabled = downloadBtn && !downloadBtn.disabled;
+
+                // Get selection info for debugging
+                const selectionText = window.getSelection().toString();
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    highlightAdded: afterCount > beforeCount,
+                    downloadEnabled: downloadEnabled,
+                    textItemCount: textItems.length,
+                    selectionText: selectionText
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test highlight creation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Highlight text selection test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["highlightAdded"].as_bool().unwrap_or(false),
+        "Selecting text with highlight tool should add a highlight. Before: {}, After: {}, TextItems: {}",
+        result["beforeCount"].as_i64().unwrap_or(0),
+        result["afterCount"].as_i64().unwrap_or(0),
+        result["textItemCount"].as_i64().unwrap_or(0)
+    );
+}
 
 /// BUG TEST: Whiteout box should NOT expand when typing short text that fits
 /// The bug: Every time something is typed, the whitebox expands even if the text

@@ -334,6 +334,10 @@ function setupEditView() {
       deselectWhiteout();
     }
   });
+  document.addEventListener("mouseup", () => {
+    if (currentTool !== "highlight") return;
+    handleHighlightTextSelection();
+  });
   document.getElementById("edit-prev-page")?.addEventListener("click", () => navigatePage(-1));
   document.getElementById("edit-next-page")?.addEventListener("click", () => navigatePage(1));
   document.querySelector("#edit-error .dismiss")?.addEventListener("click", () => {
@@ -487,6 +491,9 @@ function handleOverlayClick(e, pageNum) {
       break;
     case "textbox":
       createTextBox(pageNum, domX, domY);
+      break;
+    case "checkbox":
+      addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
       break;
   }
 }
@@ -681,6 +688,96 @@ function editExistingTextOverlay(textOverlay, pageNum) {
       }
     }, 100);
   });
+}
+function addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
+  if (!editSession) return;
+  editSession.beginAction("checkbox");
+  const opId = editSession.addCheckbox(pageNum, pdfX - 10, pdfY - 10, 20, 20, true);
+  editSession.commitAction();
+  const checkbox = document.createElement("div");
+  checkbox.className = "edit-checkbox-overlay checked";
+  checkbox.textContent = "\u2713";
+  checkbox.style.left = domX - 10 + "px";
+  checkbox.style.top = domY - 10 + "px";
+  checkbox.dataset.page = String(pageNum);
+  setOpId(checkbox, opId);
+  checkbox.addEventListener("click", (e) => {
+    e.stopPropagation();
+    checkbox.classList.toggle("checked");
+    const isChecked = checkbox.classList.contains("checked");
+    checkbox.textContent = isChecked ? "\u2713" : "";
+    editSession?.setCheckbox(opId, isChecked);
+  });
+  overlay.appendChild(checkbox);
+  updateButtons();
+}
+function handleHighlightTextSelection() {
+  if (!editSession) return;
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const textLayer = (container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement)?.closest(".text-layer");
+  if (!textLayer) {
+    selection.removeAllRanges();
+    return;
+  }
+  const pageNum = parseInt(textLayer.getAttribute("data-page") || "1");
+  const rects = range.getClientRects();
+  if (rects.length === 0) {
+    selection.removeAllRanges();
+    return;
+  }
+  const pageDiv = textLayer.closest(".edit-page");
+  const overlay = pageDiv?.querySelector(".overlay-container");
+  if (!pageDiv || !overlay) {
+    selection.removeAllRanges();
+    return;
+  }
+  const pageRect = pageDiv.getBoundingClientRect();
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) {
+    selection.removeAllRanges();
+    return;
+  }
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  editSession.beginAction("highlight");
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+    const domX = rect.left - pageRect.left;
+    const domY = rect.top - pageRect.top;
+    const domWidth = rect.width;
+    const domHeight = rect.height;
+    if (domWidth < 2 || domHeight < 2) continue;
+    const pdfX = domX * scaleX;
+    const pdfWidth = domWidth * scaleX;
+    const pdfHeight = domHeight * scaleY;
+    const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+    const opId = editSession.addHighlight(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      "#FFFF00",
+      0.3
+    );
+    const highlight = document.createElement("div");
+    highlight.className = "edit-highlight-overlay";
+    highlight.style.left = domX + "px";
+    highlight.style.top = domY + "px";
+    highlight.style.width = domWidth + "px";
+    highlight.style.height = domHeight + "px";
+    highlight.dataset.page = String(pageNum);
+    setOpId(highlight, opId);
+    overlay.appendChild(highlight);
+  }
+  editSession.commitAction();
+  selection.removeAllRanges();
+  updateButtons();
 }
 function handleWhiteoutStart(e, pageNum, overlay, pageDiv) {
   if (currentTool !== "whiteout" && currentTool !== "textbox") return;
@@ -2168,7 +2265,7 @@ function updateCursor() {
   document.querySelectorAll(".text-layer").forEach((layer) => {
     layer.style.pointerEvents = isDrawingTool ? "none" : "auto";
   });
-  const overlayNeedsClicks = currentTool === "text" || currentTool === "textbox";
+  const overlayNeedsClicks = currentTool === "text" || currentTool === "textbox" || currentTool === "checkbox";
   document.querySelectorAll(".overlay-container").forEach((overlay) => {
     overlay.style.pointerEvents = overlayNeedsClicks ? "auto" : "none";
   });

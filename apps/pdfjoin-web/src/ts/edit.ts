@@ -190,6 +190,12 @@ export function setupEditView(): void {
     }
   });
 
+  // Mouseup handler for text selection highlight
+  document.addEventListener('mouseup', () => {
+    if (currentTool !== 'highlight') return;
+    handleHighlightTextSelection();
+  });
+
   // Page navigation
   document.getElementById('edit-prev-page')?.addEventListener('click', () => navigatePage(-1));
   document.getElementById('edit-next-page')?.addEventListener('click', () => navigatePage(1));
@@ -416,11 +422,10 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
       // Create textbox at click position (alternative to drag creation)
       createTextBox(pageNum, domX, domY);
       break;
-    // TODO: Re-enable checkbox tool after testing
-    // case 'checkbox':
-    //   addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
-    //   break;
-    // TODO: Re-enable highlight tool once implemented
+    case 'checkbox':
+      addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
+      break;
+    // TODO: Highlight requires text selection, not click-to-place
     // case 'highlight':
     //   addHighlightAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
     //   break;
@@ -678,54 +683,146 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
   });
 }
 
-// TODO: Re-enable checkbox tool after testing
-// function addCheckboxAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay: HTMLElement, domX: number, domY: number): void {
-//   if (!editSession) return;
-//
-//   const opId = editSession.addCheckbox(pageNum, pdfX - 10, pdfY - 10, 20, 20, true);
-//   operationHistory.push(opId);
-//
-//   const checkbox = document.createElement('div');
-//   checkbox.className = 'edit-checkbox-overlay checked';
-//   checkbox.textContent = '\u2713'; // Checkmark
-//   checkbox.style.left = domX - 10 + 'px';
-//   checkbox.style.top = domY - 10 + 'px';
-//   setOpId(checkbox, opId);
-//
-//   // Toggle on click - NOTE: This is a known bug - doesn't update the PDF
-//   // TODO: Call editSession.setCheckbox() when that method is added
-//   checkbox.addEventListener('click', (e) => {
-//     e.stopPropagation();
-//     checkbox.classList.toggle('checked');
-//     checkbox.textContent = checkbox.classList.contains('checked') ? '\u2713' : '';
-//   });
-//
-//   overlay.appendChild(checkbox);
-//   updateButtons();
-// }
+function addCheckboxAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay: HTMLElement, domX: number, domY: number): void {
+  if (!editSession) return;
 
-// TODO: Re-enable highlight tool once implemented
-// function addHighlightAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay: HTMLElement, domX: number, domY: number): void {
-//   if (!editSession) return;
-//
-//   // For simplicity, create a fixed-size highlight
-//   const width = 150;
-//   const height = 20;
-//
-//   const opId = editSession.addHighlight(pageNum, pdfX, pdfY - height, width, height, '#FFFF00', 0.3);
-//   operationHistory.push(opId);
-//
-//   const highlight = document.createElement('div');
-//   highlight.className = 'edit-highlight-overlay';
-//   highlight.style.left = domX + 'px';
-//   highlight.style.top = domY + 'px';
-//   highlight.style.width = '150px';
-//   highlight.style.height = '20px';
-//   setOpId(highlight, opId);
-//
-//   overlay.appendChild(highlight);
-//   updateButtons();
-// }
+  // Use action system for undo/redo
+  editSession.beginAction('checkbox');
+  const opId = editSession.addCheckbox(pageNum, pdfX - 10, pdfY - 10, 20, 20, true);
+  editSession.commitAction();
+
+  const checkbox = document.createElement('div');
+  checkbox.className = 'edit-checkbox-overlay checked';
+  checkbox.textContent = '\u2713'; // Checkmark
+  checkbox.style.left = domX - 10 + 'px';
+  checkbox.style.top = domY - 10 + 'px';
+  checkbox.dataset.page = String(pageNum);
+  setOpId(checkbox, opId);
+
+  // Toggle on click - updates both DOM and Rust state
+  checkbox.addEventListener('click', (e) => {
+    e.stopPropagation();
+    checkbox.classList.toggle('checked');
+    const isChecked = checkbox.classList.contains('checked');
+    checkbox.textContent = isChecked ? '\u2713' : '';
+    // Update Rust state
+    editSession?.setCheckbox(opId, isChecked);
+  });
+
+  overlay.appendChild(checkbox);
+  updateButtons();
+}
+
+/**
+ * Handle text selection for highlight tool
+ * Called on mouseup when highlight tool is active
+ */
+function handleHighlightTextSelection(): void {
+  if (!editSession) return;
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+    return; // No text selected
+  }
+
+  // Check if selection is within a text-layer
+  const range = selection.getRangeAt(0);
+  const container = range.commonAncestorContainer;
+  const textLayer = (container.nodeType === Node.ELEMENT_NODE
+    ? container as Element
+    : container.parentElement
+  )?.closest('.text-layer');
+
+  if (!textLayer) {
+    selection.removeAllRanges();
+    return; // Selection not in text layer
+  }
+
+  // Get the page number from the text layer
+  const pageNum = parseInt(textLayer.getAttribute('data-page') || '1');
+
+  // Get selection bounding rects
+  const rects = range.getClientRects();
+  if (rects.length === 0) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  // Find the page container to get relative coordinates
+  const pageDiv = textLayer.closest('.edit-page') as HTMLElement;
+  const overlay = pageDiv?.querySelector('.overlay-container') as HTMLElement;
+  if (!pageDiv || !overlay) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  const pageRect = pageDiv.getBoundingClientRect();
+
+  // Get page info for coordinate conversion
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) {
+    selection.removeAllRanges();
+    return;
+  }
+
+  // Calculate scale factors
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+  // Use action system for undo/redo
+  editSession.beginAction('highlight');
+
+  // Create a highlight for each rect (handles multi-line selections)
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+
+    // Convert to page-relative DOM coordinates
+    const domX = rect.left - pageRect.left;
+    const domY = rect.top - pageRect.top;
+    const domWidth = rect.width;
+    const domHeight = rect.height;
+
+    // Skip tiny rects (artifacts)
+    if (domWidth < 2 || domHeight < 2) continue;
+
+    // Convert DOM coordinates to PDF coordinates (origin at bottom-left, Y flipped)
+    const pdfX = domX * scaleX;
+    const pdfWidth = domWidth * scaleX;
+    const pdfHeight = domHeight * scaleY;
+    // PDF Y is from bottom, so we need to flip
+    const pdfY = pageInfo.page.view[3] - (domY + domHeight) * scaleY;
+
+    // Add highlight to Rust session
+    const opId = editSession.addHighlight(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      '#FFFF00',
+      0.3
+    );
+
+    // Create DOM element for the highlight
+    const highlight = document.createElement('div');
+    highlight.className = 'edit-highlight-overlay';
+    highlight.style.left = domX + 'px';
+    highlight.style.top = domY + 'px';
+    highlight.style.width = domWidth + 'px';
+    highlight.style.height = domHeight + 'px';
+    highlight.dataset.page = String(pageNum);
+    setOpId(highlight, opId);
+
+    overlay.appendChild(highlight);
+  }
+
+  editSession.commitAction();
+
+  // Clear the selection
+  selection.removeAllRanges();
+
+  updateButtons();
+}
 
 // ============ Whiteout Drawing Functions ============
 
@@ -2818,10 +2915,9 @@ function updateCursor(): void {
   });
 
   // Enable overlay-container pointer events for tools that need to capture clicks
-  // textbox needs clicks for both creating new boxes and editing existing ones
-  const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox';
-  // TODO: Re-enable when checkbox/highlight tools are restored
-  // const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox' || currentTool === 'checkbox' || currentTool === 'highlight';
+  // textbox needs clicks for creating new boxes and editing existing ones
+  // checkbox needs clicks for adding checkboxes
+  const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox' || currentTool === 'checkbox';
   document.querySelectorAll<HTMLElement>('.overlay-container').forEach((overlay) => {
     overlay.style.pointerEvents = overlayNeedsClicks ? 'auto' : 'none';
   });
