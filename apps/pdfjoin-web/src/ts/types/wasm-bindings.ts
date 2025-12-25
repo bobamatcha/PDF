@@ -163,6 +163,7 @@ export interface EditSession {
   getOperationCount(): number;
   getOperationsJson(): string;
   export(): Uint8Array;
+  exportFlattened(): Uint8Array;
 
   // Action-based undo/redo (Phase 4)
   beginAction(kind: ActionKind): void;

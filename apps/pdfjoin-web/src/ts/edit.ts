@@ -276,6 +276,9 @@ async function loadPdfIntoEditInternal(bytes: Uint8Array, filename: string): Pro
   currentPdfBytes = bytes;
   currentPdfFilename = filename;
 
+  // Expose for debugging
+  (window as unknown as { __editSession__: typeof editSession }).__editSession__ = editSession;
+
   // Register callbacks for change detection
   registerEditCallbacks(
     () => editSession?.hasChanges() ?? false,

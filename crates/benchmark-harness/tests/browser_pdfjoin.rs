@@ -5137,6 +5137,25 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
                 const textSpan = whiteout.querySelector('.whiteout-text-content');
                 const hasTextInPreview = textSpan && textSpan.textContent.includes('UNIQUE_WHITEOUT_TEXT_XYZ789');
 
+                // Check if whiteout has operation ID (indicates operation was saved)
+                const whiteoutOpId = whiteout?.dataset?.opId ?? 'none';
+                const allOpIds = Array.from(document.querySelectorAll('[data-op-id]')).map(el => el.dataset.opId);
+
+                // Get session operation count via window.wasmBindings or editSession reference
+                // The edit.ts module should expose this
+                let sessionOpCount = -1;
+                let sessionHasChanges = false;
+                let operationsJson = '';
+                try {{
+                    // Try to access the edit session through the debug API if available
+                    const session = window.__editSession__;
+                    if (session) {{
+                        sessionOpCount = session.getOperationCount?.() ?? -1;
+                        sessionHasChanges = session.hasChanges?.() ?? false;
+                        operationsJson = session.getOperationsJson?.() ?? '';
+                    }}
+                }} catch(e) {{}}
+
                 // Capture the export by intercepting the download
                 let exportedArray = null;
                 let exportPromiseResolve = null;
@@ -5156,6 +5175,25 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
                     }};
                     return originalCreateObjectURL(blob);
                 }};
+
+                // Try direct export first to see if there are any errors
+                let directExportError = null;
+                let directExportSize = null;
+                let directHasWhite = false;
+                try {{
+                    const session = window.__editSession__;
+                    if (session && session.exportFlattened) {{
+                        const directResult = session.exportFlattened();
+                        directExportSize = directResult.length;
+                        const decoder2 = new TextDecoder('utf-8', {{ fatal: false }});
+                        const directText = decoder2.decode(directResult);
+                        directHasWhite = directText.includes('1 1 1 rg');
+                    }} else {{
+                        directExportError = 'no session or exportFlattened';
+                    }}
+                }} catch(e) {{
+                    directExportError = e.toString();
+                }}
 
                 // Click download button
                 const downloadBtn = document.getElementById('edit-download-btn');
@@ -5186,6 +5224,12 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
                 const hasTextInPdf = pdfText.includes('UNIQUE_WHITEOUT_TEXT_XYZ789');
                 const hasFreeText = pdfText.includes('/FreeText');
                 const hasSquare = pdfText.includes('/Square');
+                // With flattening, whiteout becomes content stream operators
+                const hasWhiteRect = pdfText.includes('1 1 1 rg') || pdfText.includes('1 1 1 RG');
+
+                // Debug: check if PDF header is valid and capture first 100 chars
+                const pdfHeader = pdfText.substring(0, 100);
+                const isPdfValid = pdfText.startsWith('%PDF');
 
                 return {{
                     success: true,
@@ -5193,7 +5237,17 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
                     hasTextInPdf: hasTextInPdf,
                     hasFreeText: hasFreeText,
                     hasSquare: hasSquare,
-                    exportedSize: exportedArray.length
+                    hasWhiteRect: hasWhiteRect,
+                    exportedSize: exportedArray.length,
+                    whiteoutOpId: whiteoutOpId,
+                    allOpIds: allOpIds,
+                    sessionOpCount: sessionOpCount,
+                    sessionHasChanges: sessionHasChanges,
+                    isPdfValid: isPdfValid,
+                    pdfHeader: pdfHeader,
+                    directExportError: directExportError,
+                    directExportSize: directExportSize,
+                    directHasWhite: directHasWhite
                 }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};

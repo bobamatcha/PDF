@@ -3,7 +3,7 @@
 //! This module provides a WASM-exposed session for editing PDFs.
 //! It integrates with the pdfjoin-core operations module.
 
-use pdfjoin_core::apply_operations::apply_operations;
+use pdfjoin_core::apply_operations::{apply_operations, apply_operations_flattened};
 use pdfjoin_core::has_signatures;
 use pdfjoin_core::operations::{ActionKind, EditOperation, OperationLog, PdfRect, TextStyle};
 use wasm_bindgen::prelude::*;
@@ -412,6 +412,24 @@ impl EditSession {
         array.copy_from(&result);
         Ok(array)
     }
+
+    /// Apply all operations with flattening - writes directly to page content
+    /// instead of creating annotations. This makes edits permanent and uneditable.
+    #[wasm_bindgen(js_name = exportFlattened)]
+    pub fn export_flattened(&self) -> Result<js_sys::Uint8Array, JsValue> {
+        if self.is_signed {
+            return Err(JsValue::from_str(
+                "Cannot export: Document is signed. Editing would invalidate the signature.",
+            ));
+        }
+
+        let result = apply_operations_flattened(&self.document_bytes, &self.operations)
+            .map_err(|e| JsValue::from_str(&format!("Export error: {}", e)))?;
+
+        let array = js_sys::Uint8Array::new_with_length(result.len() as u32);
+        array.copy_from(&result);
+        Ok(array)
+    }
 }
 
 #[cfg(test)]
@@ -523,4 +541,8 @@ mod tests {
         assert_eq!(id, 0);
         assert!(session.has_changes());
     }
+
+    // Note: test_export_flattened_applies_whiteout cannot run outside WASM context
+    // because export_flattened returns js_sys::Uint8Array. The flatten functionality
+    // is tested in pdfjoin-core unit tests instead.
 }

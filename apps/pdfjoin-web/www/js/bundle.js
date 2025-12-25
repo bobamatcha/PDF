@@ -392,6 +392,7 @@ async function loadPdfIntoEditInternal(bytes, filename) {
   editSession = new EditSession(filename, bytes);
   currentPdfBytes = bytes;
   currentPdfFilename = filename;
+  window.__editSession__ = editSession;
   registerEditCallbacks(
     () => editSession?.hasChanges() ?? false,
     () => {

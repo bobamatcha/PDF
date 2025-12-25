@@ -1,6 +1,8 @@
 # Monolith Integration Plan
 
 > **Development Guidelines**: See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
+>
+> **Known Issues**: See [KNOWN_ISSUES.md](./KNOWN_ISSUES.md) for tracked bugs and investigation items.
 
 ---
 
@@ -33,6 +35,8 @@
 | Action-Based Undo | ✅ Done | Transaction model in Rust, removed `operationHistory` from TS |
 | Re-enable Checkbox | ✅ Done | Checkbox tool with action system for undo/redo |
 | Highlight Tool | ✅ Done | Text selection-based highlight with action system |
+| Export Compression | ✅ Done | Added `doc.compress()` to reduce file size |
+| Flatten Export | ⚠️ Blocked | Rust works, WASM fails - see [ISSUE-001](./KNOWN_ISSUES.md#issue-001-pdf-flatten-export-not-working-in-wasm) |
 
 ### Phase 1: Rust Update Methods ✅ Complete
 

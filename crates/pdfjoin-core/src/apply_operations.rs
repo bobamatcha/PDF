@@ -59,11 +59,317 @@ pub fn apply_operations(pdf_bytes: &[u8], log: &OperationLog) -> Result<Vec<u8>,
         }
     }
 
+    // Compress to remove orphaned objects and reduce file size
+    doc.compress();
+
     let mut output = Vec::new();
     doc.save_to(&mut output)
         .map_err(|e| PdfJoinError::OperationError(e.to_string()))?;
 
     Ok(output)
+}
+
+/// Apply all operations flattened directly into page content streams.
+/// Unlike `apply_operations`, this does NOT create annotations - it burns
+/// the content directly into the page, making edits permanent and non-removable.
+pub fn apply_operations_flattened(
+    pdf_bytes: &[u8],
+    log: &OperationLog,
+) -> Result<Vec<u8>, PdfJoinError> {
+    if log.is_empty() {
+        return Ok(pdf_bytes.to_vec());
+    }
+
+    let mut doc =
+        Document::load_mem(pdf_bytes).map_err(|e| PdfJoinError::ParseError(e.to_string()))?;
+
+    let pages: Vec<(u32, ObjectId)> = doc.get_pages().into_iter().collect();
+
+    for (page_num, page_id) in &pages {
+        let page_ops = log.operations_for_page(*page_num);
+        if page_ops.is_empty() {
+            continue;
+        }
+
+        // Build content stream additions for this page
+        let mut content_additions = String::new();
+
+        for op in page_ops {
+            flatten_operation_to_content(&mut content_additions, op)?;
+        }
+
+        if !content_additions.is_empty() {
+            // Append to page content stream
+            append_to_page_content(&mut doc, *page_id, &content_additions)?;
+        }
+    }
+
+    doc.compress();
+
+    let mut output = Vec::new();
+    doc.save_to(&mut output)
+        .map_err(|e| PdfJoinError::OperationError(e.to_string()))?;
+
+    Ok(output)
+}
+
+/// Convert an operation to PDF content stream operators
+fn flatten_operation_to_content(
+    content: &mut String,
+    op: &EditOperation,
+) -> Result<(), PdfJoinError> {
+    use std::fmt::Write;
+
+    match op {
+        EditOperation::AddText {
+            rect, text, style, ..
+        } => {
+            let (r, g, b) = parse_hex_color(&style.color);
+            let font_name = style.pdf_font_name();
+
+            // Save graphics state
+            writeln!(content, "q").unwrap();
+            // Set font and color
+            writeln!(content, "{} {} {} rg", r, g, b).unwrap();
+            writeln!(content, "BT").unwrap();
+            writeln!(content, "/{} {} Tf", font_name, style.font_size).unwrap();
+            writeln!(content, "{} {} Td", rect.x, rect.y).unwrap();
+            // Escape text for PDF
+            let escaped = escape_pdf_string(text);
+            writeln!(content, "({}) Tj", escaped).unwrap();
+            writeln!(content, "ET").unwrap();
+            // Restore graphics state
+            writeln!(content, "Q").unwrap();
+        }
+        EditOperation::AddHighlight {
+            rect,
+            color,
+            opacity,
+            ..
+        } => {
+            let (r, g, b) = parse_hex_color(color);
+
+            writeln!(content, "q").unwrap();
+            // Set transparency if not fully opaque
+            if *opacity < 1.0 {
+                writeln!(content, "/GS1 gs").unwrap(); // Assumes GS1 is defined with alpha
+            }
+            writeln!(content, "{} {} {} rg", r, g, b).unwrap();
+            writeln!(
+                content,
+                "{} {} {} {} re f",
+                rect.x, rect.y, rect.width, rect.height
+            )
+            .unwrap();
+            writeln!(content, "Q").unwrap();
+        }
+        EditOperation::AddCheckbox { rect, checked, .. } => {
+            // Draw checkbox as a rectangle with optional checkmark
+            writeln!(content, "q").unwrap();
+            // Draw border
+            writeln!(content, "0 0 0 RG").unwrap(); // Black stroke
+            writeln!(content, "1 w").unwrap(); // 1pt line width
+            writeln!(
+                content,
+                "{} {} {} {} re S",
+                rect.x, rect.y, rect.width, rect.height
+            )
+            .unwrap();
+
+            if *checked {
+                // Draw checkmark
+                writeln!(content, "0 0 0 RG").unwrap();
+                writeln!(content, "2 w").unwrap();
+                let x1 = rect.x + rect.width * 0.2;
+                let y1 = rect.y + rect.height * 0.5;
+                let x2 = rect.x + rect.width * 0.4;
+                let y2 = rect.y + rect.height * 0.2;
+                let x3 = rect.x + rect.width * 0.8;
+                let y3 = rect.y + rect.height * 0.8;
+                writeln!(content, "{} {} m {} {} l {} {} l S", x1, y1, x2, y2, x3, y3).unwrap();
+            }
+            writeln!(content, "Q").unwrap();
+        }
+        EditOperation::AddWhiteRect { rect, .. } => {
+            // Draw white filled rectangle
+            writeln!(content, "q").unwrap();
+            writeln!(content, "1 1 1 rg").unwrap(); // White fill
+            writeln!(
+                content,
+                "{} {} {} {} re f",
+                rect.x, rect.y, rect.width, rect.height
+            )
+            .unwrap();
+            writeln!(content, "Q").unwrap();
+        }
+        EditOperation::ReplaceText {
+            original_rect,
+            replacement_rect,
+            new_text,
+            style,
+            ..
+        } => {
+            // First draw white rectangle over original
+            writeln!(content, "q").unwrap();
+            writeln!(content, "1 1 1 rg").unwrap();
+            writeln!(
+                content,
+                "{} {} {} {} re f",
+                original_rect.x, original_rect.y, original_rect.width, original_rect.height
+            )
+            .unwrap();
+            writeln!(content, "Q").unwrap();
+
+            // Then draw new text
+            let (r, g, b) = parse_hex_color(&style.color);
+            let font_name = style.pdf_font_name();
+
+            writeln!(content, "q").unwrap();
+            writeln!(content, "{} {} {} rg", r, g, b).unwrap();
+            writeln!(content, "BT").unwrap();
+            writeln!(content, "/{} {} Tf", font_name, style.font_size).unwrap();
+            writeln!(content, "{} {} Td", replacement_rect.x, replacement_rect.y).unwrap();
+            let escaped = escape_pdf_string(new_text);
+            writeln!(content, "({}) Tj", escaped).unwrap();
+            writeln!(content, "ET").unwrap();
+            writeln!(content, "Q").unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+/// Append content to a page's content stream
+fn append_to_page_content(
+    doc: &mut Document,
+    page_id: ObjectId,
+    new_content: &str,
+) -> Result<(), PdfJoinError> {
+    // Get the page object
+    let page = doc
+        .get_object(page_id)
+        .map_err(|e| PdfJoinError::OperationError(e.to_string()))?
+        .clone();
+
+    let page_dict = match page {
+        Object::Dictionary(d) => d,
+        _ => {
+            return Err(PdfJoinError::OperationError(
+                "Page is not a dictionary".into(),
+            ))
+        }
+    };
+
+    // Get existing content
+    let existing_content = if let Ok(contents) = page_dict.get(b"Contents") {
+        get_content_bytes(doc, contents)?
+    } else {
+        Vec::new()
+    };
+
+    // Combine existing content with new content
+    let mut combined = existing_content;
+    combined.extend_from_slice(b"\n");
+    combined.extend_from_slice(new_content.as_bytes());
+
+    // Create new content stream
+    let new_stream = lopdf::Stream::new(Dictionary::new(), combined);
+    let new_content_id = doc.add_object(Object::Stream(new_stream));
+
+    // Update page to point to new content
+    let mut new_page_dict = page_dict.clone();
+    new_page_dict.set("Contents", Object::Reference(new_content_id));
+
+    // Ensure page has required font resources for flattened text
+    ensure_font_resources(&mut new_page_dict, doc)?;
+
+    doc.set_object(page_id, Object::Dictionary(new_page_dict));
+
+    Ok(())
+}
+
+/// Get bytes from content stream (handles both direct and reference)
+fn get_content_bytes(doc: &Document, contents: &Object) -> Result<Vec<u8>, PdfJoinError> {
+    match contents {
+        Object::Reference(id) => {
+            let obj = doc
+                .get_object(*id)
+                .map_err(|e| PdfJoinError::OperationError(e.to_string()))?;
+            get_content_bytes(doc, obj)
+        }
+        Object::Stream(stream) => Ok(stream
+            .decompressed_content()
+            .unwrap_or_else(|_| stream.content.clone())),
+        Object::Array(arr) => {
+            // Multiple content streams - concatenate
+            let mut result = Vec::new();
+            for item in arr {
+                result.extend(get_content_bytes(doc, item)?);
+                result.push(b'\n');
+            }
+            Ok(result)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Ensure the page has font resources for the standard fonts we use
+fn ensure_font_resources(
+    page_dict: &mut Dictionary,
+    doc: &mut Document,
+) -> Result<(), PdfJoinError> {
+    // Get or create Resources dictionary
+    let resources = if let Ok(res) = page_dict.get(b"Resources") {
+        match res {
+            Object::Dictionary(d) => d.clone(),
+            Object::Reference(id) => match doc.get_object(*id) {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => Dictionary::new(),
+            },
+            _ => Dictionary::new(),
+        }
+    } else {
+        Dictionary::new()
+    };
+
+    // Get or create Font dictionary
+    let mut fonts = if let Ok(f) = resources.get(b"Font") {
+        match f {
+            Object::Dictionary(d) => d.clone(),
+            Object::Reference(id) => match doc.get_object(*id) {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => Dictionary::new(),
+            },
+            _ => Dictionary::new(),
+        }
+    } else {
+        Dictionary::new()
+    };
+
+    // Add standard fonts if not present
+    let standard_fonts = [
+        ("Helvetica", "Helvetica"),
+        ("Helvetica-Bold", "Helvetica-Bold"),
+        ("Helvetica-Oblique", "Helvetica-Oblique"),
+        ("Helvetica-BoldOblique", "Helvetica-BoldOblique"),
+    ];
+
+    for (name, base_font) in standard_fonts {
+        if fonts.get(name.as_bytes()).is_err() {
+            let mut font_dict = Dictionary::new();
+            font_dict.set("Type", Object::Name(b"Font".to_vec()));
+            font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+            font_dict.set("BaseFont", Object::Name(base_font.as_bytes().to_vec()));
+            fonts.set(name, Object::Dictionary(font_dict));
+        }
+    }
+
+    // Update resources with fonts
+    let mut new_resources = resources.clone();
+    new_resources.set("Font", Object::Dictionary(fonts));
+    page_dict.set("Resources", Object::Dictionary(new_resources));
+
+    Ok(())
 }
 
 fn apply_single_operation(
@@ -1260,5 +1566,262 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_flattened_output_has_no_annotations() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 20.0,
+            },
+            text: "Flattened Text".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+
+        // Load the result and check for annotations
+        let doc = Document::load_mem(&result).unwrap();
+        let pages: Vec<_> = doc.get_pages().into_iter().collect();
+        let (_, page_id) = pages[0];
+
+        // Get the page dictionary
+        if let Ok(Object::Dictionary(page_dict)) = doc.get_object(page_id) {
+            // Check that there are no annotations, or Annots is empty
+            if let Ok(annots) = page_dict.get(b"Annots") {
+                match annots {
+                    Object::Array(arr) => {
+                        assert!(arr.is_empty(), "Flattened PDF should have no annotations");
+                    }
+                    Object::Reference(annots_ref) => {
+                        if let Ok(Object::Array(arr)) = doc.get_object(*annots_ref) {
+                            assert!(arr.is_empty(), "Flattened PDF should have no annotations");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // If no Annots key at all, that's also correct
+        }
+    }
+
+    #[test]
+    fn test_flattened_text_is_in_content_stream() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 20.0,
+            },
+            text: "FLATTEN_TEST_STRING".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+
+        // The text should appear somewhere in the PDF content
+        // (either in content stream or as a visible string)
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(
+            result_str.contains("FLATTEN_TEST_STRING"),
+            "Flattened text should appear in PDF content"
+        );
+    }
+
+    #[test]
+    fn test_flattened_whiteout_produces_white_color() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 50.0,
+            },
+        });
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+
+        // The white color (1 1 1 rg) should appear in the PDF
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(
+            result_str.contains("1 1 1 rg"),
+            "Flattened whiteout should have white fill color (1 1 1 rg). PDF content: {}",
+            &result_str[..std::cmp::min(500, result_str.len())]
+        );
+    }
+
+    /// Test that mimics the browser test PDF structure
+    #[test]
+    fn test_flattened_with_multipage_pdf() {
+        // Create a 2-page PDF similar to test_pdf_base64
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let mut page_ids = Vec::new();
+
+        for i in 0..2 {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new(
+                        "Tf",
+                        vec![Object::Name(b"F1".to_vec()), Object::Integer(12)],
+                    ),
+                    Operation::new("Td", vec![Object::Integer(100), Object::Integer(700)]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::String(
+                            format!("Page {}", i + 1).into_bytes(),
+                            lopdf::StringFormat::Literal,
+                        )],
+                    ),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let content_id =
+                doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+
+            let page = dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => Object::Reference(content_id),
+            };
+            let page_id = doc.add_object(page);
+            page_ids.push(page_id);
+        }
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => 2,
+            "Kids" => page_ids.iter().map(|id| Object::Reference(*id)).collect::<Vec<_>>(),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(catalog);
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut pdf_bytes = Vec::new();
+        doc.save_to(&mut pdf_bytes).unwrap();
+
+        // Now add a whiteout on page 1
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 66.67,
+                y: 687.05,
+                width: 134.68,
+                height: 38.53,
+            },
+        });
+
+        eprintln!("Original PDF size: {} bytes", pdf_bytes.len());
+        eprintln!("Operations: {:?}", log.operations());
+        eprintln!("Is empty: {}", log.is_empty());
+
+        let result = apply_operations_flattened(&pdf_bytes, &log).unwrap();
+
+        eprintln!("Result PDF size: {} bytes", result.len());
+
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(
+            result_str.contains("1 1 1 rg"),
+            "Flattened whiteout should have white fill color (1 1 1 rg)"
+        );
+    }
+
+    #[test]
+    fn test_get_pages_returns_correct_page_numbers() {
+        // Create a PDF like the browser test does
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+        let mut page_ids = Vec::new();
+
+        for i in 0..2 {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new(
+                        "Tf",
+                        vec![Object::Name(b"F1".to_vec()), Object::Integer(12)],
+                    ),
+                    Operation::new("Td", vec![Object::Integer(100), Object::Integer(700)]),
+                    Operation::new(
+                        "Tj",
+                        vec![Object::String(
+                            format!("Page {}", i + 1).into_bytes(),
+                            lopdf::StringFormat::Literal,
+                        )],
+                    ),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let content_id =
+                doc.add_object(Stream::new(Dictionary::new(), content.encode().unwrap()));
+
+            let page = dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => Object::Reference(content_id),
+            };
+            let page_id = doc.add_object(page);
+            page_ids.push(page_id);
+        }
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => 2,
+            "Kids" => page_ids.iter().map(|id| Object::Reference(*id)).collect::<Vec<_>>(),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(catalog);
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Save and reload
+        let mut pdf_bytes = Vec::new();
+        doc.save_to(&mut pdf_bytes).unwrap();
+
+        let reloaded = Document::load_mem(&pdf_bytes).unwrap();
+        let pages = reloaded.get_pages();
+
+        eprintln!("Pages map: {:?}", pages);
+
+        // Should have pages 1 and 2
+        assert!(pages.contains_key(&1), "Should have page 1");
+        assert!(pages.contains_key(&2), "Should have page 2");
+        assert_eq!(pages.len(), 2, "Should have exactly 2 pages");
     }
 }
