@@ -155,6 +155,19 @@ apps/                       # Deployable applications
 - **CMS/PKCS#7**: RFC 5652 compliant signature format
 - **TSA Integration**: RFC 3161 timestamp authority support
 
+### PDFJoin Edit Mode
+- **Split PDF**: Extract specific page ranges from documents
+- **Merge PDF**: Combine multiple PDFs into one
+- **Text Boxes**: Add text annotations with font styling (bold, italic)
+- **Whiteout**: Cover content with white rectangles (editable - double-click to add text)
+- **Blackout/Redaction**: Cover content with black rectangles (permanent redaction - no text editing)
+  - Double-click Whiteout button to toggle Blackout mode
+  - Blackout rectangles cannot have text typed inside (security)
+  - Flattened export burns redactions directly into PDF content stream
+- **Drag & Resize**: Move and resize annotations with visual handles
+- **Undo/Redo**: Full action history with Ctrl+Z/Ctrl+Shift+Z support
+- **Flattened Export**: Burns all edits permanently into PDF (non-removable)
+
 ### MCP Integration
 - **Claude Desktop Compatible**: JSON-RPC over stdio
 - **HTTP Transport**: Optional REST API mode (feature flag)

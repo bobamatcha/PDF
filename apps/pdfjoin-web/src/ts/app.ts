@@ -9,6 +9,104 @@ import type { PdfJoinSession, PdfInfo, DocumentInfo } from './types';
 const LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024; // 50 MB
 const VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024; // 100 MB
 
+// ============ ACCESSIBILITY: Screen Reader Announcements (WCAG 4.1.3) ============
+
+/**
+ * Announce a message to screen readers via the aria-live region.
+ * Use for important state changes like loading, success, and errors.
+ */
+function announceToScreenReader(message: string): void {
+  const liveRegion = document.getElementById('aria-live-region');
+  if (liveRegion) {
+    // Clear first to ensure re-announcement of same message
+    liveRegion.textContent = '';
+    // Use setTimeout to ensure the DOM update triggers the announcement
+    setTimeout(() => {
+      liveRegion.textContent = message;
+    }, 50);
+  }
+}
+
+// ============ ACCESSIBILITY: Confirmation Dialog (WCAG 3.3.4) ============
+
+interface ConfirmDialogOptions {
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  icon?: string;
+}
+
+/**
+ * Shows a confirmation dialog for destructive actions.
+ * Returns a promise that resolves to true if confirmed, false if cancelled.
+ */
+function showConfirmDialog(options: ConfirmDialogOptions): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('confirm-dialog-overlay');
+    const heading = document.getElementById('confirm-dialog-heading');
+    const message = document.getElementById('confirm-dialog-message');
+    const icon = document.getElementById('confirm-dialog-icon');
+    const confirmBtn = document.getElementById('confirm-dialog-confirm');
+    const cancelBtn = document.getElementById('confirm-dialog-cancel');
+
+    if (!overlay || !heading || !message || !confirmBtn || !cancelBtn) {
+      // Fallback to native confirm if dialog elements not found
+      resolve(window.confirm(options.message));
+      return;
+    }
+
+    // Set dialog content
+    heading.textContent = options.title;
+    message.textContent = options.message;
+    if (icon) icon.innerHTML = options.icon || '&#9888;';
+    confirmBtn.textContent = options.confirmText || 'Remove';
+    cancelBtn.textContent = options.cancelText || 'Cancel';
+
+    // Show dialog
+    overlay.classList.add('show');
+    confirmBtn.focus();
+
+    // Clean up function
+    const cleanup = () => {
+      overlay.classList.remove('show');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onOverlayClick);
+      document.removeEventListener('keydown', onKeydown);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    const onOverlayClick = (e: MouseEvent) => {
+      if (e.target === overlay) {
+        cleanup();
+        resolve(false);
+      }
+    };
+
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(false);
+      }
+    };
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onOverlayClick);
+    document.addEventListener('keydown', onKeydown);
+  });
+}
+
 let splitSession: PdfJoinSession | null = null;
 let mergeSession: PdfJoinSession | null = null;
 let splitOriginalFilename: string | null = null; // Track original filename for smart naming
@@ -53,8 +151,38 @@ function setupTabs(): void {
         // Auto-load PDF into target tab (Split or Merge)
         if (hasSharedPdf()) {
           const shared = getSharedPdf();
-          if (shared.bytes && shared.filename && tabName === 'split') {
-            loadPdfIntoSplit(shared.bytes, shared.filename);
+          if (shared.bytes && shared.filename) {
+            if (tabName === 'split') {
+              loadPdfIntoSplit(shared.bytes, shared.filename);
+            } else if (tabName === 'merge') {
+              // ISSUE-009: Edit → Merge - add document to merge list
+              loadPdfIntoMerge(shared.bytes, shared.filename);
+            }
+          }
+        }
+      }
+
+      // Split → Merge: Add shared document to merge list (ISSUE-009)
+      if (currentTab === 'split' && tabName === 'merge') {
+        if (hasSharedPdf()) {
+          const shared = getSharedPdf();
+          if (shared.bytes && shared.filename) {
+            loadPdfIntoMerge(shared.bytes, shared.filename);
+          }
+        }
+      }
+
+      // Merge → Split: Load first merged document into Split (ISSUE-009)
+      if (currentTab === 'merge' && tabName === 'split') {
+        if (mergeSession && mergeSession.getDocumentCount() > 0) {
+          try {
+            const bytes = mergeSession.getDocumentBytes(0);
+            const name = mergeSession.getDocumentName(0);
+            loadPdfIntoSplit(bytes, name);
+            // Also update shared state
+            setSharedPdf(bytes, name, 'merge');
+          } catch (e) {
+            console.error('Failed to load merge document into split:', e);
           }
         }
       }
@@ -68,18 +196,58 @@ function setupTabs(): void {
       const view = document.getElementById(`${tabName}-view`);
       if (view) view.classList.remove('hidden');
 
-      // Split/Merge → Edit: Auto-load PDF
-      if (tabName === 'edit' && hasSharedPdf()) {
-        const shared = getSharedPdf();
+      // Split/Merge → Edit: Auto-load PDF (ISSUE-009 extended to include Merge)
+      if (tabName === 'edit') {
         const editEditor = document.getElementById('edit-editor');
         const editAlreadyLoaded = editEditor && !editEditor.classList.contains('hidden');
 
-        if (!editAlreadyLoaded && shared.bytes && shared.filename) {
-          await loadPdfIntoEdit(shared.bytes, shared.filename);
+        if (!editAlreadyLoaded) {
+          // Try shared state first
+          if (hasSharedPdf()) {
+            const shared = getSharedPdf();
+            if (shared.bytes && shared.filename) {
+              await loadPdfIntoEdit(shared.bytes, shared.filename);
+            }
+          }
+          // If coming from Merge and no shared state, load first merge document
+          else if (currentTab === 'merge' && mergeSession && mergeSession.getDocumentCount() > 0) {
+            try {
+              const bytes = mergeSession.getDocumentBytes(0);
+              const name = mergeSession.getDocumentName(0);
+              await loadPdfIntoEdit(bytes, name);
+              setSharedPdf(bytes, name, 'merge');
+            } catch (e) {
+              console.error('Failed to load merge document into edit:', e);
+            }
+          }
         }
       }
     });
   });
+}
+
+/**
+ * Load PDF bytes directly into the Merge tab (for Tab PDF Sharing - ISSUE-009)
+ * Adds the document to the merge list if not already present
+ */
+function loadPdfIntoMerge(bytes: Uint8Array, filename: string): void {
+  if (!mergeSession) return;
+
+  // Check if document is already in the merge list (by name)
+  const infos = mergeSession.getDocumentInfos();
+  const alreadyExists = infos.some((info) => info.name === filename);
+  if (alreadyExists) {
+    console.log(`Document "${filename}" already in merge list, skipping`);
+    return;
+  }
+
+  try {
+    mergeSession.addDocument(filename, bytes);
+    updateMergeFileList();
+    console.log(`Added "${filename}" to merge list from tab switch`);
+  } catch (e) {
+    console.error('Failed to add document to merge:', e);
+  }
 }
 
 /**
@@ -250,7 +418,19 @@ function setupSplitView(): void {
     if (fileInput.files && fileInput.files.length > 0) handleSplitFile(fileInput.files[0]);
   });
 
-  removeBtn.addEventListener('click', resetSplitView);
+  // ACCESSIBILITY: Confirm before removing file (WCAG 3.3.4 Error Prevention)
+  removeBtn.addEventListener('click', async () => {
+    const fileName = document.getElementById('split-file-name')?.textContent || 'this file';
+    const confirmed = await showConfirmDialog({
+      title: 'Remove File?',
+      message: `Are you sure you want to remove "${fileName}"? You can add it again later.`,
+      confirmText: 'Remove',
+      cancelText: 'Keep',
+    });
+    if (confirmed) {
+      resetSplitView();
+    }
+  });
   splitBtn.addEventListener('click', executeSplit);
   rangeInput.addEventListener('input', validateRange);
 }
@@ -299,8 +479,12 @@ async function handleSplitFile(file: File): Promise<void> {
     const splitBtn = document.getElementById('split-btn') as HTMLButtonElement | null;
     if (rangeInput) rangeInput.value = '';
     if (splitBtn) splitBtn.disabled = true;
+
+    // ACCESSIBILITY: Announce to screen readers
+    announceToScreenReader(`${file.name} loaded. ${info.page_count} pages. Enter page range to split.`);
   } catch (e) {
     showError('split-error', String(e));
+    announceToScreenReader(`Error loading file: ${e}`);
   }
 }
 
@@ -388,15 +572,18 @@ async function executeSplit(): Promise<void> {
 
       // Restore original selection
       splitSession.setPageSelection(fullRange);
+      announceToScreenReader(`Split complete. ${ranges.length} files are downloading.`);
     } else {
       // Single file mode (original behavior)
       const result = splitSession.execute();
       const range = fullRange.replace(/\s+/g, '').replace(/,/g, '_');
       const filename = `${splitOriginalFilename || 'split'}-pages-${range}.pdf`;
       downloadBlob(result, filename);
+      announceToScreenReader(`Split complete. ${filename} is downloading.`);
     }
   } catch (e) {
     showError('split-error', 'Split failed: ' + e);
+    announceToScreenReader(`Split failed: ${e}`);
   } finally {
     splitBtn.disabled = false;
     setTimeout(() => progress.classList.add('hidden'), 500);
@@ -510,6 +697,9 @@ async function handleMergeFiles(files: FileList): Promise<void> {
   if (!mergeSession) return;
   const { format_bytes } = window.wasmBindings;
 
+  // Track if this is the first document being added (for Tab PDF Sharing)
+  const wasEmpty = mergeSession.getDocumentCount() === 0;
+
   // Convert FileList to array to ensure proper iteration
   // FileList is a live collection and for...of may not iterate all items
   const fileArray = Array.from(files);
@@ -530,12 +720,51 @@ async function handleMergeFiles(files: FileList): Promise<void> {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       mergeSession.addDocument(file.name, bytes);
+
+      // Tab PDF Sharing (ISSUE-009): Set shared PDF to first document added
+      // This enables Merge → Split/Edit transitions
+      if (wasEmpty && mergeSession.getDocumentCount() === 1) {
+        setSharedPdf(bytes, file.name, 'merge');
+      }
     } catch (e) {
       showError('merge-error', `${file.name}: ${e}`);
+      announceToScreenReader(`Error loading ${file.name}: ${e}`);
     }
   }
 
   updateMergeFileList();
+
+  // ACCESSIBILITY: Announce loaded files to screen readers
+  if (mergeSession) {
+    const count = mergeSession.getDocumentCount();
+    const totalPages = mergeSession.getTotalPageCount();
+    if (count > 0) {
+      announceToScreenReader(`${count} files loaded with ${totalPages} total pages. Ready to merge.`);
+    }
+  }
+}
+
+/**
+ * ACCESSIBILITY: Move a file in the merge list from one position to another.
+ * Used by move up/down buttons and arrow key navigation.
+ */
+function moveFile(fromIndex: number, toIndex: number): void {
+  if (!mergeSession) return;
+
+  const count = mergeSession.getDocumentCount();
+  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) return;
+
+  // Build new order array
+  const order = [...Array(count).keys()];
+  order.splice(fromIndex, 1);
+  order.splice(toIndex, 0, fromIndex);
+
+  try {
+    mergeSession.reorderDocuments(order);
+    updateMergeFileList();
+  } catch (e) {
+    console.error('Reorder failed:', e);
+  }
 }
 
 function updateMergeFileList(): void {
@@ -563,22 +792,78 @@ function updateMergeFileList(): void {
   if (!ul) return;
   ul.innerHTML = '';
 
+  const totalFiles = infos.length;
   infos.forEach((info, idx) => {
     const li = document.createElement('li');
     li.draggable = true;
     li.dataset.index = String(idx);
+    // ACCESSIBILITY: Make focusable for keyboard users
+    li.tabIndex = 0;
+    li.setAttribute('role', 'listitem');
+    li.setAttribute('aria-label', `${info.name}, ${info.page_count} pages. Use arrow keys or buttons to reorder.`);
     li.innerHTML = `
-            <span class="drag-handle">☰</span>
+            <span class="drag-handle" aria-hidden="true">☰</span>
             <span class="file-name">${info.name}</span>
             <span class="file-size">${info.page_count} pages - ${format_bytes(info.size_bytes)}</span>
-            <button class="remove-btn" data-index="${idx}">×</button>
+            <div class="reorder-btns">
+              <button class="move-btn move-up" title="Move up" aria-label="Move ${info.name} up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+              <button class="move-btn move-down" title="Move down" aria-label="Move ${info.name} down" ${idx === totalFiles - 1 ? 'disabled' : ''}>↓</button>
+            </div>
+            <button class="remove-btn" data-index="${idx}" aria-label="Remove ${info.name}">×</button>
         `;
 
-    // Remove button
+    // ACCESSIBILITY: Move up/down buttons for keyboard/motor impairment accessibility
+    const moveUpBtn = li.querySelector('.move-up') as HTMLButtonElement | null;
+    const moveDownBtn = li.querySelector('.move-down') as HTMLButtonElement | null;
+
+    moveUpBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (idx > 0) {
+        moveFile(idx, idx - 1);
+      }
+    });
+
+    moveDownBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (idx < totalFiles - 1) {
+        moveFile(idx, idx + 1);
+      }
+    });
+
+    // ACCESSIBILITY: Arrow key support for reordering
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' && idx > 0) {
+        e.preventDefault();
+        moveFile(idx, idx - 1);
+        // Focus the moved item after update
+        setTimeout(() => {
+          const newItem = ul.querySelector(`li[data-index="${idx - 1}"]`) as HTMLElement;
+          newItem?.focus();
+        }, 0);
+      } else if (e.key === 'ArrowDown' && idx < totalFiles - 1) {
+        e.preventDefault();
+        moveFile(idx, idx + 1);
+        // Focus the moved item after update
+        setTimeout(() => {
+          const newItem = ul.querySelector(`li[data-index="${idx + 1}"]`) as HTMLElement;
+          newItem?.focus();
+        }, 0);
+      }
+    });
+
+    // Remove button - ACCESSIBILITY: Confirm before removing (WCAG 3.3.4)
     const removeBtn = li.querySelector('.remove-btn');
-    removeBtn?.addEventListener('click', () => {
-      mergeSession?.removeDocument(idx);
-      updateMergeFileList();
+    removeBtn?.addEventListener('click', async () => {
+      const confirmed = await showConfirmDialog({
+        title: 'Remove File?',
+        message: `Are you sure you want to remove "${info.name}" from the merge list? You can add it again later.`,
+        confirmText: 'Remove',
+        cancelText: 'Keep',
+      });
+      if (confirmed) {
+        mergeSession?.removeDocument(idx);
+        updateMergeFileList();
+      }
     });
 
     // Drag events for reordering
@@ -658,8 +943,10 @@ async function executeMerge(): Promise<void> {
     const count = mergeSession.getDocumentCount();
     const filename = `merged-${count}-files.pdf`;
     downloadBlob(result, filename);
+    announceToScreenReader(`Merge complete. ${filename} is downloading.`);
   } catch (e) {
     showError('merge-error', 'Merge failed: ' + e);
+    announceToScreenReader(`Merge failed: ${e}`);
   } finally {
     mergeBtn.disabled = false;
     setTimeout(() => progress.classList.add('hidden'), 500);
@@ -675,6 +962,47 @@ function onMergeProgress(current: number, total: number, message: string): void 
 
 // ============ Utilities ============
 
+/**
+ * ACCESSIBILITY: Convert raw error messages into user-friendly messages
+ * with clear recovery guidance (WCAG 3.3.3 Error Suggestion).
+ */
+function getUserFriendlyError(rawMessage: string): string {
+  const lowerMsg = rawMessage.toLowerCase();
+
+  // Password/encryption errors
+  if (lowerMsg.includes('password') || lowerMsg.includes('encrypted')) {
+    return 'This PDF is password-protected. Please remove the password using Adobe Acrobat or a PDF unlocker, then try again.';
+  }
+
+  // Invalid PDF format
+  if (lowerMsg.includes('invalid pdf') || lowerMsg.includes('not a pdf') || lowerMsg.includes('magic bytes')) {
+    return 'This file is not a valid PDF. Please check that you selected the correct file. If the file is a Word document, save it as PDF first.';
+  }
+
+  // File size issues
+  if (lowerMsg.includes('too large') || lowerMsg.includes('memory')) {
+    return 'This file is too large to process. Try splitting it into smaller parts using Adobe Acrobat, then try again.';
+  }
+
+  // Page range errors
+  if (lowerMsg.includes('page') && (lowerMsg.includes('invalid') || lowerMsg.includes('range'))) {
+    return 'Invalid page range. Use format like "1-3, 5, 8-10". Pages must exist in the document.';
+  }
+
+  // Corrupted PDF
+  if (lowerMsg.includes('corrupt') || lowerMsg.includes('damaged') || lowerMsg.includes('parse')) {
+    return 'This PDF appears to be corrupted. Try downloading it again or opening and re-saving it in Adobe Acrobat.';
+  }
+
+  // Network errors (if applicable)
+  if (lowerMsg.includes('network') || lowerMsg.includes('fetch')) {
+    return 'A network error occurred. Please check your internet connection and try again.';
+  }
+
+  // Generic fallback with guidance
+  return `${rawMessage}. If this keeps happening, try refreshing the page or using a different browser.`;
+}
+
 function showError(containerId: string, message: string): void {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -682,11 +1010,13 @@ function showError(containerId: string, message: string): void {
   const textEl = container.querySelector('.error-text');
   const dismissBtn = container.querySelector('.dismiss');
 
-  if (textEl) textEl.textContent = message;
+  // ACCESSIBILITY: Convert to user-friendly error with recovery guidance
+  const friendlyMessage = getUserFriendlyError(message);
+  if (textEl) textEl.textContent = friendlyMessage;
   container.classList.remove('hidden');
 
-  // Auto-dismiss after 8 seconds
-  const timer = setTimeout(() => container.classList.add('hidden'), 8000);
+  // ACCESSIBILITY: Extended auto-dismiss (20 seconds) for elderly users to read
+  const timer = setTimeout(() => container.classList.add('hidden'), 20000);
 
   // Manual dismiss
   if (dismissBtn) {

@@ -3,6 +3,7 @@
 //! This module provides a WASM-exposed session for editing PDFs.
 //! It integrates with the pdfjoin-core operations module.
 
+use lopdf::Document;
 use pdfjoin_core::apply_operations::{apply_operations, apply_operations_flattened};
 use pdfjoin_core::has_signatures;
 use pdfjoin_core::operations::{ActionKind, EditOperation, OperationLog, PdfRect, TextStyle};
@@ -242,9 +243,18 @@ impl EditSession {
         self.operations.add(op)
     }
 
-    /// Add a white rectangle to cover/redact content
+    /// Add a colored rectangle to cover/redact content
+    /// color: Hex color string (e.g., "#FFFFFF" for white, "#000000" for black/redact)
     #[wasm_bindgen(js_name = addWhiteRect)]
-    pub fn add_white_rect(&mut self, page: u32, x: f64, y: f64, width: f64, height: f64) -> u64 {
+    pub fn add_white_rect(
+        &mut self,
+        page: u32,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        color: Option<String>,
+    ) -> u64 {
         let op = EditOperation::AddWhiteRect {
             id: 0,
             page,
@@ -254,6 +264,7 @@ impl EditSession {
                 width,
                 height,
             },
+            color: color.unwrap_or_else(|| "#FFFFFF".to_string()),
         };
         self.operations.add(op)
     }
@@ -458,6 +469,53 @@ impl EditSession {
         let array = js_sys::Uint8Array::new_with_length(result.len() as u32);
         array.copy_from(&result);
         Ok(array)
+    }
+
+    /// Debug helper to verify flattened export works correctly.
+    /// Returns diagnostic info about the export operation.
+    #[wasm_bindgen(js_name = debugExportFlattened)]
+    pub fn debug_export_flattened(&self) -> Result<String, JsValue> {
+        let mut debug_log = String::new();
+
+        // Get document pages
+        let doc = Document::load_mem(&self.document_bytes)
+            .map_err(|e| JsValue::from_str(&format!("Load error: {}", e)))?;
+        let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
+
+        // Get operation pages
+        let op_pages: Vec<u32> = self
+            .operations
+            .operations()
+            .iter()
+            .map(|op| op.page())
+            .collect();
+
+        debug_log.push_str(&format!("Document pages: {:?}\n", pages));
+        debug_log.push_str(&format!("Operation pages: {:?}\n", op_pages));
+        debug_log.push_str(&format!(
+            "Operation count: {}\n",
+            self.operations.operations().len()
+        ));
+
+        // Call actual flattened export
+        match apply_operations_flattened(&self.document_bytes, &self.operations) {
+            Ok(result) => {
+                let result_str = String::from_utf8_lossy(&result);
+                let has_white_rect = result_str.contains("1 1 1 rg");
+
+                debug_log.push_str(&format!(
+                    "Original size: {} bytes\n",
+                    self.document_bytes.len()
+                ));
+                debug_log.push_str(&format!("Result size: {} bytes\n", result.len()));
+                debug_log.push_str(&format!("Has '1 1 1 rg': {}\n", has_white_rect));
+            }
+            Err(e) => {
+                debug_log.push_str(&format!("Export error: {}\n", e));
+            }
+        }
+
+        Ok(debug_log)
     }
 }
 

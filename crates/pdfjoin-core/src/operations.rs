@@ -238,8 +238,20 @@ pub enum EditOperation {
         new_text: String,
         style: TextStyle,
     },
-    /// Add a white rectangle to cover/redact content
-    AddWhiteRect { id: OpId, page: u32, rect: PdfRect },
+    /// Add a colored rectangle to cover/redact content (white for whiteout, black for blackout/redaction)
+    AddWhiteRect {
+        id: OpId,
+        page: u32,
+        rect: PdfRect,
+        /// RGB color as hex string (e.g., "#FFFFFF" for white, "#000000" for black)
+        /// Defaults to white if not specified
+        #[serde(default = "default_whiteout_color")]
+        color: String,
+    },
+}
+
+fn default_whiteout_color() -> String {
+    "#FFFFFF".to_string()
 }
 
 /// The kind of user action that groups one or more operations
@@ -1046,6 +1058,7 @@ mod tests {
                 width: 100.0,
                 height: 50.0,
             },
+            color: "#FFFFFF".to_string(),
         });
 
         let new_rect = PdfRect {
@@ -1263,6 +1276,7 @@ mod tests {
                 width: 100.0,
                 height: 30.0,
             },
+            color: "#FFFFFF".to_string(),
         });
         let text_id = log.add(EditOperation::AddText {
             id: 0,

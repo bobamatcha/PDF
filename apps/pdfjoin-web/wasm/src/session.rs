@@ -238,6 +238,35 @@ impl PdfJoinSession {
         self.documents.len()
     }
 
+    /// Get document bytes by index (for Tab PDF Sharing feature)
+    /// Returns the raw PDF bytes for the document at the given index
+    #[wasm_bindgen(js_name = getDocumentBytes)]
+    pub fn get_document_bytes(&self, index: usize) -> Result<js_sys::Uint8Array, JsValue> {
+        if index >= self.documents.len() {
+            return Err(JsValue::from_str(&format!(
+                "Document index {} out of range (have {} documents)",
+                index,
+                self.documents.len()
+            )));
+        }
+        let array = js_sys::Uint8Array::new_with_length(self.documents[index].bytes.len() as u32);
+        array.copy_from(&self.documents[index].bytes);
+        Ok(array)
+    }
+
+    /// Get document name by index
+    #[wasm_bindgen(js_name = getDocumentName)]
+    pub fn get_document_name(&self, index: usize) -> Result<String, JsValue> {
+        if index >= self.documents.len() {
+            return Err(JsValue::from_str(&format!(
+                "Document index {} out of range (have {} documents)",
+                index,
+                self.documents.len()
+            )));
+        }
+        Ok(self.documents[index].name.clone())
+    }
+
     /// Check if session is ready for execution
     #[wasm_bindgen(js_name = canExecute)]
     pub fn can_execute(&self) -> bool {

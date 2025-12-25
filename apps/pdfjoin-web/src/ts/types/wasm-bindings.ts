@@ -79,6 +79,10 @@ export interface PdfJoinSession {
   getDocumentCount(): number;
   canExecute(): boolean;
   execute(): Uint8Array;
+
+  // Tab PDF Sharing (ISSUE-009): Get document bytes/name for sharing across tabs
+  getDocumentBytes(index: number): Uint8Array;
+  getDocumentName(index: number): string;
 }
 
 /**
@@ -165,7 +169,8 @@ export interface EditSession {
     x: number,
     y: number,
     width: number,
-    height: number
+    height: number,
+    color?: string
   ): OpId;
 
   removeOperation(id: OpId): boolean;

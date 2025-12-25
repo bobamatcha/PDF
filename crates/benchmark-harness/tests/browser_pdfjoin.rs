@@ -4256,9 +4256,18 @@ async fn test_pdfjoin_whiteout_inline_text_editing() {
 
                 let inputIsInside = false;
                 let inputElement = inputInside || inputNearby;
+                let inputBounds = null;
 
                 if (inputElement) {{
                     const inputRect = inputElement.getBoundingClientRect();
+                    inputBounds = {{
+                        left: inputRect.left,
+                        top: inputRect.top,
+                        width: inputRect.width,
+                        height: inputRect.height,
+                        right: inputRect.right,
+                        bottom: inputRect.bottom
+                    }};
                     // Check if input is within or overlapping the whiteout bounds
                     inputIsInside = (
                         inputRect.left >= overlayRect.left - 5 &&
@@ -4278,7 +4287,8 @@ async fn test_pdfjoin_whiteout_inline_text_editing() {
                         top: overlayRect.top,
                         width: overlayRect.width,
                         height: overlayRect.height
-                    }}
+                    }},
+                    inputBounds: inputBounds
                 }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};
@@ -5283,6 +5293,107 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
         "BUG: Text entered on whiteout does NOT appear in exported PDF. \
          The text shows in preview (hasTextInPreview={}) but is missing from downloaded document.",
         result["hasTextInPreview"].as_bool().unwrap_or(false)
+    );
+}
+
+/// Debug test to diagnose why flattened export doesn't work in WASM
+#[tokio::test]
+async fn test_pdfjoin_debug_flattened_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Draw a whiteout
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;
+                const endY = startY + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Call debug function
+                const session = window.__editSession__;
+                if (!session) {{
+                    return {{ success: false, error: 'No edit session' }};
+                }}
+
+                if (!session.debugExportFlattened) {{
+                    return {{ success: false, error: 'debugExportFlattened not available' }};
+                }}
+
+                const debugOutput = session.debugExportFlattened();
+                return {{ success: true, debugOutput }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should run debug test")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!(
+        "\n=== DEBUG FLATTENED EXPORT ===\n{}",
+        result["debugOutput"].as_str().unwrap_or("No output")
+    );
+    eprintln!("Error: {:?}", result["error"]);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Debug test should succeed. Error: {:?}",
+        result["error"]
     );
 }
 
@@ -7369,132 +7480,19 @@ async fn test_pdfjoin_overlay_pointer_events_enabled_for_annotation_tools() {
     );
 }
 
-/// Regression test: Clicking with checkbox tool should actually add a checkbox annotation
-/// Bug: overlay-container had pointer-events: none, so clicks didn't reach the handler
-#[tokio::test]
-async fn test_pdfjoin_checkbox_tool_creates_annotation_on_click() {
-    skip_if_no_chrome!();
-    require_local_server!("http://127.0.0.1:8082");
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// /// Regression test: Clicking with checkbox tool should actually add a checkbox annotation
+// /// Bug: overlay-container had pointer-events: none, so clicks didn't reach the handler
+// #[tokio::test]
+// async fn test_pdfjoin_checkbox_tool_creates_annotation_on_click() { ... }
 
-    let Some((browser, _handle)) = browser::require_browser().await else {
-        return;
-    };
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// #[tokio::test] async fn test_pdfjoin_highlight_tool_creates_annotation_on_text_selection() { ... }
 
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .expect("Should create page");
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// #[tokio::test] async fn test_pdfjoin_highlight_works_after_text_edit() { ... }
 
-    page.goto("http://127.0.0.1:8082")
-        .await
-        .expect("Should navigate to PDFJoin");
-
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    let pdf_b64 = test_pdf_base64(1);
-    let js_code = format!(
-        r#"(async () => {{
-            try {{
-                // Click Edit tab
-                document.querySelector('[data-tab="edit"]').click();
-                await new Promise(r => setTimeout(r, 300));
-
-                // Load PDF
-                const b64 = "{}";
-                const binary = atob(b64);
-                const pdfBytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) {{
-                    pdfBytes[i] = binary.charCodeAt(i);
-                }}
-
-                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
-                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
-                const dt = new DataTransfer();
-                dt.items.add(file);
-                const inp = document.getElementById('edit-file-input');
-                inp.files = dt.files;
-                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-
-                // Wait for PDF to render
-                await new Promise(r => setTimeout(r, 3000));
-
-                // Click checkbox tool
-                const checkboxBtn = document.getElementById('tool-checkbox') || document.getElementById('edit-tool-checkbox');
-                if (!checkboxBtn) {{
-                    return {{ success: false, error: 'Checkbox tool button not found' }};
-                }}
-                checkboxBtn.click();
-                await new Promise(r => setTimeout(r, 100));
-
-                // Count overlays before
-                const beforeCount = document.querySelectorAll('[data-op-id]').length;
-
-                // Click on the overlay-container to add a checkbox
-                const overlay = document.querySelector('.overlay-container');
-                if (!overlay) {{
-                    return {{ success: false, error: 'overlay-container not found' }};
-                }}
-
-                const rect = overlay.getBoundingClientRect();
-                overlay.dispatchEvent(new MouseEvent('click', {{
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: rect.left + 200,
-                    clientY: rect.top + 200,
-                    view: window
-                }}));
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Count overlays after
-                const afterCount = document.querySelectorAll('[data-op-id]').length;
-
-                // Check download button state
-                const downloadBtn = document.getElementById('edit-download-btn');
-                const downloadEnabled = downloadBtn && !downloadBtn.disabled;
-
-                return {{
-                    success: true,
-                    beforeCount: beforeCount,
-                    afterCount: afterCount,
-                    checkboxAdded: afterCount > beforeCount,
-                    downloadEnabled: downloadEnabled
-                }};
-            }} catch (err) {{
-                return {{ success: false, error: err.toString() }};
-            }}
-        }})()"#,
-        pdf_b64
-    );
-
-    let result: serde_json::Value = page
-        .evaluate(js_code.as_str())
-        .await
-        .expect("Should test checkbox creation")
-        .into_value()
-        .expect("Should get value");
-
-    eprintln!("Checkbox tool click test: {:?}", result);
-
-    assert!(
-        result["success"].as_bool().unwrap_or(false),
-        "Test should succeed. Error: {:?}",
-        result["error"]
-    );
-
-    assert!(
-        result["checkboxAdded"].as_bool().unwrap_or(false),
-        "Clicking with checkbox tool should add a checkbox. Before: {}, After: {}",
-        result["beforeCount"].as_i64().unwrap_or(0),
-        result["afterCount"].as_i64().unwrap_or(0)
-    );
-
-    assert!(
-        result["downloadEnabled"].as_bool().unwrap_or(false),
-        "Download button should be enabled after adding annotation"
-    );
-}
-
+/*
 /// Test: Highlight tool creates annotation when text is selected
 /// This tests the text selection highlight workflow:
 /// 1. Load PDF in edit mode
@@ -7815,178 +7813,11 @@ async fn test_pdfjoin_highlight_works_after_text_edit() {
         result["afterCount"].as_i64().unwrap_or(0)
     );
 }
+// --- END DISABLED HIGHLIGHT TESTS ---
+*/
 
-/// BUG TEST: Highlight overlay should precisely cover the selected text bounds
-/// Bug: Highlight appears shifted up from the text it should cover
-#[tokio::test]
-async fn test_pdfjoin_highlight_position_matches_text_bounds() {
-    skip_if_no_chrome!();
-    require_local_server!("http://127.0.0.1:8082");
-
-    let Some((browser, _handle)) = browser::require_browser().await else {
-        return;
-    };
-
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .expect("Should create page");
-
-    page.goto("http://127.0.0.1:8082")
-        .await
-        .expect("Should navigate to PDFJoin");
-
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
-    let pdf_b64 = test_pdf_base64(1);
-    let js_code = format!(
-        r#"(async () => {{
-            try {{
-                // Click Edit tab
-                document.querySelector('[data-tab="edit"]').click();
-                await new Promise(r => setTimeout(r, 300));
-
-                // Load PDF
-                const b64 = "{}";
-                const binary = atob(b64);
-                const pdfBytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) {{
-                    pdfBytes[i] = binary.charCodeAt(i);
-                }}
-
-                const blob = new Blob([pdfBytes], {{ type: 'application/pdf' }});
-                const file = new File([blob], 'test.pdf', {{ type: 'application/pdf' }});
-                const dt = new DataTransfer();
-                dt.items.add(file);
-                const inp = document.getElementById('edit-file-input');
-                inp.files = dt.files;
-                inp.dispatchEvent(new Event('change', {{ bubbles: true }}));
-
-                // Wait for PDF to render
-                await new Promise(r => setTimeout(r, 3000));
-
-                // Select highlight tool
-                const highlightBtn = document.getElementById('tool-highlight') || document.getElementById('edit-tool-highlight');
-                if (!highlightBtn) {{
-                    return {{ success: false, error: 'Highlight tool button not found' }};
-                }}
-                highlightBtn.click();
-                await new Promise(r => setTimeout(r, 100));
-
-                // Find a text item to highlight
-                const textItems = document.querySelectorAll('.text-item');
-                if (textItems.length === 0) {{
-                    return {{ success: false, error: 'No text items found' }};
-                }}
-
-                const textItem = textItems[0];
-                const textRect = textItem.getBoundingClientRect();
-
-                // Create a text selection
-                const range = document.createRange();
-                range.selectNodeContents(textItem);
-                const selection = window.getSelection();
-                selection.removeAllRanges();
-                selection.addRange(range);
-
-                // Get the selection rect (this is what the code uses)
-                const selectionRects = range.getClientRects();
-                const selectionRect = selectionRects[0];
-
-                // Dispatch mouseup to trigger highlight creation
-                document.dispatchEvent(new MouseEvent('mouseup', {{
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: textRect.right,
-                    clientY: textRect.top + textRect.height / 2,
-                    view: window
-                }}));
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Find the created highlight
-                const highlights = document.querySelectorAll('.edit-highlight-overlay');
-                if (highlights.length === 0) {{
-                    return {{ success: false, error: 'No highlight created' }};
-                }}
-
-                const highlight = highlights[highlights.length - 1];
-                const highlightRect = highlight.getBoundingClientRect();
-
-                // Calculate overlap/alignment
-                // The highlight should cover the text - check vertical alignment
-                const textTop = textRect.top;
-                const textBottom = textRect.bottom;
-                const highlightTop = highlightRect.top;
-                const highlightBottom = highlightRect.bottom;
-
-                // Acceptable tolerance in pixels (should be very small)
-                const tolerance = 5;
-
-                // Check if highlight covers the text vertically
-                const topOffset = textTop - highlightTop;  // Positive = highlight above text
-                const bottomOffset = highlightBottom - textBottom;  // Positive = highlight below text
-
-                // The highlight should span from text top to text bottom with minimal extra
-                const highlightCoversText = highlightTop <= textTop + tolerance && highlightBottom >= textBottom - tolerance;
-
-                return {{
-                    success: true,
-                    textRect: {{ top: textTop, bottom: textBottom, height: textRect.height }},
-                    highlightRect: {{ top: highlightTop, bottom: highlightBottom, height: highlightRect.height }},
-                    selectionRect: selectionRect ? {{ top: selectionRect.top, bottom: selectionRect.bottom, height: selectionRect.height }} : null,
-                    topOffset: topOffset,
-                    bottomOffset: bottomOffset,
-                    highlightCoversText: highlightCoversText,
-                    // Extra diagnostics
-                    highlightStyle: {{
-                        top: highlight.style.top,
-                        height: highlight.style.height
-                    }}
-                }};
-            }} catch (err) {{
-                return {{ success: false, error: err.toString() }};
-            }}
-        }})()"#,
-        pdf_b64
-    );
-
-    let result: serde_json::Value = page
-        .evaluate(js_code.as_str())
-        .await
-        .expect("Should test highlight position")
-        .into_value()
-        .expect("Should get value");
-
-    eprintln!("Highlight position test: {:?}", result);
-
-    assert!(
-        result["success"].as_bool().unwrap_or(false),
-        "Test should succeed. Error: {:?}",
-        result["error"]
-    );
-
-    let top_offset = result["topOffset"].as_f64().unwrap_or(999.0);
-    let bottom_offset = result["bottomOffset"].as_f64().unwrap_or(999.0);
-
-    // Highlight should not be significantly shifted up (positive topOffset means highlight is above text)
-    assert!(
-        top_offset.abs() < 5.0,
-        "Highlight should align with text top. Top offset: {}px (highlight rect: {:?}, text rect: {:?})",
-        top_offset,
-        result["highlightRect"],
-        result["textRect"]
-    );
-
-    assert!(
-        result["highlightCoversText"].as_bool().unwrap_or(false),
-        "Highlight should cover the text bounds. Text: {:?}, Highlight: {:?}, Offsets: top={}, bottom={}",
-        result["textRect"],
-        result["highlightRect"],
-        top_offset,
-        bottom_offset
-    );
-}
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// #[tokio::test] async fn test_pdfjoin_highlight_position_matches_text_bounds() { ... }
 
 /// BUG TEST: Whiteout box should NOT expand when typing short text that fits
 /// The bug: Every time something is typed, the whitebox expands even if the text
@@ -11276,6 +11107,42 @@ async fn test_undo_redo_button_clicks() {
     );
 }
 
+// ============================================================================
+// DISABLED TESTS: Hidden features (ISSUE-001, ISSUE-002, ISSUE-003)
+// These tests are for features that are intentionally hidden in the UI.
+// Uncomment when the features are re-enabled.
+// ============================================================================
+
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// #[tokio::test] async fn test_pdfjoin_checkbox_default_unchecked_with_bold_border() { ... }
+
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// #[tokio::test] async fn test_pdfjoin_checkbox_toggle_any_tool() { ... }
+
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// #[tokio::test] async fn test_pdfjoin_checkbox_resize_maintains_square() { ... }
+
+// DISABLED: Underline tool is hidden (ISSUE-002)
+// #[tokio::test] async fn test_pdfjoin_underline_tool_underlines_text() { ... }
+
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// #[tokio::test] async fn test_pdfjoin_highlight_color_picker() { ... }
+
+// DISABLED: Underline tool is hidden (ISSUE-002)
+// #[tokio::test] async fn test_pdfjoin_underline_matches_text_color() { ... }
+
+// --- Original test code removed to reduce bloat ---
+// See git history for full test implementations
+
+#[allow(dead_code)]
+fn _placeholder_for_disabled_tests() {
+    // This function exists only to mark where the disabled tests were.
+    // The full test code has been removed to keep the file clean.
+    // When re-enabling features, re-implement the tests or restore from git.
+}
+
+/*
+// Original test that was here:
 /// TEST: Checkbox should be created unchecked by default with bold square border
 #[tokio::test]
 async fn test_pdfjoin_checkbox_default_unchecked_with_bold_border() {
@@ -11327,6 +11194,10 @@ async fn test_pdfjoin_checkbox_default_unchecked_with_bold_border() {
                 const checkboxBtn = document.getElementById('edit-tool-checkbox');
                 if (!checkboxBtn) {{
                     return {{ success: false, error: 'Checkbox tool button not found' }};
+                }}
+                // Skip if checkbox tool is hidden (disabled feature - ISSUE-003)
+                if (checkboxBtn.classList.contains('hidden')) {{
+                    return {{ success: true, skipped: true, reason: 'Checkbox tool is intentionally hidden (ISSUE-003)' }};
                 }}
                 checkboxBtn.click();
                 await new Promise(r => setTimeout(r, 100));
@@ -11383,6 +11254,15 @@ async fn test_pdfjoin_checkbox_default_unchecked_with_bold_border() {
         .expect("Should get value");
 
     eprintln!("Checkbox default state test: {:?}", result);
+
+    // Skip test if feature is intentionally hidden
+    if result["skipped"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "Test skipped: {:?}",
+            result["reason"].as_str().unwrap_or("hidden feature")
+        );
+        return;
+    }
 
     assert!(
         result["success"].as_bool().unwrap_or(false),
@@ -11453,6 +11333,9 @@ async fn test_pdfjoin_checkbox_toggle_any_tool() {
 
                 // Click checkbox tool and create a checkbox
                 const checkboxBtn = document.getElementById('edit-tool-checkbox');
+                if (!checkboxBtn || checkboxBtn.classList.contains('hidden')) {{
+                    return {{ success: true, skipped: true, reason: 'Checkbox tool is intentionally hidden (ISSUE-003)' }};
+                }}
                 checkboxBtn.click();
                 await new Promise(r => setTimeout(r, 100));
 
@@ -11528,6 +11411,15 @@ async fn test_pdfjoin_checkbox_toggle_any_tool() {
 
     eprintln!("Checkbox toggle test: {:?}", result);
 
+    // Skip test if feature is intentionally hidden
+    if result["skipped"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "Test skipped: {:?}",
+            result["reason"].as_str().unwrap_or("hidden feature")
+        );
+        return;
+    }
+
     assert!(
         result["success"].as_bool().unwrap_or(false),
         "Test should succeed. Error: {:?}",
@@ -11594,6 +11486,9 @@ async fn test_pdfjoin_checkbox_resize_maintains_square() {
 
                 // Create a checkbox
                 const checkboxBtn = document.getElementById('edit-tool-checkbox');
+                if (!checkboxBtn || checkboxBtn.classList.contains('hidden')) {{
+                    return {{ success: true, skipped: true, reason: 'Checkbox tool is intentionally hidden (ISSUE-003)' }};
+                }}
                 checkboxBtn.click();
                 await new Promise(r => setTimeout(r, 100));
 
@@ -11683,6 +11578,15 @@ async fn test_pdfjoin_checkbox_resize_maintains_square() {
 
     eprintln!("Checkbox resize test: {:?}", result);
 
+    // Skip test if feature is intentionally hidden
+    if result["skipped"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "Test skipped: {:?}",
+            result["reason"].as_str().unwrap_or("hidden feature")
+        );
+        return;
+    }
+
     assert!(
         result["success"].as_bool().unwrap_or(false),
         "Test should succeed. Error: {:?}",
@@ -11754,6 +11658,10 @@ async fn test_pdfjoin_underline_tool_underlines_text() {
                                      document.getElementById('tool-underline');
                 if (!underlineBtn) {{
                     return {{ success: false, error: 'Underline tool button not found', needsImplementation: true }};
+                }}
+                // Skip if underline tool is hidden (disabled feature - ISSUE-002)
+                if (underlineBtn.classList.contains('hidden')) {{
+                    return {{ success: true, skipped: true, reason: 'Underline tool is intentionally hidden (ISSUE-002)' }};
                 }}
 
                 underlineBtn.click();
@@ -11868,8 +11776,14 @@ async fn test_pdfjoin_highlight_color_picker() {
 
                 await new Promise(r => setTimeout(r, 3000));
 
+                // Check if highlight tool is hidden (disabled feature - ISSUE-001)
+                const highlightWrapper = document.getElementById('highlight-wrapper');
+                if (!highlightWrapper || highlightWrapper.classList.contains('hidden')) {{
+                    return {{ success: true, skipped: true, reason: 'Highlight tool is intentionally hidden (ISSUE-001)' }};
+                }}
+
                 // Check for color picker button
-                const colorBtn = document.getElementById('highlight-color-btn');
+                const colorBtn = document.getElementById('edit-tool-highlight');
                 if (!colorBtn) {{
                     return {{ success: false, needsImplementation: true, error: 'Highlight color button not found' }};
                 }}
@@ -11926,6 +11840,15 @@ async fn test_pdfjoin_highlight_color_picker() {
         .expect("Should get value");
 
     eprintln!("Highlight color picker test: {:?}", result);
+
+    // Skip test if feature is intentionally hidden
+    if result["skipped"].as_bool().unwrap_or(false) {
+        eprintln!(
+            "Test skipped: {:?}",
+            result["reason"].as_str().unwrap_or("hidden feature")
+        );
+        return;
+    }
 
     if result["needsImplementation"].as_bool().unwrap_or(false) {
         panic!("Highlight color picker not found - needs implementation");
@@ -12101,5 +12024,1149 @@ async fn test_pdfjoin_underline_matches_text_color() {
         "Underline should be black (matching text) or match text color. Text: {:?}, Underline: {:?}",
         result["textColor"],
         result["underlineColor"]
+    );
+}
+// --- END OF DISABLED TESTS ---
+*/
+
+// ============================================================================
+// Tab Switching Document Preservation Tests (ISSUE-009)
+// ============================================================================
+// These tests verify that PDFs loaded in one tab are preserved when switching
+// to another tab, eliminating the need to re-upload.
+
+/// REGRESSION TEST: Load PDF in Split tab, switch to Edit, PDF should auto-load
+#[tokio::test]
+async fn test_tab_switching_split_to_edit_preserves_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load a PDF in the Split tab
+    let pdf_b64 = test_pdf_base64(5);
+    let load_js = format!(
+        r#"(async () => {{
+            try {{
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Inject via file input in Split tab
+                const fileInput = document.getElementById('split-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test-document.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Verify PDF is loaded in Split view
+                const splitEditor = document.getElementById('split-editor');
+                const splitLoaded = splitEditor && !splitEditor.classList.contains('hidden');
+
+                return {{ success: true, splitLoaded: splitLoaded }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let load_result: serde_json::Value = page
+        .evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF")
+        .into_value()
+        .expect("Should get value");
+
+    assert!(
+        load_result["success"].as_bool().unwrap_or(false),
+        "Should load PDF in Split tab: {:?}",
+        load_result["error"]
+    );
+    assert!(
+        load_result["splitLoaded"].as_bool().unwrap_or(false),
+        "Split editor should be visible after loading PDF"
+    );
+
+    // Now switch to Edit tab
+    let switch_js = r#"(async () => {
+        try {
+            // Click Edit tab
+            const editTab = document.querySelector('[data-tab="edit"]');
+            if (!editTab) return { success: false, error: 'Edit tab not found' };
+            editTab.click();
+
+            // Wait for potential auto-load
+            await new Promise(r => setTimeout(r, 2000));
+
+            // Check if Edit view has a document loaded
+            const editEditor = document.getElementById('edit-editor');
+            const editDropZone = document.getElementById('edit-drop-zone');
+            const editLoaded = editEditor && !editEditor.classList.contains('hidden');
+            const dropZoneHidden = editDropZone && editDropZone.classList.contains('hidden');
+
+            // Check if there's a PDF viewer canvas
+            const hasCanvas = !!document.querySelector('#edit-viewer canvas');
+
+            return {
+                success: true,
+                editLoaded: editLoaded,
+                dropZoneHidden: dropZoneHidden,
+                hasCanvas: hasCanvas
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let switch_result: serde_json::Value = page
+        .evaluate(switch_js)
+        .await
+        .expect("Should switch tabs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Tab switch Split→Edit result: {:?}", switch_result);
+
+    assert!(
+        switch_result["success"].as_bool().unwrap_or(false),
+        "Tab switch should succeed: {:?}",
+        switch_result["error"]
+    );
+
+    // The PDF should be auto-loaded in Edit tab
+    assert!(
+        switch_result["editLoaded"].as_bool().unwrap_or(false),
+        "Edit editor should be visible (document auto-loaded from Split)"
+    );
+    assert!(
+        switch_result["dropZoneHidden"].as_bool().unwrap_or(false),
+        "Edit drop zone should be hidden (document loaded)"
+    );
+    assert!(
+        switch_result["hasCanvas"].as_bool().unwrap_or(false),
+        "Edit view should have a canvas (PDF rendered)"
+    );
+}
+
+/// REGRESSION TEST: Load PDF in Edit tab, switch to Split, PDF should auto-load
+#[tokio::test]
+async fn test_tab_switching_edit_to_split_preserves_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // First, switch to Edit tab
+    page.evaluate(r#"document.querySelector('[data-tab="edit"]').click()"#)
+        .await
+        .expect("Should click Edit tab");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Load a PDF in the Edit tab
+    let pdf_b64 = test_pdf_base64(3);
+    let load_js = format!(
+        r#"(async () => {{
+            try {{
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Inject via file input in Edit tab
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'edit-test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Verify PDF is loaded in Edit view
+                const editEditor = document.getElementById('edit-editor');
+                const editLoaded = editEditor && !editEditor.classList.contains('hidden');
+                const hasCanvas = !!document.querySelector('#edit-viewer canvas');
+
+                return {{ success: true, editLoaded: editLoaded, hasCanvas: hasCanvas }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let load_result: serde_json::Value = page
+        .evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Edit load result: {:?}", load_result);
+
+    assert!(
+        load_result["success"].as_bool().unwrap_or(false),
+        "Should load PDF in Edit tab: {:?}",
+        load_result["error"]
+    );
+    assert!(
+        load_result["editLoaded"].as_bool().unwrap_or(false),
+        "Edit editor should be visible after loading PDF"
+    );
+
+    // Now switch to Split tab (should auto-load the PDF)
+    let switch_js = r#"(async () => {
+        try {
+            // Click Split tab
+            const splitTab = document.querySelector('[data-tab="split"]');
+            if (!splitTab) return { success: false, error: 'Split tab not found' };
+            splitTab.click();
+
+            // Wait for potential auto-load
+            await new Promise(r => setTimeout(r, 1000));
+
+            // Check if Split view has a document loaded
+            const splitEditor = document.getElementById('split-editor');
+            const splitDropZone = document.getElementById('split-drop-zone');
+            const splitLoaded = splitEditor && !splitEditor.classList.contains('hidden');
+            const dropZoneHidden = splitDropZone && splitDropZone.classList.contains('hidden');
+
+            // Check filename is shown
+            const fileName = document.getElementById('split-file-name')?.textContent || '';
+
+            return {
+                success: true,
+                splitLoaded: splitLoaded,
+                dropZoneHidden: dropZoneHidden,
+                fileName: fileName
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let switch_result: serde_json::Value = page
+        .evaluate(switch_js)
+        .await
+        .expect("Should switch tabs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Tab switch Edit→Split result: {:?}", switch_result);
+
+    assert!(
+        switch_result["success"].as_bool().unwrap_or(false),
+        "Tab switch should succeed: {:?}",
+        switch_result["error"]
+    );
+
+    // The PDF should be auto-loaded in Split tab
+    assert!(
+        switch_result["splitLoaded"].as_bool().unwrap_or(false),
+        "Split editor should be visible (document auto-loaded from Edit)"
+    );
+    assert!(
+        switch_result["dropZoneHidden"].as_bool().unwrap_or(false),
+        "Split drop zone should be hidden (document loaded)"
+    );
+
+    let filename = switch_result["fileName"].as_str().unwrap_or("");
+    assert!(
+        !filename.is_empty(),
+        "Split view should show the filename from Edit tab"
+    );
+}
+
+/// REGRESSION TEST: PDF should be preserved when switching back and forth
+#[tokio::test]
+async fn test_tab_switching_roundtrip_preserves_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load a PDF in the Split tab
+    let pdf_b64 = test_pdf_base64(4);
+    let load_js = format!(
+        r#"(async () => {{
+            const b64 = "{}";
+            const binary = atob(b64);
+            const pdfBytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {{
+                pdfBytes[i] = binary.charCodeAt(i);
+            }}
+
+            const fileInput = document.getElementById('split-file-input');
+            const dataTransfer = new DataTransfer();
+            const file = new File([pdfBytes], 'roundtrip-test.pdf', {{ type: 'application/pdf' }});
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+            await new Promise(r => setTimeout(r, 1000));
+            return true;
+        }})()"#,
+        pdf_b64
+    );
+
+    page.evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF");
+
+    // Split → Edit → Split roundtrip
+    let roundtrip_js = r#"(async () => {
+        try {
+            // 1. Switch to Edit
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 2000));
+
+            const editHasCanvas1 = !!document.querySelector('#edit-viewer canvas');
+
+            // 2. Switch back to Split
+            document.querySelector('[data-tab="split"]').click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            const splitEditor = document.getElementById('split-editor');
+            const splitStillLoaded = splitEditor && !splitEditor.classList.contains('hidden');
+            const fileName = document.getElementById('split-file-name')?.textContent || '';
+
+            // 3. Switch to Edit again
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            const editHasCanvas2 = !!document.querySelector('#edit-viewer canvas');
+
+            return {
+                success: true,
+                editLoadedFirst: editHasCanvas1,
+                splitStillLoaded: splitStillLoaded,
+                fileName: fileName,
+                editLoadedSecond: editHasCanvas2
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let result: serde_json::Value = page
+        .evaluate(roundtrip_js)
+        .await
+        .expect("Should complete roundtrip")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Roundtrip result: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Roundtrip should succeed: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["editLoadedFirst"].as_bool().unwrap_or(false),
+        "Edit should have canvas on first switch from Split"
+    );
+    assert!(
+        result["splitStillLoaded"].as_bool().unwrap_or(false),
+        "Split should still have document after returning from Edit"
+    );
+    assert!(
+        result["editLoadedSecond"].as_bool().unwrap_or(false),
+        "Edit should still have canvas on second switch"
+    );
+
+    let filename = result["fileName"].as_str().unwrap_or("");
+    assert_eq!(
+        filename, "roundtrip-test.pdf",
+        "Filename should be preserved through roundtrip"
+    );
+}
+
+/// REGRESSION TEST: Load PDF in Merge tab, switch to Edit, first PDF should auto-load
+#[tokio::test]
+async fn test_tab_switching_merge_to_edit_preserves_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Switch to Merge tab first
+    page.evaluate(r#"document.querySelector('[data-tab="merge"]').click()"#)
+        .await
+        .expect("Should click Merge tab");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Load a PDF in the Merge tab
+    let pdf_b64 = test_pdf_base64(3);
+    let load_js = format!(
+        r#"(async () => {{
+            try {{
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Inject via file input in Merge tab
+                const fileInput = document.getElementById('merge-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'merge-doc.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Verify file is in merge list
+                const mergeFiles = document.getElementById('merge-files');
+                const hasFiles = mergeFiles && mergeFiles.children.length > 0;
+
+                return {{ success: true, hasFiles: hasFiles }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let load_result: serde_json::Value = page
+        .evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF")
+        .into_value()
+        .expect("Should get value");
+
+    assert!(
+        load_result["success"].as_bool().unwrap_or(false),
+        "Should load PDF in Merge tab: {:?}",
+        load_result["error"]
+    );
+    assert!(
+        load_result["hasFiles"].as_bool().unwrap_or(false),
+        "Merge file list should have files"
+    );
+
+    // Now switch to Edit tab - should auto-load the first merge document
+    let switch_js = r#"(async () => {
+        try {
+            document.querySelector('[data-tab="edit"]').click();
+            await new Promise(r => setTimeout(r, 2000));
+
+            const editEditor = document.getElementById('edit-editor');
+            const editDropZone = document.getElementById('edit-drop-zone');
+            const editLoaded = editEditor && !editEditor.classList.contains('hidden');
+            const dropZoneHidden = editDropZone && editDropZone.classList.contains('hidden');
+            const hasCanvas = !!document.querySelector('#edit-viewer canvas');
+
+            return {
+                success: true,
+                editLoaded: editLoaded,
+                dropZoneHidden: dropZoneHidden,
+                hasCanvas: hasCanvas
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let switch_result: serde_json::Value = page
+        .evaluate(switch_js)
+        .await
+        .expect("Should switch tabs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Tab switch Merge→Edit result: {:?}", switch_result);
+
+    assert!(
+        switch_result["success"].as_bool().unwrap_or(false),
+        "Tab switch should succeed: {:?}",
+        switch_result["error"]
+    );
+
+    // The first merge document should be auto-loaded in Edit tab
+    assert!(
+        switch_result["editLoaded"].as_bool().unwrap_or(false),
+        "Edit editor should be visible (first merge doc auto-loaded)"
+    );
+    assert!(
+        switch_result["hasCanvas"].as_bool().unwrap_or(false),
+        "Edit view should have a canvas (PDF rendered from merge)"
+    );
+}
+
+/// REGRESSION TEST: Load PDF in Merge tab, switch to Split, first PDF should auto-load
+#[tokio::test]
+async fn test_tab_switching_merge_to_split_preserves_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Switch to Merge tab
+    page.evaluate(r#"document.querySelector('[data-tab="merge"]').click()"#)
+        .await
+        .expect("Should click Merge tab");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Load a PDF in the Merge tab
+    let pdf_b64 = test_pdf_base64(4);
+    let load_js = format!(
+        r#"(async () => {{
+            const b64 = "{}";
+            const binary = atob(b64);
+            const pdfBytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {{
+                pdfBytes[i] = binary.charCodeAt(i);
+            }}
+
+            const fileInput = document.getElementById('merge-file-input');
+            const dataTransfer = new DataTransfer();
+            const file = new File([pdfBytes], 'merge-to-split.pdf', {{ type: 'application/pdf' }});
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+            await new Promise(r => setTimeout(r, 1000));
+            return true;
+        }})()"#,
+        pdf_b64
+    );
+
+    page.evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF");
+
+    // Switch to Split tab - should auto-load the first merge document
+    let switch_js = r#"(async () => {
+        try {
+            document.querySelector('[data-tab="split"]').click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            const splitEditor = document.getElementById('split-editor');
+            const splitDropZone = document.getElementById('split-drop-zone');
+            const splitLoaded = splitEditor && !splitEditor.classList.contains('hidden');
+            const dropZoneHidden = splitDropZone && splitDropZone.classList.contains('hidden');
+            const fileName = document.getElementById('split-file-name')?.textContent || '';
+
+            return {
+                success: true,
+                splitLoaded: splitLoaded,
+                dropZoneHidden: dropZoneHidden,
+                fileName: fileName
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let switch_result: serde_json::Value = page
+        .evaluate(switch_js)
+        .await
+        .expect("Should switch tabs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Tab switch Merge→Split result: {:?}", switch_result);
+
+    assert!(
+        switch_result["success"].as_bool().unwrap_or(false),
+        "Tab switch should succeed: {:?}",
+        switch_result["error"]
+    );
+
+    // The first merge document should be auto-loaded in Split tab
+    assert!(
+        switch_result["splitLoaded"].as_bool().unwrap_or(false),
+        "Split editor should be visible (first merge doc auto-loaded)"
+    );
+    assert!(
+        switch_result["dropZoneHidden"].as_bool().unwrap_or(false),
+        "Split drop zone should be hidden (document loaded from merge)"
+    );
+
+    let filename = switch_result["fileName"].as_str().unwrap_or("");
+    assert!(
+        !filename.is_empty(),
+        "Split view should show the filename from Merge tab"
+    );
+}
+
+/// REGRESSION TEST: Load PDF in Split, switch to Merge, PDF should be in merge list
+#[tokio::test]
+async fn test_tab_switching_split_to_merge_adds_document() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Load a PDF in the Split tab
+    let pdf_b64 = test_pdf_base64(2);
+    let load_js = format!(
+        r#"(async () => {{
+            const b64 = "{}";
+            const binary = atob(b64);
+            const pdfBytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {{
+                pdfBytes[i] = binary.charCodeAt(i);
+            }}
+
+            const fileInput = document.getElementById('split-file-input');
+            const dataTransfer = new DataTransfer();
+            const file = new File([pdfBytes], 'split-to-merge.pdf', {{ type: 'application/pdf' }});
+            dataTransfer.items.add(file);
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+            await new Promise(r => setTimeout(r, 1000));
+            return true;
+        }})()"#,
+        pdf_b64
+    );
+
+    page.evaluate(load_js.as_str())
+        .await
+        .expect("Should load PDF");
+
+    // Switch to Merge tab - should have the split document available
+    let switch_js = r#"(async () => {
+        try {
+            document.querySelector('[data-tab="merge"]').click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            // Check if merge list has the document or if there's a prompt to add it
+            const mergeFiles = document.getElementById('merge-files');
+            const mergeFileList = document.getElementById('merge-file-list');
+            const hasFiles = mergeFiles && mergeFiles.children.length > 0;
+            const fileListVisible = mergeFileList && !mergeFileList.classList.contains('hidden');
+
+            return {
+                success: true,
+                hasFiles: hasFiles,
+                fileListVisible: fileListVisible
+            };
+        } catch (err) {
+            return { success: false, error: err.toString() };
+        }
+    })()"#;
+
+    let switch_result: serde_json::Value = page
+        .evaluate(switch_js)
+        .await
+        .expect("Should switch tabs")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Tab switch Split→Merge result: {:?}", switch_result);
+
+    assert!(
+        switch_result["success"].as_bool().unwrap_or(false),
+        "Tab switch should succeed: {:?}",
+        switch_result["error"]
+    );
+
+    // The split document should be added to merge list automatically
+    assert!(
+        switch_result["hasFiles"].as_bool().unwrap_or(false),
+        "Merge list should have the document from Split tab"
+    );
+    assert!(
+        switch_result["fileListVisible"].as_bool().unwrap_or(false),
+        "Merge file list should be visible (document added from split)"
+    );
+}
+// ============================================================================
+// Accessibility Regression Tests (WCAG 2.1 Compliance)
+// ============================================================================
+
+/// A11Y Test: Skip link should exist for keyboard navigation (WCAG 2.4.1)
+#[tokio::test]
+async fn test_a11y_skip_link_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const skipLink = document.querySelector('.skip-link');
+                return {
+                    exists: !!skipLink,
+                    href: skipLink?.getAttribute('href') || null,
+                    text: skipLink?.textContent || null
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check for skip link")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Skip link check: {:?}", result);
+
+    assert!(
+        result["exists"].as_bool().unwrap_or(false),
+        "Skip link should exist for keyboard navigation (WCAG 2.4.1)"
+    );
+    assert_eq!(
+        result["href"].as_str().unwrap_or(""),
+        "#main-content",
+        "Skip link should target main content"
+    );
+}
+
+/// A11Y Test: Main landmark should exist (WCAG 1.3.1)
+#[tokio::test]
+async fn test_a11y_main_landmark_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const main = document.querySelector('main, [role="main"]');
+                return {
+                    exists: !!main,
+                    hasId: main?.id === 'main-content',
+                    hasRole: main?.getAttribute('role') === 'main'
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check for main landmark")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Main landmark check: {:?}", result);
+
+    assert!(
+        result["exists"].as_bool().unwrap_or(false),
+        "Main landmark should exist (WCAG 1.3.1)"
+    );
+}
+
+/// A11Y Test: Focus indicators should be visible (WCAG 2.4.7)
+#[tokio::test]
+async fn test_a11y_focus_indicators_css_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                // Check if focus-visible CSS rules exist
+                const styles = document.querySelectorAll('style');
+                let hasFocusVisible = false;
+                for (const style of styles) {
+                    if (style.textContent.includes(':focus-visible') ||
+                        style.textContent.includes(':focus {')) {
+                        hasFocusVisible = true;
+                        break;
+                    }
+                }
+                return { hasFocusVisible };
+            })()"#,
+        )
+        .await
+        .expect("Should check for focus styles")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Focus indicators check: {:?}", result);
+
+    assert!(
+        result["hasFocusVisible"].as_bool().unwrap_or(false),
+        "Focus indicator CSS should exist (WCAG 2.4.7)"
+    );
+}
+
+/// A11Y Test: Aria-live region should exist for screen reader announcements (WCAG 4.1.3)
+#[tokio::test]
+async fn test_a11y_aria_live_region_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const liveRegion = document.querySelector('[aria-live]');
+                return {
+                    exists: !!liveRegion,
+                    ariaLive: liveRegion?.getAttribute('aria-live') || null,
+                    id: liveRegion?.id || null
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check for aria-live region")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Aria-live region check: {:?}", result);
+
+    assert!(
+        result["exists"].as_bool().unwrap_or(false),
+        "Aria-live region should exist for screen reader announcements (WCAG 4.1.3)"
+    );
+}
+
+/// A11Y Test: Confirmation dialog should exist for destructive actions (WCAG 3.3.4)
+#[tokio::test]
+async fn test_a11y_confirmation_dialog_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const dialog = document.getElementById('confirm-dialog-overlay');
+                const confirmBtn = document.getElementById('confirm-dialog-confirm');
+                const cancelBtn = document.getElementById('confirm-dialog-cancel');
+                return {
+                    dialogExists: !!dialog,
+                    confirmBtnExists: !!confirmBtn,
+                    cancelBtnExists: !!cancelBtn,
+                    hasAriaModal: dialog?.getAttribute('aria-modal') === 'true'
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check for confirmation dialog")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Confirmation dialog check: {:?}", result);
+
+    assert!(
+        result["dialogExists"].as_bool().unwrap_or(false),
+        "Confirmation dialog should exist for error prevention (WCAG 3.3.4)"
+    );
+    assert!(
+        result["confirmBtnExists"].as_bool().unwrap_or(false),
+        "Confirmation dialog should have confirm button"
+    );
+    assert!(
+        result["cancelBtnExists"].as_bool().unwrap_or(false),
+        "Confirmation dialog should have cancel button"
+    );
+}
+
+/// A11Y Test: Merge file list should have keyboard reorder buttons (motor impairment)
+#[tokio::test]
+async fn test_a11y_merge_keyboard_reorder_buttons() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Check for move button CSS (indicates the feature exists)
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const styles = document.querySelectorAll('style');
+                let hasMoveButtons = false;
+                for (const style of styles) {
+                    if (style.textContent.includes('.move-btn') ||
+                        style.textContent.includes('.move-up') ||
+                        style.textContent.includes('.move-down')) {
+                        hasMoveButtons = true;
+                        break;
+                    }
+                }
+                return { hasMoveButtons };
+            })()"#,
+        )
+        .await
+        .expect("Should check for move button CSS")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Keyboard reorder buttons check: {:?}", result);
+
+    assert!(
+        result["hasMoveButtons"].as_bool().unwrap_or(false),
+        "Move up/down buttons should exist for keyboard file reordering (motor impairment accessibility)"
+    );
+}
+
+/// A11Y Test: Whiteout/Blackout should use dropdown instead of double-click (motor impairment)
+#[tokio::test]
+async fn test_a11y_whiteout_dropdown_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const dropdown = document.getElementById('whiteout-mode-dropdown');
+                const wrapper = document.getElementById('whiteout-wrapper');
+                return {
+                    dropdownExists: !!dropdown,
+                    wrapperExists: !!wrapper,
+                    hasWhiteoutOption: !!dropdown?.querySelector('[data-mode="whiteout"]'),
+                    hasBlackoutOption: !!dropdown?.querySelector('[data-mode="blackout"]')
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check for whiteout dropdown")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Whiteout dropdown check: {:?}", result);
+
+    assert!(
+        result["dropdownExists"].as_bool().unwrap_or(false),
+        "Whiteout mode dropdown should exist (replaces double-click for motor impairment)"
+    );
+    assert!(
+        result["hasWhiteoutOption"].as_bool().unwrap_or(false),
+        "Dropdown should have whiteout option"
+    );
+    assert!(
+        result["hasBlackoutOption"].as_bool().unwrap_or(false),
+        "Dropdown should have blackout option"
+    );
+}
+
+/// A11Y Test: Prefers-reduced-motion CSS should exist (WCAG 2.3.3)
+#[tokio::test]
+async fn test_a11y_reduced_motion_css_exists() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const styles = document.querySelectorAll('style');
+                let hasReducedMotion = false;
+                for (const style of styles) {
+                    if (style.textContent.includes('prefers-reduced-motion')) {
+                        hasReducedMotion = true;
+                        break;
+                    }
+                }
+                return { hasReducedMotion };
+            })()"#,
+        )
+        .await
+        .expect("Should check for reduced motion CSS")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("A11Y Reduced motion check: {:?}", result);
+
+    assert!(
+        result["hasReducedMotion"].as_bool().unwrap_or(false),
+        "Prefers-reduced-motion CSS should exist (WCAG 2.3.3)"
     );
 }

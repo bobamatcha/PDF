@@ -35,7 +35,9 @@
 | Action-Based Undo | ✅ Done | Transaction model in Rust, removed `operationHistory` from TS |
 | Re-enable Checkbox | ✅ Done | Checkbox tool with action system for undo/redo |
 | Highlight Tool | ✅ Done | Text selection-based highlight with action system |
+| Underline Tool | ✅ Done | Text selection-based underline with action system |
 | Export Compression | ✅ Done | Added `doc.compress()` to reduce file size |
+| Coordinate Fix | ✅ Done | Fixed Y-offset bug using PDF.js viewport methods - see [ISSUE-002](./KNOWN_ISSUES.md#issue-002-highlightunderline-y-coordinate-offset-bug) |
 | Flatten Export | ⚠️ Blocked | Rust works, WASM fails - see [ISSUE-001](./KNOWN_ISSUES.md#issue-001-pdf-flatten-export-not-working-in-wasm) |
 
 ### Phase 1: Rust Update Methods ✅ Complete

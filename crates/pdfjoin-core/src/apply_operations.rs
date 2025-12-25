@@ -104,7 +104,9 @@ pub fn apply_operations_flattened(
         }
     }
 
-    doc.compress();
+    // NOTE: Removed doc.compress() - it was corrupting the content streams in WASM
+    // See KNOWN_ISSUES.md ISSUE-001 for details
+    // doc.compress();
 
     let mut output = Vec::new();
     doc.save_to(&mut output)
@@ -212,10 +214,11 @@ fn flatten_operation_to_content(
             }
             writeln!(content, "Q").unwrap();
         }
-        EditOperation::AddWhiteRect { rect, .. } => {
-            // Draw white filled rectangle
+        EditOperation::AddWhiteRect { rect, color, .. } => {
+            // Draw colored filled rectangle (white for whiteout, black for blackout/redaction)
+            let (r, g, b) = parse_hex_color(color);
             writeln!(content, "q").unwrap();
-            writeln!(content, "1 1 1 rg").unwrap(); // White fill
+            writeln!(content, "{} {} {} rg", r, g, b).unwrap();
             writeln!(
                 content,
                 "{} {} {} {} re f",
@@ -429,7 +432,9 @@ fn apply_single_operation(
             new_text,
             style,
         ),
-        EditOperation::AddWhiteRect { rect, .. } => add_white_rect_annotation(doc, page_id, rect),
+        EditOperation::AddWhiteRect { rect, color, .. } => {
+            add_white_rect_annotation(doc, page_id, rect, color)
+        }
     }
 }
 
@@ -732,7 +737,7 @@ fn add_text_replacement(
         width: original_rect.width + COVER_PADDING * 2.0,
         height: original_rect.height + COVER_PADDING * 2.0,
     };
-    add_white_rect_annotation(doc, page_id, &padded_rect)?;
+    add_white_rect_annotation(doc, page_id, &padded_rect, "#FFFFFF")?;
 
     // 2. Add FreeText annotation with replacement text
     add_text_annotation(doc, page_id, replacement_rect, new_text, style)
@@ -742,6 +747,7 @@ fn add_white_rect_annotation(
     doc: &mut Document,
     page_id: ObjectId,
     rect: &PdfRect,
+    color: &str,
 ) -> Result<(), PdfJoinError> {
     // Calculate rectangle bounds
     let x1 = rect.x as f32;
@@ -751,13 +757,16 @@ fn add_white_rect_annotation(
     let width = x2 - x1;
     let height = y2 - y1;
 
-    // Create appearance stream content that draws a filled white rectangle
+    // Parse color (white for whiteout, black for blackout/redaction)
+    let (r, g, b) = parse_hex_color(color);
+
+    // Create appearance stream content that draws a filled rectangle
     // This is critical for reliable rendering across all PDF viewers
     let ap_content = format!(
-        "1 1 1 rg\n\
+        "{} {} {} rg\n\
          0 0 {} {} re\n\
          f",
-        width, height
+        r, g, b, width, height
     );
 
     // Create the appearance stream (Form XObject)
@@ -795,23 +804,15 @@ fn add_white_rect_annotation(
             Object::Real(y2),
         ]),
     );
-    // White fill (IC = Interior Color) - fallback for viewers that don't use AP
+    // Interior Color (IC) - fallback for viewers that don't use AP
     annot.set(
         "IC",
-        Object::Array(vec![
-            Object::Real(1.0),
-            Object::Real(1.0),
-            Object::Real(1.0),
-        ]),
+        Object::Array(vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
     );
-    // White border (C = Color)
+    // Border color (C = Color) - same as interior
     annot.set(
         "C",
-        Object::Array(vec![
-            Object::Real(1.0),
-            Object::Real(1.0),
-            Object::Real(1.0),
-        ]),
+        Object::Array(vec![Object::Real(r), Object::Real(g), Object::Real(b)]),
     );
     // No border width
     let mut bs = Dictionary::new();
@@ -1077,6 +1078,7 @@ mod tests {
                 width: 150.0,
                 height: 30.0,
             },
+            color: "#FFFFFF".to_string(),
         });
 
         // 2. Then add text on top (typed by user after drawing whiteout)
@@ -1205,6 +1207,7 @@ mod tests {
                 width: 200.0,
                 height: 30.0,
             },
+            color: "#FFFFFF".to_string(),
         });
 
         let result = apply_operations(&pdf, &log).unwrap();
@@ -1724,6 +1727,7 @@ mod tests {
                 width: 200.0,
                 height: 50.0,
             },
+            color: "#FFFFFF".to_string(),
         });
 
         let result = apply_operations_flattened(&pdf, &log).unwrap();
@@ -1733,6 +1737,33 @@ mod tests {
         assert!(
             result_str.contains("1 1 1 rg"),
             "Flattened whiteout should have white fill color (1 1 1 rg). PDF content: {}",
+            &result_str[..std::cmp::min(500, result_str.len())]
+        );
+    }
+
+    #[test]
+    fn test_flattened_blackout_produces_black_color() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            color: "#000000".to_string(), // Black for redaction
+        });
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+
+        // The black color (0 0 0 rg) should appear in the PDF
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(
+            result_str.contains("0 0 0 rg"),
+            "Flattened blackout should have black fill color (0 0 0 rg). PDF content: {}",
             &result_str[..std::cmp::min(500, result_str.len())]
         );
     }
@@ -1808,6 +1839,7 @@ mod tests {
                 width: 134.68,
                 height: 38.53,
             },
+            color: "#FFFFFF".to_string(),
         });
 
         eprintln!("Original PDF size: {} bytes", pdf_bytes.len());

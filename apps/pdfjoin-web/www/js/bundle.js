@@ -240,7 +240,7 @@ var selectedWhiteout = null;
 var selectedTextBox = null;
 var textBoxes = /* @__PURE__ */ new Map();
 var nextTextBoxId = 0;
-var currentHighlightColor = "#FFFF00";
+var isBlackoutMode = false;
 function setupEditView() {
   const dropZone = document.getElementById("edit-drop-zone");
   const fileInput = document.getElementById("edit-file-input");
@@ -284,8 +284,55 @@ function setupEditView() {
     const splitTab = document.querySelector('[data-tab="split"]');
     splitTab?.click();
   });
+  const whiteoutBtn = document.getElementById("edit-tool-whiteout");
+  const whiteoutWrapper = document.getElementById("whiteout-wrapper");
+  const whiteoutModeDropdown = document.getElementById("whiteout-mode-dropdown");
+  whiteoutBtn?.addEventListener("click", (e) => {
+    if (currentTool === "whiteout" && whiteoutModeDropdown) {
+      e.preventDefault();
+      e.stopPropagation();
+      whiteoutModeDropdown.classList.toggle("show");
+      return;
+    }
+  });
+  whiteoutModeDropdown?.querySelectorAll(".mode-option").forEach((option) => {
+    option.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mode = option.dataset.mode;
+      isBlackoutMode = mode === "blackout";
+      whiteoutModeDropdown.querySelectorAll(".mode-option").forEach((opt) => {
+        opt.classList.remove("active");
+      });
+      option.classList.add("active");
+      const btnText = whiteoutBtn?.querySelector(".whiteout-tool-text");
+      if (btnText) {
+        btnText.textContent = isBlackoutMode ? "Blackout" : "Whiteout";
+      }
+      if (isBlackoutMode) {
+        whiteoutWrapper?.classList.add("blackout-mode");
+        whiteoutBtn?.classList.add("blackout-mode");
+      } else {
+        whiteoutWrapper?.classList.remove("blackout-mode");
+        whiteoutBtn?.classList.remove("blackout-mode");
+      }
+      whiteoutModeDropdown.classList.remove("show");
+      currentTool = "whiteout";
+      document.querySelectorAll('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((b) => {
+        b.classList.remove("active");
+      });
+      whiteoutBtn?.classList.add("active");
+      whiteoutWrapper?.classList.add("tool-active");
+      updateCursor();
+    });
+  });
+  document.addEventListener("click", (e) => {
+    if (whiteoutModeDropdown?.classList.contains("show") && !whiteoutWrapper?.contains(e.target)) {
+      whiteoutModeDropdown.classList.remove("show");
+    }
+  });
   document.querySelectorAll('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (e) => {
       let toolName = btn.id.replace("tool-", "").replace("edit-", "");
       currentTool = toolName;
       document.querySelectorAll('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((b) => {
@@ -303,38 +350,16 @@ function setupEditView() {
           viewer.classList.remove("whiteout-tool-active");
         }
       }
-      const highlightWrapper = document.querySelector(".highlight-color-wrapper");
-      if (highlightWrapper) {
-        if (currentTool === "highlight") {
-          highlightWrapper.classList.add("tool-active");
+      if (whiteoutWrapper) {
+        if (currentTool === "whiteout") {
+          whiteoutWrapper.classList.add("tool-active");
+          if (isBlackoutMode) {
+            whiteoutWrapper.classList.add("blackout-mode");
+          }
         } else {
-          highlightWrapper.classList.remove("tool-active");
+          whiteoutWrapper.classList.remove("tool-active");
+          whiteoutModeDropdown?.classList.remove("show");
         }
-      }
-    });
-  });
-  const highlightColorBtn = document.getElementById("highlight-color-btn");
-  const highlightColorDropdown = document.getElementById("highlight-color-dropdown");
-  highlightColorBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    highlightColorDropdown?.classList.toggle("show");
-  });
-  document.addEventListener("click", (e) => {
-    if (!highlightColorBtn?.contains(e.target) && !highlightColorDropdown?.contains(e.target)) {
-      highlightColorDropdown?.classList.remove("show");
-    }
-  });
-  document.querySelectorAll(".highlight-color-swatch").forEach((swatch) => {
-    swatch.addEventListener("click", () => {
-      const color = swatch.dataset.color;
-      if (color) {
-        currentHighlightColor = color;
-        if (highlightColorBtn) {
-          highlightColorBtn.style.background = color;
-        }
-        document.querySelectorAll(".highlight-color-swatch").forEach((s) => s.classList.remove("active"));
-        swatch.classList.add("active");
-        highlightColorDropdown?.classList.remove("show");
       }
     });
   });
@@ -366,13 +391,6 @@ function setupEditView() {
     const target = e.target;
     if (!target.closest(".edit-whiteout-overlay")) {
       deselectWhiteout();
-    }
-  });
-  document.addEventListener("mouseup", () => {
-    if (currentTool === "highlight") {
-      handleHighlightTextSelection();
-    } else if (currentTool === "underline") {
-      handleUnderlineTextSelection();
     }
   });
   document.getElementById("edit-prev-page")?.addEventListener("click", () => navigatePage(-1));
@@ -526,9 +544,6 @@ function handleOverlayClick(e, pageNum) {
       break;
     case "textbox":
       createTextBox(pageNum, domX, domY);
-      break;
-    case "checkbox":
-      addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
       break;
   }
 }
@@ -721,239 +736,6 @@ function editExistingTextOverlay(textOverlay, pageNum) {
     }, 100);
   });
 }
-function addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY) {
-  if (!editSession) return;
-  const defaultSize = 24;
-  editSession.beginAction("checkbox");
-  const opId = editSession.addCheckbox(pageNum, pdfX - defaultSize / 2, pdfY - defaultSize / 2, defaultSize, defaultSize, false);
-  editSession.commitAction();
-  const checkbox = document.createElement("div");
-  checkbox.className = "edit-checkbox-overlay";
-  checkbox.textContent = "";
-  checkbox.style.left = domX - defaultSize / 2 + "px";
-  checkbox.style.top = domY - defaultSize / 2 + "px";
-  checkbox.style.width = defaultSize + "px";
-  checkbox.style.height = defaultSize + "px";
-  checkbox.dataset.page = String(pageNum);
-  setOpId(checkbox, opId);
-  const resizeHandle2 = document.createElement("div");
-  resizeHandle2.className = "resize-handle resize-handle-se";
-  checkbox.appendChild(resizeHandle2);
-  checkbox.addEventListener("click", (e) => {
-    if (e.target.classList.contains("resize-handle")) return;
-    e.stopPropagation();
-    checkbox.classList.toggle("checked");
-    const isChecked = checkbox.classList.contains("checked");
-    checkbox.textContent = isChecked ? "\u2713" : "";
-    if (!checkbox.querySelector(".resize-handle")) {
-      checkbox.appendChild(resizeHandle2);
-    }
-    editSession?.setCheckbox(opId, isChecked);
-  });
-  let isResizing = false;
-  let startX = 0;
-  let startY = 0;
-  let startSize = defaultSize;
-  resizeHandle2.addEventListener("mousedown", (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    isResizing = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startSize = checkbox.offsetWidth;
-    const onMouseMove = (moveEvent) => {
-      if (!isResizing) return;
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-      const delta = Math.max(deltaX, deltaY);
-      const newSize = Math.max(16, Math.min(100, startSize + delta));
-      checkbox.style.width = newSize + "px";
-      checkbox.style.height = newSize + "px";
-    };
-    const onMouseUp = () => {
-      isResizing = false;
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      const newSize = checkbox.offsetWidth;
-      const newLeft = parseFloat(checkbox.style.left);
-      const newTop = parseFloat(checkbox.style.top);
-      const pageInfo = PdfBridge.getPageInfo(pageNum);
-      if (pageInfo) {
-        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
-        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(newLeft + newSize, newTop + newSize);
-        const pdfX3 = Math.min(pdfX1, pdfX2);
-        const pdfY3 = Math.min(pdfY1, pdfY2);
-        const pdfWidth = Math.abs(pdfX2 - pdfX1);
-        const pdfHeight = Math.abs(pdfY2 - pdfY1);
-        editSession?.updateRect(opId, pdfX3, pdfY3, pdfWidth, pdfHeight);
-      }
-    };
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  });
-  overlay.appendChild(checkbox);
-  updateButtons();
-}
-function handleHighlightTextSelection() {
-  if (!editSession) return;
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-    return;
-  }
-  const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer;
-  const textLayer = (container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement)?.closest(".text-layer");
-  if (!textLayer) {
-    selection.removeAllRanges();
-    return;
-  }
-  const pageNum = parseInt(textLayer.getAttribute("data-page") || "1");
-  const rects = range.getClientRects();
-  if (rects.length === 0) {
-    selection.removeAllRanges();
-    return;
-  }
-  const pageDiv = textLayer.closest(".edit-page");
-  const overlay = pageDiv?.querySelector(".overlay-container");
-  const canvas = pageDiv?.querySelector("canvas");
-  if (!pageDiv || !overlay || !canvas) {
-    selection.removeAllRanges();
-    return;
-  }
-  const canvasRect = canvas.getBoundingClientRect();
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) {
-    selection.removeAllRanges();
-    return;
-  }
-  const viewport = pageInfo.viewport;
-  editSession.beginAction("highlight");
-  for (let i = 0; i < rects.length; i++) {
-    const rect = rects[i];
-    if (rect.width < 2 || rect.height < 2) continue;
-    const domX = rect.left - canvasRect.left;
-    const domY = rect.top - canvasRect.top;
-    const domWidth = rect.width;
-    const domHeight = rect.height;
-    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
-    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
-    const pdfX = Math.min(pdfX1, pdfX2);
-    const pdfY = Math.min(pdfY1, pdfY2);
-    const pdfWidth = Math.abs(pdfX2 - pdfX1);
-    const pdfHeight = Math.abs(pdfY2 - pdfY1);
-    const opId = editSession.addHighlight(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      currentHighlightColor,
-      0.3
-    );
-    const highlight = document.createElement("div");
-    highlight.className = "edit-highlight-overlay";
-    highlight.style.left = domX + "px";
-    highlight.style.top = domY + "px";
-    highlight.style.width = domWidth + "px";
-    highlight.style.height = domHeight + "px";
-    highlight.style.background = currentHighlightColor;
-    highlight.style.opacity = "0.3";
-    highlight.dataset.page = String(pageNum);
-    setOpId(highlight, opId);
-    overlay.appendChild(highlight);
-  }
-  editSession.commitAction();
-  selection.removeAllRanges();
-  updateButtons();
-}
-function handleUnderlineTextSelection() {
-  if (!editSession) return;
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-    return;
-  }
-  const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer;
-  const textLayer = (container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement)?.closest(".text-layer");
-  if (!textLayer) {
-    selection.removeAllRanges();
-    return;
-  }
-  const pageNum = parseInt(textLayer.getAttribute("data-page") || "1");
-  const rects = range.getClientRects();
-  if (rects.length === 0) {
-    selection.removeAllRanges();
-    return;
-  }
-  const pageDiv = textLayer.closest(".edit-page");
-  const overlay = pageDiv?.querySelector(".overlay-container");
-  const canvas = pageDiv?.querySelector("canvas");
-  if (!pageDiv || !overlay || !canvas) {
-    selection.removeAllRanges();
-    return;
-  }
-  const canvasRect = canvas.getBoundingClientRect();
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) {
-    selection.removeAllRanges();
-    return;
-  }
-  const viewport = pageInfo.viewport;
-  let underlineColor = "#000000";
-  const startNode = range.startContainer;
-  const textElement = startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode;
-  if (textElement) {
-    const computedStyle = window.getComputedStyle(textElement);
-    const rgbColor = computedStyle.color;
-    const match = rgbColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    if (match) {
-      const r = parseInt(match[1]).toString(16).padStart(2, "0");
-      const g = parseInt(match[2]).toString(16).padStart(2, "0");
-      const b = parseInt(match[3]).toString(16).padStart(2, "0");
-      underlineColor = `#${r}${g}${b}`;
-    }
-  }
-  editSession.beginAction("underline");
-  const underlineHeight = 2;
-  const underlineGap = 2;
-  for (let i = 0; i < rects.length; i++) {
-    const rect = rects[i];
-    if (rect.width < 2) continue;
-    const domX = rect.left - canvasRect.left;
-    const domY = rect.bottom - canvasRect.top + underlineGap;
-    const domWidth = rect.width;
-    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
-    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + underlineHeight);
-    const pdfX = Math.min(pdfX1, pdfX2);
-    const pdfY = Math.min(pdfY1, pdfY2);
-    const pdfWidth = Math.abs(pdfX2 - pdfX1);
-    const pdfHeight = Math.abs(pdfY2 - pdfY1);
-    const opId = editSession.addUnderline(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      underlineColor,
-      // Match text color
-      1
-      // Full opacity
-    );
-    const underline = document.createElement("div");
-    underline.className = "edit-underline-overlay";
-    underline.style.left = domX + "px";
-    underline.style.top = domY + "px";
-    underline.style.width = domWidth + "px";
-    underline.style.height = underlineHeight + "px";
-    underline.style.background = underlineColor;
-    underline.dataset.page = String(pageNum);
-    setOpId(underline, opId);
-    overlay.appendChild(underline);
-  }
-  editSession.commitAction();
-  selection.removeAllRanges();
-  updateButtons();
-}
 function handleWhiteoutStart(e, pageNum, overlay, pageDiv) {
   if (currentTool !== "whiteout" && currentTool !== "textbox") return;
   const target = e.target;
@@ -970,7 +752,13 @@ function handleWhiteoutStart(e, pageNum, overlay, pageDiv) {
   drawStartX = e.clientX - rect.left;
   drawStartY = e.clientY - rect.top;
   drawPreviewEl = document.createElement("div");
-  drawPreviewEl.className = currentTool === "textbox" ? "textbox-preview" : "whiteout-preview";
+  if (currentTool === "textbox") {
+    drawPreviewEl.className = "textbox-preview";
+  } else if (isBlackoutMode) {
+    drawPreviewEl.className = "blackout-preview";
+  } else {
+    drawPreviewEl.className = "whiteout-preview";
+  }
   drawPreviewEl.style.left = drawStartX + "px";
   drawPreviewEl.style.top = drawStartY + "px";
   drawPreviewEl.style.width = "0px";
@@ -1045,19 +833,23 @@ function addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight) {
   const pdfY = Math.min(pdfY1, pdfY2);
   const pdfWidth = Math.abs(pdfX2 - pdfX1);
   const pdfHeight = Math.abs(pdfY2 - pdfY1);
+  const rectColor = isBlackoutMode ? "#000000" : "#FFFFFF";
   editSession.beginAction("whiteout");
-  const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+  const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, rectColor);
   editSession.commitAction();
   const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
   if (!overlay) return;
   const whiteRect = document.createElement("div");
-  whiteRect.className = "edit-whiteout-overlay";
+  whiteRect.className = isBlackoutMode ? "edit-blackout-overlay" : "edit-whiteout-overlay";
   whiteRect.style.left = domX + "px";
   whiteRect.style.top = domY + "px";
   whiteRect.style.width = domWidth + "px";
   whiteRect.style.height = domHeight + "px";
   setOpId(whiteRect, opId);
   whiteRect.dataset.page = String(pageNum);
+  if (isBlackoutMode) {
+    whiteRect.dataset.blackout = "true";
+  }
   whiteRect.addEventListener("mousedown", (e) => {
     if (e.target.classList.contains("resize-handle")) return;
     e.stopPropagation();
@@ -1067,6 +859,7 @@ function addWhiteoutAtPosition(pageNum, domX, domY, domWidth, domHeight) {
   });
   whiteRect.addEventListener("dblclick", (e) => {
     e.stopPropagation();
+    if (whiteRect.dataset.blackout === "true") return;
     openWhiteoutTextEditor(whiteRect, pageNum);
   });
   overlay.appendChild(whiteRect);
@@ -1440,8 +1233,9 @@ function endResize() {
         const pdfY = Math.min(pdfY1, pdfY2);
         const pdfWidth = Math.abs(pdfX2 - pdfX1);
         const pdfHeight = Math.abs(pdfY2 - pdfY1);
+        const resizeColor = target.dataset.blackout === "true" ? "#000000" : "#FFFFFF";
         editSession.beginAction("resize");
-        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, resizeColor);
         editSession.commitAction();
         setOpId(target, newOpId);
       }
@@ -1495,8 +1289,9 @@ function endMove() {
         const pdfY = Math.min(pdfY1, pdfY2);
         const pdfWidth = Math.abs(pdfX2 - pdfX1);
         const pdfHeight = Math.abs(pdfY2 - pdfY1);
+        const moveColor = target.dataset.blackout === "true" ? "#000000" : "#FFFFFF";
         editSession.beginAction("move");
-        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, moveColor);
         editSession.commitAction();
         setOpId(target, newOpId);
       }
@@ -1613,21 +1408,24 @@ async function openWhiteoutTextEditor(whiteRect, pageNum) {
   const originalWidth = domWidth;
   const originalHeight = domHeight;
   const coveredStyle = await detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight);
-  const input = document.createElement("span");
+  const input = document.createElement("div");
   input.contentEditable = "true";
   input.className = "whiteout-text-input";
-  input.style.display = "block";
-  input.style.minWidth = "100%";
-  input.style.minHeight = "100%";
+  input.style.position = "absolute";
+  input.style.top = "0";
+  input.style.left = "0";
+  input.style.width = "100%";
+  input.style.height = "100%";
+  input.style.margin = "0";
+  input.style.padding = "0";
+  input.style.boxSizing = "border-box";
   input.style.border = "none";
   input.style.outline = "none";
   input.style.background = "transparent";
-  input.style.padding = "2px 4px";
-  input.style.boxSizing = "border-box";
   input.style.textAlign = "center";
-  input.style.whiteSpace = "pre-wrap";
-  input.style.wordBreak = "break-word";
-  input.style.overflow = "visible";
+  input.style.display = "flex";
+  input.style.alignItems = "center";
+  input.style.justifyContent = "center";
   input.style.fontSize = coveredStyle.fontSize + "px";
   input.style.fontFamily = coveredStyle.fontFamily;
   input.style.color = "#000000";
@@ -1760,7 +1558,7 @@ function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeig
     const existingOpId = getOpId(whiteRect);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
-      const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+      const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, "#FFFFFF");
       setOpId(whiteRect, newWhiteOpId);
     }
   }
@@ -2142,12 +1940,6 @@ function recreateOperationElement(opId) {
       case "AddText":
         recreateTextBox(opId, { page: op.page, rect: op.rect, text: op.text || "", style: op.style });
         break;
-      case "AddCheckbox":
-        recreateCheckbox(opId, { page: op.page, rect: op.rect, checked: op.checked || false });
-        break;
-      case "AddHighlight":
-        recreateHighlight(opId, { page: op.page, rect: op.rect });
-        break;
     }
   } catch {
   }
@@ -2266,72 +2058,6 @@ function recreateTextBox(opId, data) {
   });
   overlay.appendChild(box);
 }
-function recreateCheckbox(opId, data) {
-  const pageNum = data.page;
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) return;
-  const pdfRect = data.rect;
-  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
-    pdfRect.x,
-    pdfRect.y,
-    pdfRect.x + pdfRect.width,
-    pdfRect.y + pdfRect.height
-  ]);
-  const domX = Math.min(viewportRect[0], viewportRect[2]);
-  const domY = Math.min(viewportRect[1], viewportRect[3]);
-  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
-  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
-  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
-  if (!overlay) return;
-  const checkbox = document.createElement("div");
-  checkbox.className = "edit-checkbox-overlay";
-  checkbox.style.left = domX + "px";
-  checkbox.style.top = domY + "px";
-  checkbox.style.width = domWidth + "px";
-  checkbox.style.height = domHeight + "px";
-  checkbox.dataset.page = String(pageNum);
-  setOpId(checkbox, opId);
-  if (data.checked) {
-    checkbox.classList.add("checked");
-    checkbox.textContent = "\u2713";
-  }
-  checkbox.addEventListener("click", () => {
-    checkbox.classList.toggle("checked");
-    const isChecked = checkbox.classList.contains("checked");
-    checkbox.textContent = isChecked ? "\u2713" : "";
-    if (editSession) {
-      editSession.setCheckbox(opId, isChecked);
-    }
-  });
-  overlay.appendChild(checkbox);
-}
-function recreateHighlight(opId, data) {
-  const pageNum = data.page;
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) return;
-  const pdfRect = data.rect;
-  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
-    pdfRect.x,
-    pdfRect.y,
-    pdfRect.x + pdfRect.width,
-    pdfRect.y + pdfRect.height
-  ]);
-  const domX = Math.min(viewportRect[0], viewportRect[2]);
-  const domY = Math.min(viewportRect[1], viewportRect[3]);
-  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
-  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
-  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
-  if (!overlay) return;
-  const highlight = document.createElement("div");
-  highlight.className = "edit-highlight";
-  highlight.style.left = domX + "px";
-  highlight.style.top = domY + "px";
-  highlight.style.width = domWidth + "px";
-  highlight.style.height = domHeight + "px";
-  highlight.dataset.page = String(pageNum);
-  setOpId(highlight, opId);
-  overlay.appendChild(highlight);
-}
 function updateButtons() {
   const downloadBtn = document.getElementById("edit-download-btn");
   const undoBtn = document.getElementById("edit-undo-btn");
@@ -2437,12 +2163,14 @@ function updateCursor() {
     case "textbox":
       viewer.style.cursor = "crosshair";
       break;
-    case "highlight":
-      viewer.style.cursor = "crosshair";
-      break;
-    case "checkbox":
-      viewer.style.cursor = "pointer";
-      break;
+    // DISABLED: Highlight (ISSUE-001), Underline (ISSUE-002), Checkbox (ISSUE-003) tools are hidden
+    // case 'highlight':
+    // case 'underline':
+    //   viewer.style.cursor = 'text';
+    //   break;
+    // case 'checkbox':
+    //   viewer.style.cursor = 'pointer';
+    //   break;
     case "whiteout":
       viewer.style.cursor = "crosshair";
       break;
@@ -2453,7 +2181,7 @@ function updateCursor() {
   document.querySelectorAll(".text-layer").forEach((layer) => {
     layer.style.pointerEvents = isDrawingTool ? "none" : "auto";
   });
-  const overlayNeedsClicks = currentTool === "text" || currentTool === "textbox" || currentTool === "checkbox";
+  const overlayNeedsClicks = currentTool === "text" || currentTool === "textbox";
   document.querySelectorAll(".overlay-container").forEach((overlay) => {
     overlay.style.pointerEvents = overlayNeedsClicks ? "auto" : "none";
   });
@@ -2470,6 +2198,67 @@ function showError(containerId, message) {
 // src/ts/app.ts
 var LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024;
 var VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024;
+function announceToScreenReader(message) {
+  const liveRegion = document.getElementById("aria-live-region");
+  if (liveRegion) {
+    liveRegion.textContent = "";
+    setTimeout(() => {
+      liveRegion.textContent = message;
+    }, 50);
+  }
+}
+function showConfirmDialog(options) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById("confirm-dialog-overlay");
+    const heading = document.getElementById("confirm-dialog-heading");
+    const message = document.getElementById("confirm-dialog-message");
+    const icon = document.getElementById("confirm-dialog-icon");
+    const confirmBtn = document.getElementById("confirm-dialog-confirm");
+    const cancelBtn = document.getElementById("confirm-dialog-cancel");
+    if (!overlay || !heading || !message || !confirmBtn || !cancelBtn) {
+      resolve(window.confirm(options.message));
+      return;
+    }
+    heading.textContent = options.title;
+    message.textContent = options.message;
+    if (icon) icon.innerHTML = options.icon || "&#9888;";
+    confirmBtn.textContent = options.confirmText || "Remove";
+    cancelBtn.textContent = options.cancelText || "Cancel";
+    overlay.classList.add("show");
+    confirmBtn.focus();
+    const cleanup = () => {
+      overlay.classList.remove("show");
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      overlay.removeEventListener("click", onOverlayClick);
+      document.removeEventListener("keydown", onKeydown);
+    };
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+    const onOverlayClick = (e) => {
+      if (e.target === overlay) {
+        cleanup();
+        resolve(false);
+      }
+    };
+    const onKeydown = (e) => {
+      if (e.key === "Escape") {
+        cleanup();
+        resolve(false);
+      }
+    };
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    overlay.addEventListener("click", onOverlayClick);
+    document.addEventListener("keydown", onKeydown);
+  });
+}
 var splitSession = null;
 var mergeSession = null;
 var splitOriginalFilename = null;
@@ -2498,8 +2287,32 @@ function setupTabs() {
         }
         if (hasSharedPdf()) {
           const shared = getSharedPdf();
-          if (shared.bytes && shared.filename && tabName === "split") {
-            loadPdfIntoSplit(shared.bytes, shared.filename);
+          if (shared.bytes && shared.filename) {
+            if (tabName === "split") {
+              loadPdfIntoSplit(shared.bytes, shared.filename);
+            } else if (tabName === "merge") {
+              loadPdfIntoMerge(shared.bytes, shared.filename);
+            }
+          }
+        }
+      }
+      if (currentTab === "split" && tabName === "merge") {
+        if (hasSharedPdf()) {
+          const shared = getSharedPdf();
+          if (shared.bytes && shared.filename) {
+            loadPdfIntoMerge(shared.bytes, shared.filename);
+          }
+        }
+      }
+      if (currentTab === "merge" && tabName === "split") {
+        if (mergeSession && mergeSession.getDocumentCount() > 0) {
+          try {
+            const bytes = mergeSession.getDocumentBytes(0);
+            const name = mergeSession.getDocumentName(0);
+            loadPdfIntoSplit(bytes, name);
+            setSharedPdf(bytes, name, "merge");
+          } catch (e) {
+            console.error("Failed to load merge document into split:", e);
           }
         }
       }
@@ -2508,16 +2321,45 @@ function setupTabs() {
       document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
       const view = document.getElementById(`${tabName}-view`);
       if (view) view.classList.remove("hidden");
-      if (tabName === "edit" && hasSharedPdf()) {
-        const shared = getSharedPdf();
+      if (tabName === "edit") {
         const editEditor = document.getElementById("edit-editor");
         const editAlreadyLoaded = editEditor && !editEditor.classList.contains("hidden");
-        if (!editAlreadyLoaded && shared.bytes && shared.filename) {
-          await loadPdfIntoEdit(shared.bytes, shared.filename);
+        if (!editAlreadyLoaded) {
+          if (hasSharedPdf()) {
+            const shared = getSharedPdf();
+            if (shared.bytes && shared.filename) {
+              await loadPdfIntoEdit(shared.bytes, shared.filename);
+            }
+          } else if (currentTab === "merge" && mergeSession && mergeSession.getDocumentCount() > 0) {
+            try {
+              const bytes = mergeSession.getDocumentBytes(0);
+              const name = mergeSession.getDocumentName(0);
+              await loadPdfIntoEdit(bytes, name);
+              setSharedPdf(bytes, name, "merge");
+            } catch (e) {
+              console.error("Failed to load merge document into edit:", e);
+            }
+          }
         }
       }
     });
   });
+}
+function loadPdfIntoMerge(bytes, filename) {
+  if (!mergeSession) return;
+  const infos = mergeSession.getDocumentInfos();
+  const alreadyExists = infos.some((info) => info.name === filename);
+  if (alreadyExists) {
+    console.log(`Document "${filename}" already in merge list, skipping`);
+    return;
+  }
+  try {
+    mergeSession.addDocument(filename, bytes);
+    updateMergeFileList();
+    console.log(`Added "${filename}" to merge list from tab switch`);
+  } catch (e) {
+    console.error("Failed to add document to merge:", e);
+  }
 }
 function loadPdfIntoSplit(bytes, filename) {
   if (!splitSession) return;
@@ -2646,7 +2488,18 @@ function setupSplitView() {
   fileInput.addEventListener("change", () => {
     if (fileInput.files && fileInput.files.length > 0) handleSplitFile(fileInput.files[0]);
   });
-  removeBtn.addEventListener("click", resetSplitView);
+  removeBtn.addEventListener("click", async () => {
+    const fileName = document.getElementById("split-file-name")?.textContent || "this file";
+    const confirmed = await showConfirmDialog({
+      title: "Remove File?",
+      message: `Are you sure you want to remove "${fileName}"? You can add it again later.`,
+      confirmText: "Remove",
+      cancelText: "Keep"
+    });
+    if (confirmed) {
+      resetSplitView();
+    }
+  });
   splitBtn.addEventListener("click", executeSplit);
   rangeInput.addEventListener("input", validateRange);
 }
@@ -2678,8 +2531,10 @@ async function handleSplitFile(file) {
     const splitBtn = document.getElementById("split-btn");
     if (rangeInput) rangeInput.value = "";
     if (splitBtn) splitBtn.disabled = true;
+    announceToScreenReader(`${file.name} loaded. ${info.page_count} pages. Enter page range to split.`);
   } catch (e) {
     showError2("split-error", String(e));
+    announceToScreenReader(`Error loading file: ${e}`);
   }
 }
 function resetSplitView() {
@@ -2739,14 +2594,17 @@ async function executeSplit() {
         }
       }
       splitSession.setPageSelection(fullRange);
+      announceToScreenReader(`Split complete. ${ranges.length} files are downloading.`);
     } else {
       const result = splitSession.execute();
       const range = fullRange.replace(/\s+/g, "").replace(/,/g, "_");
       const filename = `${splitOriginalFilename || "split"}-pages-${range}.pdf`;
       downloadBlob(result, filename);
+      announceToScreenReader(`Split complete. ${filename} is downloading.`);
     }
   } catch (e) {
     showError2("split-error", "Split failed: " + e);
+    announceToScreenReader(`Split failed: ${e}`);
   } finally {
     splitBtn.disabled = false;
     setTimeout(() => progress.classList.add("hidden"), 500);
@@ -2841,6 +2699,7 @@ function setupMergeView() {
 async function handleMergeFiles(files) {
   if (!mergeSession) return;
   const { format_bytes } = window.wasmBindings;
+  const wasEmpty = mergeSession.getDocumentCount() === 0;
   const fileArray = Array.from(files);
   for (const file of fileArray) {
     if (file.type !== "application/pdf") continue;
@@ -2854,11 +2713,36 @@ async function handleMergeFiles(files) {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       mergeSession.addDocument(file.name, bytes);
+      if (wasEmpty && mergeSession.getDocumentCount() === 1) {
+        setSharedPdf(bytes, file.name, "merge");
+      }
     } catch (e) {
       showError2("merge-error", `${file.name}: ${e}`);
+      announceToScreenReader(`Error loading ${file.name}: ${e}`);
     }
   }
   updateMergeFileList();
+  if (mergeSession) {
+    const count = mergeSession.getDocumentCount();
+    const totalPages = mergeSession.getTotalPageCount();
+    if (count > 0) {
+      announceToScreenReader(`${count} files loaded with ${totalPages} total pages. Ready to merge.`);
+    }
+  }
+}
+function moveFile(fromIndex, toIndex) {
+  if (!mergeSession) return;
+  const count = mergeSession.getDocumentCount();
+  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) return;
+  const order = [...Array(count).keys()];
+  order.splice(fromIndex, 1);
+  order.splice(toIndex, 0, fromIndex);
+  try {
+    mergeSession.reorderDocuments(order);
+    updateMergeFileList();
+  } catch (e) {
+    console.error("Reorder failed:", e);
+  }
 }
 function updateMergeFileList() {
   if (!mergeSession) return;
@@ -2877,20 +2761,67 @@ function updateMergeFileList() {
   const ul = document.getElementById("merge-files");
   if (!ul) return;
   ul.innerHTML = "";
+  const totalFiles = infos.length;
   infos.forEach((info, idx) => {
     const li = document.createElement("li");
     li.draggable = true;
     li.dataset.index = String(idx);
+    li.tabIndex = 0;
+    li.setAttribute("role", "listitem");
+    li.setAttribute("aria-label", `${info.name}, ${info.page_count} pages. Use arrow keys or buttons to reorder.`);
     li.innerHTML = `
-            <span class="drag-handle">\u2630</span>
+            <span class="drag-handle" aria-hidden="true">\u2630</span>
             <span class="file-name">${info.name}</span>
             <span class="file-size">${info.page_count} pages - ${format_bytes(info.size_bytes)}</span>
-            <button class="remove-btn" data-index="${idx}">\xD7</button>
+            <div class="reorder-btns">
+              <button class="move-btn move-up" title="Move up" aria-label="Move ${info.name} up" ${idx === 0 ? "disabled" : ""}>\u2191</button>
+              <button class="move-btn move-down" title="Move down" aria-label="Move ${info.name} down" ${idx === totalFiles - 1 ? "disabled" : ""}>\u2193</button>
+            </div>
+            <button class="remove-btn" data-index="${idx}" aria-label="Remove ${info.name}">\xD7</button>
         `;
+    const moveUpBtn = li.querySelector(".move-up");
+    const moveDownBtn = li.querySelector(".move-down");
+    moveUpBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (idx > 0) {
+        moveFile(idx, idx - 1);
+      }
+    });
+    moveDownBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (idx < totalFiles - 1) {
+        moveFile(idx, idx + 1);
+      }
+    });
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowUp" && idx > 0) {
+        e.preventDefault();
+        moveFile(idx, idx - 1);
+        setTimeout(() => {
+          const newItem = ul.querySelector(`li[data-index="${idx - 1}"]`);
+          newItem?.focus();
+        }, 0);
+      } else if (e.key === "ArrowDown" && idx < totalFiles - 1) {
+        e.preventDefault();
+        moveFile(idx, idx + 1);
+        setTimeout(() => {
+          const newItem = ul.querySelector(`li[data-index="${idx + 1}"]`);
+          newItem?.focus();
+        }, 0);
+      }
+    });
     const removeBtn = li.querySelector(".remove-btn");
-    removeBtn?.addEventListener("click", () => {
-      mergeSession?.removeDocument(idx);
-      updateMergeFileList();
+    removeBtn?.addEventListener("click", async () => {
+      const confirmed = await showConfirmDialog({
+        title: "Remove File?",
+        message: `Are you sure you want to remove "${info.name}" from the merge list? You can add it again later.`,
+        confirmText: "Remove",
+        cancelText: "Keep"
+      });
+      if (confirmed) {
+        mergeSession?.removeDocument(idx);
+        updateMergeFileList();
+      }
     });
     li.addEventListener("dragstart", onDragStart);
     li.addEventListener("dragover", onDragOver);
@@ -2949,8 +2880,10 @@ async function executeMerge() {
     const count = mergeSession.getDocumentCount();
     const filename = `merged-${count}-files.pdf`;
     downloadBlob(result, filename);
+    announceToScreenReader(`Merge complete. ${filename} is downloading.`);
   } catch (e) {
     showError2("merge-error", "Merge failed: " + e);
+    announceToScreenReader(`Merge failed: ${e}`);
   } finally {
     mergeBtn.disabled = false;
     setTimeout(() => progress.classList.add("hidden"), 500);
@@ -2962,14 +2895,37 @@ function onMergeProgress(current, total, message) {
   if (progressFill) progressFill.style.width = `${current / total * 100}%`;
   if (progressText) progressText.textContent = message;
 }
+function getUserFriendlyError(rawMessage) {
+  const lowerMsg = rawMessage.toLowerCase();
+  if (lowerMsg.includes("password") || lowerMsg.includes("encrypted")) {
+    return "This PDF is password-protected. Please remove the password using Adobe Acrobat or a PDF unlocker, then try again.";
+  }
+  if (lowerMsg.includes("invalid pdf") || lowerMsg.includes("not a pdf") || lowerMsg.includes("magic bytes")) {
+    return "This file is not a valid PDF. Please check that you selected the correct file. If the file is a Word document, save it as PDF first.";
+  }
+  if (lowerMsg.includes("too large") || lowerMsg.includes("memory")) {
+    return "This file is too large to process. Try splitting it into smaller parts using Adobe Acrobat, then try again.";
+  }
+  if (lowerMsg.includes("page") && (lowerMsg.includes("invalid") || lowerMsg.includes("range"))) {
+    return 'Invalid page range. Use format like "1-3, 5, 8-10". Pages must exist in the document.';
+  }
+  if (lowerMsg.includes("corrupt") || lowerMsg.includes("damaged") || lowerMsg.includes("parse")) {
+    return "This PDF appears to be corrupted. Try downloading it again or opening and re-saving it in Adobe Acrobat.";
+  }
+  if (lowerMsg.includes("network") || lowerMsg.includes("fetch")) {
+    return "A network error occurred. Please check your internet connection and try again.";
+  }
+  return `${rawMessage}. If this keeps happening, try refreshing the page or using a different browser.`;
+}
 function showError2(containerId, message) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const textEl = container.querySelector(".error-text");
   const dismissBtn = container.querySelector(".dismiss");
-  if (textEl) textEl.textContent = message;
+  const friendlyMessage = getUserFriendlyError(message);
+  if (textEl) textEl.textContent = friendlyMessage;
   container.classList.remove("hidden");
-  const timer = setTimeout(() => container.classList.add("hidden"), 8e3);
+  const timer = setTimeout(() => container.classList.add("hidden"), 2e4);
   if (dismissBtn) {
     dismissBtn.onclick = () => {
       clearTimeout(timer);

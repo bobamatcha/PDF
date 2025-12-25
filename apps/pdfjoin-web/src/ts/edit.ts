@@ -64,8 +64,11 @@ let selectedTextBox: HTMLElement | null = null;
 let textBoxes: Map<number, HTMLElement> = new Map();
 let nextTextBoxId = 0;
 
-// Highlight color
-let currentHighlightColor = '#FFFF00'; // Default yellow
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// let currentHighlightColor = '#FFFF00'; // Default yellow
+
+// Blackout mode: false = whiteout (#FFFFFF), true = blackout (#000000)
+let isBlackoutMode = false;
 
 export function setupEditView(): void {
   const dropZone = document.getElementById('edit-drop-zone');
@@ -123,11 +126,91 @@ export function setupEditView(): void {
     splitTab?.click();
   });
 
+  // DISABLED: Highlight tool is hidden (ISSUE-001)
+  // const highlightColorDropdown = document.getElementById('highlight-color-dropdown');
+  // const highlightWrapper = document.getElementById('highlight-wrapper');
+
+  // ACCESSIBILITY: Whiteout/Blackout mode dropdown (replaces double-click for motor impairment)
+  const whiteoutBtn = document.getElementById('edit-tool-whiteout');
+  const whiteoutWrapper = document.getElementById('whiteout-wrapper');
+  const whiteoutModeDropdown = document.getElementById('whiteout-mode-dropdown');
+
+  // Second click on whiteout tool shows mode dropdown (like highlight color picker)
+  whiteoutBtn?.addEventListener('click', (e) => {
+    if (currentTool === 'whiteout' && whiteoutModeDropdown) {
+      // Already active - toggle dropdown
+      e.preventDefault();
+      e.stopPropagation();
+      whiteoutModeDropdown.classList.toggle('show');
+      return;
+    }
+  });
+
+  // Handle mode option clicks
+  whiteoutModeDropdown?.querySelectorAll('.mode-option').forEach((option) => {
+    option.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const mode = (option as HTMLElement).dataset.mode;
+      isBlackoutMode = mode === 'blackout';
+
+      // Update active state on options
+      whiteoutModeDropdown.querySelectorAll('.mode-option').forEach((opt) => {
+        opt.classList.remove('active');
+      });
+      option.classList.add('active');
+
+      // Update button text and appearance
+      const btnText = whiteoutBtn?.querySelector('.whiteout-tool-text');
+      if (btnText) {
+        btnText.textContent = isBlackoutMode ? 'Blackout' : 'Whiteout';
+      }
+
+      // Update wrapper class for styling
+      if (isBlackoutMode) {
+        whiteoutWrapper?.classList.add('blackout-mode');
+        whiteoutBtn?.classList.add('blackout-mode');
+      } else {
+        whiteoutWrapper?.classList.remove('blackout-mode');
+        whiteoutBtn?.classList.remove('blackout-mode');
+      }
+
+      // Close dropdown
+      whiteoutModeDropdown.classList.remove('show');
+
+      // Ensure tool is active
+      currentTool = 'whiteout';
+      document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((b) => {
+        b.classList.remove('active');
+      });
+      whiteoutBtn?.classList.add('active');
+      whiteoutWrapper?.classList.add('tool-active');
+      updateCursor();
+    });
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (whiteoutModeDropdown?.classList.contains('show') &&
+        !whiteoutWrapper?.contains(e.target as Node)) {
+      whiteoutModeDropdown.classList.remove('show');
+    }
+  });
+
   // Tool buttons - match both old format (tool-*) and new format (edit-tool-*)
   document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
       // Handle different ID formats
       let toolName = btn.id.replace('tool-', '').replace('edit-', '');
+
+      // DISABLED: Highlight tool is hidden (ISSUE-001)
+      // if (toolName === 'highlight' && currentTool === 'highlight') {
+      //   e.stopPropagation();
+      //   highlightColorDropdown?.classList.toggle('show');
+      //   return;
+      // }
+      // highlightColorDropdown?.classList.remove('show');
+
       currentTool = toolName;
       document.querySelectorAll<HTMLElement>('.tool-btn[id^="tool-"], .tool-btn[id^="edit-tool-"]').forEach((b) => {
         b.classList.remove('active');
@@ -148,52 +231,55 @@ export function setupEditView(): void {
         }
       }
 
-      // Toggle highlight color picker visibility based on tool selection
-      const highlightWrapper = document.querySelector('.highlight-color-wrapper');
-      if (highlightWrapper) {
-        if (currentTool === 'highlight') {
-          highlightWrapper.classList.add('tool-active');
+      // DISABLED: Highlight tool is hidden (ISSUE-001)
+      // if (highlightWrapper) {
+      //   if (currentTool === 'highlight') {
+      //     highlightWrapper.classList.add('tool-active');
+      //     highlightWrapper.style.setProperty('--current-highlight-color', currentHighlightColor);
+      //   } else {
+      //     highlightWrapper.classList.remove('tool-active');
+      //   }
+      // }
+
+      // Toggle whiteout mode dropdown visibility based on tool selection
+      if (whiteoutWrapper) {
+        if (currentTool === 'whiteout') {
+          whiteoutWrapper.classList.add('tool-active');
+          if (isBlackoutMode) {
+            whiteoutWrapper.classList.add('blackout-mode');
+          }
         } else {
-          highlightWrapper.classList.remove('tool-active');
+          whiteoutWrapper.classList.remove('tool-active');
+          whiteoutModeDropdown?.classList.remove('show');
         }
       }
     });
-  });
-
-  // Highlight color picker
-  const highlightColorBtn = document.getElementById('highlight-color-btn');
-  const highlightColorDropdown = document.getElementById('highlight-color-dropdown');
-
-  highlightColorBtn?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    highlightColorDropdown?.classList.toggle('show');
   });
 
   // Close dropdown when clicking elsewhere
-  document.addEventListener('click', (e) => {
-    if (!highlightColorBtn?.contains(e.target as Node) && !highlightColorDropdown?.contains(e.target as Node)) {
-      highlightColorDropdown?.classList.remove('show');
-    }
-  });
-
-  // Color swatch selection
-  document.querySelectorAll<HTMLElement>('.highlight-color-swatch').forEach((swatch) => {
-    swatch.addEventListener('click', () => {
-      const color = swatch.dataset.color;
-      if (color) {
-        currentHighlightColor = color;
-        // Update button color
-        if (highlightColorBtn) {
-          highlightColorBtn.style.background = color;
-        }
-        // Update active state
-        document.querySelectorAll('.highlight-color-swatch').forEach((s) => s.classList.remove('active'));
-        swatch.classList.add('active');
-        // Close dropdown
-        highlightColorDropdown?.classList.remove('show');
-      }
-    });
-  });
+  // DISABLED: Highlight tool is hidden (ISSUE-001)
+  // document.addEventListener('click', (e) => {
+  //   const target = e.target as Node;
+  //   const highlightBtn = document.getElementById('edit-tool-highlight');
+  //   if (!highlightBtn?.contains(target) && !highlightColorDropdown?.contains(target)) {
+  //     highlightColorDropdown?.classList.remove('show');
+  //   }
+  // });
+  // document.querySelectorAll<HTMLElement>('.highlight-color-swatch').forEach((swatch) => {
+  //   swatch.addEventListener('click', (e) => {
+  //     e.stopPropagation();
+  //     const color = swatch.dataset.color;
+  //     if (color) {
+  //       currentHighlightColor = color;
+  //       const iconFill = document.getElementById('highlight-icon-fill');
+  //       if (iconFill) iconFill.style.fill = color;
+  //       if (highlightWrapper) highlightWrapper.style.setProperty('--current-highlight-color', color);
+  //       document.querySelectorAll('.highlight-color-swatch').forEach((s) => s.classList.remove('active'));
+  //       swatch.classList.add('active');
+  //       highlightColorDropdown?.classList.remove('show');
+  //     }
+  //   });
+  // });
 
   // Delete key handler for both text boxes and whiteouts
   document.addEventListener('keydown', (e) => {
@@ -238,14 +324,14 @@ export function setupEditView(): void {
     }
   });
 
-  // Mouseup handler for text selection highlight and underline
-  document.addEventListener('mouseup', () => {
-    if (currentTool === 'highlight') {
-      handleHighlightTextSelection();
-    } else if (currentTool === 'underline') {
-      handleUnderlineTextSelection();
-    }
-  });
+  // DISABLED: Highlight (ISSUE-001) and Underline (ISSUE-002) tools are hidden
+  // document.addEventListener('mouseup', () => {
+  //   if (currentTool === 'highlight') {
+  //     handleHighlightTextSelection();
+  //   } else if (currentTool === 'underline') {
+  //     handleUnderlineTextSelection();
+  //   }
+  // });
 
   // Page navigation
   document.getElementById('edit-prev-page')?.addEventListener('click', () => navigatePage(-1));
@@ -474,9 +560,10 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
       // Create textbox at click position (alternative to drag creation)
       createTextBox(pageNum, domX, domY);
       break;
-    case 'checkbox':
-      addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
-      break;
+    // DISABLED: Checkbox tool is hidden (ISSUE-003)
+    // case 'checkbox':
+    //   addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
+    //   break;
     // TODO: Highlight requires text selection, not click-to-place
     // case 'highlight':
     //   addHighlightAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
@@ -733,357 +820,14 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
   });
 }
 
-function addCheckboxAtPosition(pageNum: number, pdfX: number, pdfY: number, overlay: HTMLElement, domX: number, domY: number): void {
-  if (!editSession) return;
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// function addCheckboxAtPosition(...) { ... }
 
-  const defaultSize = 24; // Default checkbox size in pixels
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// function handleHighlightTextSelection(): void { ... }
 
-  // Use action system for undo/redo
-  editSession.beginAction('checkbox');
-  const opId = editSession.addCheckbox(pageNum, pdfX - defaultSize/2, pdfY - defaultSize/2, defaultSize, defaultSize, false); // Default unchecked
-  editSession.commitAction();
-
-  const checkbox = document.createElement('div');
-  checkbox.className = 'edit-checkbox-overlay'; // No 'checked' class by default
-  checkbox.textContent = ''; // Empty by default (unchecked)
-  checkbox.style.left = (domX - defaultSize/2) + 'px';
-  checkbox.style.top = (domY - defaultSize/2) + 'px';
-  checkbox.style.width = defaultSize + 'px';
-  checkbox.style.height = defaultSize + 'px';
-  checkbox.dataset.page = String(pageNum);
-  setOpId(checkbox, opId);
-
-  // Add resize handle (bottom-right corner)
-  const resizeHandle = document.createElement('div');
-  resizeHandle.className = 'resize-handle resize-handle-se';
-  checkbox.appendChild(resizeHandle);
-
-  // Toggle on click inside checkbox (not on resize handle) - works with any tool
-  checkbox.addEventListener('click', (e) => {
-    // Don't toggle if clicking on resize handle
-    if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
-    e.stopPropagation();
-    checkbox.classList.toggle('checked');
-    const isChecked = checkbox.classList.contains('checked');
-    checkbox.textContent = isChecked ? '✓' : '';
-    // Re-add resize handle since textContent clears it
-    if (!checkbox.querySelector('.resize-handle')) {
-      checkbox.appendChild(resizeHandle);
-    }
-    // Update Rust state
-    editSession?.setCheckbox(opId, isChecked);
-  });
-
-  // Resize functionality - maintains square shape
-  let isResizing = false;
-  let startX = 0;
-  let startY = 0;
-  let startSize = defaultSize;
-
-  resizeHandle.addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    isResizing = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startSize = checkbox.offsetWidth;
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      if (!isResizing) return;
-      // Calculate delta (use max of X and Y for square constraint)
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-      const delta = Math.max(deltaX, deltaY);
-      const newSize = Math.max(16, Math.min(100, startSize + delta)); // Min 16px, max 100px
-      checkbox.style.width = newSize + 'px';
-      checkbox.style.height = newSize + 'px';
-    };
-
-    const onMouseUp = () => {
-      isResizing = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      // Update Rust with new size and position using PDF.js viewport methods
-      const newSize = checkbox.offsetWidth;
-      const newLeft = parseFloat(checkbox.style.left);
-      const newTop = parseFloat(checkbox.style.top);
-      const pageInfo = PdfBridge.getPageInfo(pageNum);
-      if (pageInfo) {
-        // Convert top-left and bottom-right corners to PDF coordinates
-        const [pdfX1, pdfY1] = pageInfo.viewport.convertToPdfPoint(newLeft, newTop);
-        const [pdfX2, pdfY2] = pageInfo.viewport.convertToPdfPoint(newLeft + newSize, newTop + newSize);
-        // Normalize rectangle (PDF Y increases upward, so y1 > y2)
-        const pdfX = Math.min(pdfX1, pdfX2);
-        const pdfY = Math.min(pdfY1, pdfY2);
-        const pdfWidth = Math.abs(pdfX2 - pdfX1);
-        const pdfHeight = Math.abs(pdfY2 - pdfY1);
-        editSession?.updateRect(opId, pdfX, pdfY, pdfWidth, pdfHeight);
-      }
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  });
-
-  overlay.appendChild(checkbox);
-  updateButtons();
-}
-
-/**
- * Handle text selection for highlight tool
- * Called on mouseup when highlight tool is active
- */
-function handleHighlightTextSelection(): void {
-  if (!editSession) return;
-
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-    return; // No text selected
-  }
-
-  // Check if selection is within a text-layer
-  const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer;
-  const textLayer = (container.nodeType === Node.ELEMENT_NODE
-    ? container as Element
-    : container.parentElement
-  )?.closest('.text-layer');
-
-  if (!textLayer) {
-    selection.removeAllRanges();
-    return; // Selection not in text layer
-  }
-
-  // Get the page number from the text layer
-  const pageNum = parseInt(textLayer.getAttribute('data-page') || '1');
-
-  // Get selection bounding rects
-  const rects = range.getClientRects();
-  if (rects.length === 0) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  // Find the page container to get relative coordinates
-  const pageDiv = textLayer.closest('.edit-page') as HTMLElement;
-  const overlay = pageDiv?.querySelector('.overlay-container') as HTMLElement;
-  const canvas = pageDiv?.querySelector('canvas') as HTMLCanvasElement;
-  if (!pageDiv || !overlay || !canvas) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  // Get canvas rect for coordinate conversion (canvas has exact viewport dimensions)
-  const canvasRect = canvas.getBoundingClientRect();
-
-  // Get page info for coordinate conversion
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  const viewport = pageInfo.viewport;
-
-  // Use action system for undo/redo
-  editSession.beginAction('highlight');
-
-  // Create a highlight for each rect (handles multi-line selections)
-  for (let i = 0; i < rects.length; i++) {
-    const rect = rects[i];
-
-    // Skip tiny rects (artifacts from text selection)
-    if (rect.width < 2 || rect.height < 2) continue;
-
-    // Convert to canvas-relative DOM coordinates
-    const domX = rect.left - canvasRect.left;
-    const domY = rect.top - canvasRect.top;
-    const domWidth = rect.width;
-    const domHeight = rect.height;
-
-    // Convert DOM coordinates to PDF coordinates using PDF.js viewport methods
-    // This properly handles Y-flip, scaling, and any page rotation
-    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
-    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + domHeight);
-
-    // Normalize rectangle (PDF Y increases upward, so y1 > y2)
-    const pdfX = Math.min(pdfX1, pdfX2);
-    const pdfY = Math.min(pdfY1, pdfY2);
-    const pdfWidth = Math.abs(pdfX2 - pdfX1);
-    const pdfHeight = Math.abs(pdfY2 - pdfY1);
-
-    // Add highlight to Rust session
-    const opId = editSession.addHighlight(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      currentHighlightColor,
-      0.3
-    );
-
-    // Create DOM element for the highlight preview
-    const highlight = document.createElement('div');
-    highlight.className = 'edit-highlight-overlay';
-    highlight.style.left = domX + 'px';
-    highlight.style.top = domY + 'px';
-    highlight.style.width = domWidth + 'px';
-    highlight.style.height = domHeight + 'px';
-    highlight.style.background = currentHighlightColor;
-    highlight.style.opacity = '0.3';
-    highlight.dataset.page = String(pageNum);
-    setOpId(highlight, opId);
-
-    overlay.appendChild(highlight);
-  }
-
-  editSession.commitAction();
-
-  // Clear the selection
-  selection.removeAllRanges();
-
-  updateButtons();
-}
-
-/**
- * Handle text selection for underline tool
- * Called on mouseup when underline tool is active
- * Creates a thin line under the selected text with proper spacing
- */
-function handleUnderlineTextSelection(): void {
-  if (!editSession) return;
-
-  const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.toString().trim()) {
-    return; // No text selected
-  }
-
-  // Check if selection is within a text-layer
-  const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer;
-  const textLayer = (container.nodeType === Node.ELEMENT_NODE
-    ? container as Element
-    : container.parentElement
-  )?.closest('.text-layer');
-
-  if (!textLayer) {
-    selection.removeAllRanges();
-    return; // Selection not in text layer
-  }
-
-  // Get the page number from the text layer
-  const pageNum = parseInt(textLayer.getAttribute('data-page') || '1');
-
-  // Get selection bounding rects
-  const rects = range.getClientRects();
-  if (rects.length === 0) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  // Find the page container to get relative coordinates
-  const pageDiv = textLayer.closest('.edit-page') as HTMLElement;
-  const overlay = pageDiv?.querySelector('.overlay-container') as HTMLElement;
-  const canvas = pageDiv?.querySelector('canvas') as HTMLCanvasElement;
-  if (!pageDiv || !overlay || !canvas) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  // Get canvas rect for coordinate conversion (canvas has exact viewport dimensions)
-  const canvasRect = canvas.getBoundingClientRect();
-
-  // Get page info for coordinate conversion
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) {
-    selection.removeAllRanges();
-    return;
-  }
-
-  const viewport = pageInfo.viewport;
-
-  // Detect text color from the selection
-  let underlineColor = '#000000'; // Default black
-  const startNode = range.startContainer;
-  const textElement = startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode as Element;
-  if (textElement) {
-    const computedStyle = window.getComputedStyle(textElement);
-    const rgbColor = computedStyle.color;
-    // Convert rgb(r, g, b) to hex
-    const match = rgbColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-    if (match) {
-      const r = parseInt(match[1]).toString(16).padStart(2, '0');
-      const g = parseInt(match[2]).toString(16).padStart(2, '0');
-      const b = parseInt(match[3]).toString(16).padStart(2, '0');
-      underlineColor = `#${r}${g}${b}`;
-    }
-  }
-
-  // Use action system for undo/redo
-  editSession.beginAction('underline');
-
-  // Underline styling constants
-  const underlineHeight = 2; // 2px thick underline in DOM
-  const underlineGap = 2; // 2px gap below text baseline
-
-  // Create an underline for each rect (handles multi-line selections)
-  for (let i = 0; i < rects.length; i++) {
-    const rect = rects[i];
-
-    // Skip tiny rects (artifacts from text selection)
-    if (rect.width < 2) continue;
-
-    // Convert to canvas-relative DOM coordinates
-    const domX = rect.left - canvasRect.left;
-    // Position underline below the text with a gap
-    // rect.bottom is the bottom edge of the text including descenders
-    const domY = rect.bottom - canvasRect.top + underlineGap;
-    const domWidth = rect.width;
-
-    // Convert DOM coordinates to PDF coordinates using PDF.js viewport methods
-    // Convert the line's start and end points
-    const [pdfX1, pdfY1] = viewport.convertToPdfPoint(domX, domY);
-    const [pdfX2, pdfY2] = viewport.convertToPdfPoint(domX + domWidth, domY + underlineHeight);
-
-    // Normalize rectangle
-    const pdfX = Math.min(pdfX1, pdfX2);
-    const pdfY = Math.min(pdfY1, pdfY2);
-    const pdfWidth = Math.abs(pdfX2 - pdfX1);
-    const pdfHeight = Math.abs(pdfY2 - pdfY1);
-
-    // Add underline to Rust session
-    const opId = editSession.addUnderline(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      underlineColor, // Match text color
-      1.0 // Full opacity
-    );
-
-    // Create DOM element for the underline preview
-    const underline = document.createElement('div');
-    underline.className = 'edit-underline-overlay';
-    underline.style.left = domX + 'px';
-    underline.style.top = domY + 'px';
-    underline.style.width = domWidth + 'px';
-    underline.style.height = underlineHeight + 'px';
-    underline.style.background = underlineColor;
-    underline.dataset.page = String(pageNum);
-    setOpId(underline, opId);
-
-    overlay.appendChild(underline);
-  }
-
-  editSession.commitAction();
-
-  // Clear the selection
-  selection.removeAllRanges();
-
-  updateButtons();
-}
+// DISABLED: Underline tool is hidden (ISSUE-002)
+// function handleUnderlineTextSelection(): void { ... }
 
 // ============ Whiteout Drawing Functions ============
 
@@ -1117,7 +861,13 @@ function handleWhiteoutStart(e: MouseEvent, pageNum: number, overlay: HTMLElemen
 
   // Create preview rectangle
   drawPreviewEl = document.createElement('div');
-  drawPreviewEl.className = currentTool === 'textbox' ? 'textbox-preview' : 'whiteout-preview';
+  if (currentTool === 'textbox') {
+    drawPreviewEl.className = 'textbox-preview';
+  } else if (isBlackoutMode) {
+    drawPreviewEl.className = 'blackout-preview';
+  } else {
+    drawPreviewEl.className = 'whiteout-preview';
+  }
   drawPreviewEl.style.left = drawStartX + 'px';
   drawPreviewEl.style.top = drawStartY + 'px';
   drawPreviewEl.style.width = '0px';
@@ -1221,9 +971,12 @@ function addWhiteoutAtPosition(pageNum: number, domX: number, domY: number, domW
   const pdfWidth = Math.abs(pdfX2 - pdfX1);
   const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
-  // Add to session
+  // Determine color based on mode
+  const rectColor = isBlackoutMode ? '#000000' : '#FFFFFF';
+
+  // Add to session with color
   editSession.beginAction('whiteout');
-  const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+  const opId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, rectColor);
   editSession.commitAction();
 
   // Add visual overlay
@@ -1231,13 +984,18 @@ function addWhiteoutAtPosition(pageNum: number, domX: number, domY: number, domW
   if (!overlay) return;
 
   const whiteRect = document.createElement('div');
-  whiteRect.className = 'edit-whiteout-overlay';
+  // Use appropriate class based on mode
+  whiteRect.className = isBlackoutMode ? 'edit-blackout-overlay' : 'edit-whiteout-overlay';
   whiteRect.style.left = domX + 'px';
   whiteRect.style.top = domY + 'px';
   whiteRect.style.width = domWidth + 'px';
   whiteRect.style.height = domHeight + 'px';
   setOpId(whiteRect, opId);
   whiteRect.dataset.page = String(pageNum);
+  // Mark as blackout if applicable (for preventing text editing)
+  if (isBlackoutMode) {
+    whiteRect.dataset.blackout = 'true';
+  }
 
   // Mousedown to select and start move
   whiteRect.addEventListener('mousedown', (e) => {
@@ -1250,9 +1008,11 @@ function addWhiteoutAtPosition(pageNum: number, domX: number, domY: number, domW
     startMove(e, whiteRect);
   });
 
-  // Double-click to add text inside whiteout
+  // Double-click to add text inside whiteout (disabled for blackout)
   whiteRect.addEventListener('dblclick', (e) => {
     e.stopPropagation();
+    // Blackout rectangles are not editable
+    if (whiteRect.dataset.blackout === 'true') return;
     openWhiteoutTextEditor(whiteRect, pageNum);
   });
 
@@ -1761,8 +1521,10 @@ function endResize(): void {
         const pdfWidth = Math.abs(pdfX2 - pdfX1);
         const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
+        // Preserve color from the element being resized
+        const resizeColor = target.dataset.blackout === 'true' ? '#000000' : '#FFFFFF';
         editSession.beginAction('resize');
-        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, resizeColor);
         editSession.commitAction();
         setOpId(target, newOpId);
       }
@@ -1841,8 +1603,10 @@ function endMove(): void {
         const pdfWidth = Math.abs(pdfX2 - pdfX1);
         const pdfHeight = Math.abs(pdfY2 - pdfY1);
 
+        // Preserve color from the element being moved
+        const moveColor = target.dataset.blackout === 'true' ? '#000000' : '#FFFFFF';
         editSession.beginAction('move');
-        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+        const newOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, moveColor);
         editSession.commitAction();
         setOpId(target, newOpId);
       }
@@ -2024,22 +1788,28 @@ async function openWhiteoutTextEditor(whiteRect: HTMLElement, pageNum: number): 
   // Detect covered text style
   const coveredStyle = await detectCoveredTextStyle(pageNum, domX, domY, domWidth, domHeight);
 
-  // Create auto-expanding contentEditable span INSIDE the whiteout
-  const input = document.createElement('span');
+  // Create auto-expanding contentEditable div INSIDE the whiteout
+  // Note: Using div (block) instead of span (inline) for predictable absolute positioning
+  const input = document.createElement('div');
   input.contentEditable = 'true';
   input.className = 'whiteout-text-input';
-  input.style.display = 'block';
-  input.style.minWidth = '100%';
-  input.style.minHeight = '100%';
+  // Explicitly set ALL positioning inline to avoid CSS conflicts
+  input.style.position = 'absolute';
+  input.style.top = '0';
+  input.style.left = '0';
+  input.style.width = '100%';
+  input.style.height = '100%';
+  input.style.margin = '0';
+  input.style.padding = '0';
+  input.style.boxSizing = 'border-box';
   input.style.border = 'none';
   input.style.outline = 'none';
   input.style.background = 'transparent';
-  input.style.padding = '2px 4px';
-  input.style.boxSizing = 'border-box';
   input.style.textAlign = 'center';
-  input.style.whiteSpace = 'pre-wrap';
-  input.style.wordBreak = 'break-word';
-  input.style.overflow = 'visible';
+  // Use flexbox for vertical centering
+  input.style.display = 'flex';
+  input.style.alignItems = 'center';
+  input.style.justifyContent = 'center';
 
   // Apply covered text style (including bold/italic)
   input.style.fontSize = coveredStyle.fontSize + 'px';
@@ -2221,12 +1991,13 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
   editSession.beginAction('whiteout');
 
   // If whiteout was resized, update the whiteout operation
+  // Note: This only runs for whiteouts (not blackouts) since blackouts don't allow text editing
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
-      // Add new whiteout with updated dimensions
-      const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight);
+      // Add new whiteout with updated dimensions (always white since this is a whiteout text editor)
+      const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, '#FFFFFF');
       setOpId(whiteRect, newWhiteOpId);
     }
   }
@@ -2773,12 +2544,14 @@ function recreateOperationElement(opId: bigint): void {
       case 'AddText':
         recreateTextBox(opId, { page: op.page, rect: op.rect, text: op.text || '', style: op.style });
         break;
-      case 'AddCheckbox':
-        recreateCheckbox(opId, { page: op.page, rect: op.rect, checked: op.checked || false });
-        break;
-      case 'AddHighlight':
-        recreateHighlight(opId, { page: op.page, rect: op.rect });
-        break;
+      // DISABLED: Checkbox tool is hidden (ISSUE-003)
+      // case 'AddCheckbox':
+      //   recreateCheckbox(opId, { page: op.page, rect: op.rect, checked: op.checked || false });
+      //   break;
+      // DISABLED: Highlight tool is hidden (ISSUE-001)
+      // case 'AddHighlight':
+      //   recreateHighlight(opId, { page: op.page, rect: op.rect });
+      //   break;
     }
   } catch {
     // Ignore parse errors
@@ -2941,87 +2714,11 @@ function recreateTextBox(opId: bigint, data: { page: number; rect: PdfRect; text
   overlay.appendChild(box);
 }
 
-function recreateCheckbox(opId: bigint, data: { page: number; rect: PdfRect; checked: boolean }): void {
-  const pageNum = data.page;
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) return;
+// DISABLED: Checkbox tool is hidden (ISSUE-003)
+// function recreateCheckbox(...) { ... }
 
-  // Convert PDF coords to DOM coords using PDF.js viewport method
-  const pdfRect = data.rect;
-  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
-    pdfRect.x,
-    pdfRect.y,
-    pdfRect.x + pdfRect.width,
-    pdfRect.y + pdfRect.height
-  ]);
-  // Normalize (viewport may swap coordinates)
-  const domX = Math.min(viewportRect[0], viewportRect[2]);
-  const domY = Math.min(viewportRect[1], viewportRect[3]);
-  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
-  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
-
-  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
-  if (!overlay) return;
-
-  const checkbox = document.createElement('div');
-  checkbox.className = 'edit-checkbox-overlay'; // Match CSS class
-  checkbox.style.left = domX + 'px';
-  checkbox.style.top = domY + 'px';
-  checkbox.style.width = domWidth + 'px';
-  checkbox.style.height = domHeight + 'px';
-  checkbox.dataset.page = String(pageNum);
-  setOpId(checkbox, opId);
-
-  if (data.checked) {
-    checkbox.classList.add('checked');
-    checkbox.textContent = '✓';
-  }
-
-  checkbox.addEventListener('click', () => {
-    checkbox.classList.toggle('checked');
-    const isChecked = checkbox.classList.contains('checked');
-    checkbox.textContent = isChecked ? '✓' : '';
-    if (editSession) {
-      editSession.setCheckbox(opId, isChecked);
-    }
-  });
-
-  overlay.appendChild(checkbox);
-}
-
-function recreateHighlight(opId: bigint, data: { page: number; rect: PdfRect }): void {
-  const pageNum = data.page;
-  const pageInfo = PdfBridge.getPageInfo(pageNum);
-  if (!pageInfo) return;
-
-  // Convert PDF coords to DOM coords using PDF.js viewport method
-  const pdfRect = data.rect;
-  const viewportRect = pageInfo.viewport.convertToViewportRectangle([
-    pdfRect.x,
-    pdfRect.y,
-    pdfRect.x + pdfRect.width,
-    pdfRect.y + pdfRect.height
-  ]);
-  // Normalize (viewport may swap coordinates)
-  const domX = Math.min(viewportRect[0], viewportRect[2]);
-  const domY = Math.min(viewportRect[1], viewportRect[3]);
-  const domWidth = Math.abs(viewportRect[2] - viewportRect[0]);
-  const domHeight = Math.abs(viewportRect[3] - viewportRect[1]);
-
-  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
-  if (!overlay) return;
-
-  const highlight = document.createElement('div');
-  highlight.className = 'edit-highlight';
-  highlight.style.left = domX + 'px';
-  highlight.style.top = domY + 'px';
-  highlight.style.width = domWidth + 'px';
-  highlight.style.height = domHeight + 'px';
-  highlight.dataset.page = String(pageNum);
-  setOpId(highlight, opId);
-
-  overlay.appendChild(highlight);
-}
+// DISABLED: Highlight tool is hidden (ISSUE-001)
+// function recreateHighlight(...) { ... }
 
 function updateButtons(): void {
   const downloadBtn = document.getElementById('edit-download-btn') as HTMLButtonElement | null;
@@ -3170,12 +2867,14 @@ function updateCursor(): void {
     case 'textbox':
       viewer.style.cursor = 'crosshair';
       break;
-    case 'highlight':
-      viewer.style.cursor = 'crosshair';
-      break;
-    case 'checkbox':
-      viewer.style.cursor = 'pointer';
-      break;
+    // DISABLED: Highlight (ISSUE-001), Underline (ISSUE-002), Checkbox (ISSUE-003) tools are hidden
+    // case 'highlight':
+    // case 'underline':
+    //   viewer.style.cursor = 'text';
+    //   break;
+    // case 'checkbox':
+    //   viewer.style.cursor = 'pointer';
+    //   break;
     case 'whiteout':
       viewer.style.cursor = 'crosshair';
       break;
@@ -3190,10 +2889,14 @@ function updateCursor(): void {
     layer.style.pointerEvents = isDrawingTool ? 'none' : 'auto';
   });
 
+  // DISABLED: Highlight/underline visual feedback (ISSUE-001, ISSUE-002)
+  // const isTextAnnotationTool = currentTool === 'highlight' || currentTool === 'underline';
+  // viewer.classList.toggle('highlight-mode', isTextAnnotationTool);
+
   // Enable overlay-container pointer events for tools that need to capture clicks
   // textbox needs clicks for creating new boxes and editing existing ones
-  // checkbox needs clicks for adding checkboxes
-  const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox' || currentTool === 'checkbox';
+  // DISABLED: checkbox (ISSUE-003)
+  const overlayNeedsClicks = currentTool === 'text' || currentTool === 'textbox';
   document.querySelectorAll<HTMLElement>('.overlay-container').forEach((overlay) => {
     overlay.style.pointerEvents = overlayNeedsClicks ? 'auto' : 'none';
   });

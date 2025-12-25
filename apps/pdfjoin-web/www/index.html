@@ -32,13 +32,84 @@
             --bg: #f8fafc;
             --card-bg: #ffffff;
             --text: #1e293b;
-            --text-muted: #64748b;
+            /* ELDERLY UX: Darker muted text for better contrast (was #64748b) */
+            --text-muted: #475569;
             --border: #e2e8f0;
             --success: #10b981;
             --error: #ef4444;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+        /* ========================================
+           ACCESSIBILITY: Focus Indicators (WCAG 2.4.7, 2.4.11)
+           - 3px outline for high visibility
+           - 2px offset to not overlap content
+           - High contrast colors (3:1+ ratio)
+           ======================================== */
+        :focus {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+        :focus:not(:focus-visible) {
+            outline: none; /* Hide for mouse users */
+        }
+        :focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+        /* Dark background elements need light focus ring */
+        .primary-btn:focus-visible {
+            outline-color: white;
+            box-shadow: 0 0 0 3px var(--primary-dark);
+        }
+        /* Error-colored elements */
+        .remove-btn:focus-visible {
+            outline-color: var(--error);
+        }
+        /* Input fields - inset focus for cleaner look */
+        input:focus-visible, select:focus-visible, textarea:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 0;
+            border-color: var(--primary);
+        }
+
+        /* ========================================
+           ACCESSIBILITY: Skip Link (WCAG 2.4.1)
+           ======================================== */
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--primary);
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 0 0 8px 8px;
+            font-weight: 600;
+            font-size: 1rem;
+            z-index: 10000;
+            transition: top 0.2s;
+            text-decoration: none;
+        }
+        .skip-link:focus {
+            top: 0;
+            outline: 3px solid white;
+            outline-offset: -3px;
+        }
+
+        /* ========================================
+           ACCESSIBILITY: Reduced Motion (WCAG 2.3.3)
+           ======================================== */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+
+        /* ELDERLY UX: Base font 18px for better readability (was 16px default) */
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; font-size: 18px; }
         .container { max-width: 900px; margin: 0 auto; padding: 2rem; }
         header { text-align: center; margin-bottom: 2rem; }
         header h1 { font-size: 2rem; margin-bottom: 0.5rem; }
@@ -55,36 +126,45 @@
         .drop-zone:hover, .drop-zone.drag-over { border-color: var(--primary); background: rgba(37, 99, 235, 0.05); }
         .drop-icon { font-size: 3rem; margin-bottom: 1rem; }
         .drop-zone button { background: none; border: none; color: var(--primary); cursor: pointer; font-size: inherit; text-decoration: underline; }
-        .drop-hint { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem; }
+        /* ELDERLY UX: Increased hint text from 0.9rem to 1rem */
+        .drop-hint { color: var(--text-muted); font-size: 1rem; margin-top: 0.5rem; }
 
         /* Editor */
         .editor { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem; }
         .file-info { display: flex; align-items: center; gap: 1rem; padding: 0.75rem 1rem; background: var(--bg); border-radius: 8px; margin-bottom: 1rem; }
         .file-info .file-name { font-weight: 500; }
-        .file-info .file-details { color: var(--text-muted); font-size: 0.9rem; margin-left: auto; }
+        /* ELDERLY UX: Increased file details from 0.9rem to 1rem */
+        .file-info .file-details { color: var(--text-muted); font-size: 1rem; margin-left: auto; }
 
         /* Controls */
         .controls { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
         .range-input { flex: 1; }
-        .range-input label { display: block; font-size: 0.9rem; margin-bottom: 0.25rem; color: var(--text-muted); }
+        /* ELDERLY UX: Increased label from 0.9rem to 1rem */
+        .range-input label { display: block; font-size: 1rem; margin-bottom: 0.25rem; color: var(--text-muted); }
         .range-input input { width: 100%; padding: 0.75rem; border: 1px solid var(--border); border-radius: 8px; font-size: 1rem; }
         .range-input input.invalid { border-color: var(--error); }
-        .range-hint { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+        /* ELDERLY UX: Increased hint from 0.8rem to 0.9rem */
+        .range-hint { display: block; font-size: 0.9rem; color: var(--text-muted); margin-top: 0.25rem; }
         .chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
-        .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 0.25rem 0.75rem; font-size: 0.85rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+        /* ELDERLY UX: Larger chips - increased padding and font for 44px touch target */
+        .chip { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; transition: background 0.2s, border-color 0.2s; min-height: 44px; display: inline-flex; align-items: center; }
         .chip:hover { background: rgba(37, 99, 235, 0.1); border-color: var(--primary); }
 
         /* Checkbox */
-        .checkbox-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
-        .checkbox-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; cursor: pointer; }
-        .checkbox-row label { font-size: 0.9rem; color: var(--text-muted); cursor: pointer; }
+        /* ELDERLY UX: Larger checkbox (24px) and label (1rem) for easier interaction */
+        .checkbox-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; }
+        .checkbox-row input[type="checkbox"] { width: 24px; height: 24px; cursor: pointer; flex-shrink: 0; }
+        .checkbox-row label { font-size: 1rem; color: var(--text-muted); cursor: pointer; }
 
         /* Buttons */
         .primary-btn { background: var(--primary); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
         .primary-btn:hover:not(:disabled) { background: var(--primary-dark); }
-        .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .secondary-btn { background: transparent; color: var(--primary); border: 1px solid var(--primary); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; cursor: pointer; }
-        .remove-btn { background: none; border: none; color: var(--error); cursor: pointer; font-size: 1.5rem; line-height: 1; padding: 0 0.25rem; }
+        /* ELDERLY UX: Higher opacity for disabled state (was 0.5) */
+        .primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        /* ELDERLY UX: Larger secondary button text */
+        .secondary-btn { background: transparent; color: var(--primary); border: 1px solid var(--primary); padding: 0.5rem 1rem; border-radius: 8px; font-size: 1rem; cursor: pointer; min-height: 44px; }
+        /* ELDERLY UX: Larger remove button (44px touch target) */
+        .remove-btn { background: none; border: none; color: var(--error); cursor: pointer; font-size: 1.5rem; line-height: 1; padding: 0.5rem; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 
         /* File List */
         .file-list { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-top: 1.5rem; }
@@ -96,26 +176,67 @@
         .file-list li.drag-over { border-top: 2px solid var(--primary); }
         .file-list.drag-over { border-color: var(--primary); background: rgba(37, 99, 235, 0.05); }
         .drag-handle { color: var(--text-muted); cursor: grab; }
-        .drag-hint { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; }
+        /* ELDERLY UX: Increased hint from 0.85rem to 1rem */
+        .drag-hint { color: var(--text-muted); font-size: 1rem; margin-bottom: 1rem; }
         .file-list .file-name { flex: 1; }
-        .file-list .file-size { color: var(--text-muted); font-size: 0.85rem; }
-        .file-list .remove-btn { font-size: 1.2rem; }
+        /* ELDERLY UX: Increased file size from 0.85rem to 1rem */
+        .file-list .file-size { color: var(--text-muted); font-size: 1rem; }
+        .file-list .remove-btn { font-size: 1.5rem; }
+        /* ACCESSIBILITY: Keyboard-accessible reorder buttons (motor impairment support) */
+        .file-list .reorder-btns {
+            display: flex;
+            gap: 0.25rem;
+            margin-left: auto;
+            margin-right: 0.5rem;
+        }
+        .file-list .move-btn {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            font-size: 1rem;
+            min-width: 36px;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .file-list .move-btn:hover:not(:disabled) {
+            background: rgba(37, 99, 235, 0.1);
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+        .file-list .move-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .file-list li:focus {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
 
         /* Progress */
         .progress { margin-top: 1.5rem; text-align: center; }
-        .progress-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem; }
+        /* ELDERLY UX: Thicker progress bar for visibility */
+        .progress-bar { height: 12px; background: var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 0.5rem; }
         .progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s; }
-        .progress-text { color: var(--text-muted); font-size: 0.9rem; }
+        /* ELDERLY UX: Increased progress text from 0.9rem to 1rem */
+        .progress-text { color: var(--text-muted); font-size: 1rem; }
 
         /* Footer */
         footer { text-align: center; margin-top: 3rem; color: var(--text-muted); }
-        .privacy-note { font-size: 0.85rem; font-style: italic; opacity: 0.7; }
+        /* ELDERLY UX: Increased footer font and better contrast */
+        .privacy-note { font-size: 1rem; font-style: italic; opacity: 0.85; }
 
         /* Footer Branding */
+        /* ELDERLY UX: Increased from 0.75rem to 0.9rem, better opacity */
         .footer-branding {
-            font-size: 0.75rem;
+            font-size: 0.9rem;
             margin-top: 1rem;
-            opacity: 0.6;
+            opacity: 0.8;
         }
         .footer-branding a {
             text-decoration: none;
@@ -147,6 +268,96 @@
 
         /* Utilities */
         .hidden { display: none !important; }
+
+        /* ========================================
+           ACCESSIBILITY: Screen Reader Only (WCAG 1.3.1)
+           Content visible only to screen readers
+           ======================================== */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* ========================================
+           ACCESSIBILITY: Confirmation Dialog (WCAG 3.3.4)
+           Error prevention for destructive actions
+           ======================================== */
+        .confirm-dialog-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+            padding: 1rem;
+        }
+        .confirm-dialog-overlay.show {
+            display: flex;
+        }
+        .confirm-dialog {
+            background: white;
+            border-radius: 12px;
+            max-width: 400px;
+            width: 100%;
+            padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        .confirm-dialog h2 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .confirm-dialog-icon {
+            font-size: 1.5rem;
+        }
+        .confirm-dialog p {
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+        .confirm-dialog-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+        .confirm-dialog .cancel-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            min-width: 100px;
+        }
+        .confirm-dialog .cancel-btn:hover {
+            background: var(--bg);
+        }
+        .confirm-dialog .confirm-btn {
+            background: var(--error);
+            border: none;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            min-width: 100px;
+        }
+        .confirm-dialog .confirm-btn:hover {
+            background: #dc2626;
+        }
 
         /* Signed PDF Warning - Senior-Friendly */
         .signed-warning {
@@ -240,8 +451,9 @@
         .tool-icon {
             font-size: 1.5rem;
         }
+        /* ELDERLY UX: Increased tool label from 0.75rem to 0.85rem */
         .tool-label {
-            font-size: 0.75rem;
+            font-size: 0.85rem;
             color: var(--text-muted);
         }
 
@@ -258,29 +470,11 @@
             position: relative;
             display: inline-flex;
         }
-        .highlight-color-btn {
-            display: none; /* Hidden by default - only show when highlight tool is active */
-            align-items: center;
-            justify-content: center;
-            width: 20px;
-            height: 20px;
-            border-radius: 4px;
-            cursor: pointer;
-            border: 2px solid #999;
-            margin-left: 4px;
-            margin-top: 4px;
-        }
-        /* Show color picker only when highlight tool is active */
-        .highlight-color-wrapper.tool-active .highlight-color-btn {
-            display: flex;
-        }
-        .highlight-color-btn:hover {
-            border-color: var(--primary);
-        }
         .highlight-color-dropdown {
             position: absolute;
             top: 100%;
-            left: 0;
+            left: 50%;
+            transform: translateX(-50%);
             background: white;
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -288,28 +482,44 @@
             display: none;
             flex-wrap: wrap;
             gap: 6px;
-            width: 120px;
+            width: 140px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             z-index: 1000;
+            margin-top: 4px;
         }
         .highlight-color-dropdown.show {
             display: flex;
         }
         .highlight-color-swatch {
-            width: 24px;
-            height: 24px;
-            border-radius: 4px;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
             cursor: pointer;
             border: 2px solid transparent;
-            transition: transform 0.1s;
+            transition: transform 0.1s, border-color 0.1s;
         }
         .highlight-color-swatch:hover {
-            transform: scale(1.1);
+            transform: scale(1.15);
             border-color: #333;
         }
         .highlight-color-swatch.active {
             border-color: var(--primary);
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.3);
+        }
+        /* Highlight tool shows color indicator when active */
+        .highlight-color-wrapper.tool-active .tool-btn {
+            position: relative;
+        }
+        .highlight-color-wrapper.tool-active .tool-btn::after {
+            content: '';
+            position: absolute;
+            bottom: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 4px;
+            background: var(--current-highlight-color, #FFFF00);
+            border-radius: 2px;
         }
 
         /* Text Box Styles */
@@ -411,18 +621,28 @@
         }
 
         /* Text Style Buttons (Bold/Italic) */
+        /* ELDERLY UX: Increased from 32px to 44px touch target, added labels */
         .style-btn {
-            width: 32px;
-            height: 32px;
+            min-width: 44px;
+            height: auto;
+            padding: 6px 8px;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 6px;
             background: var(--card-bg);
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 1.1rem;
             transition: all 0.15s;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
+            gap: 2px;
+        }
+        /* ELDERLY UX: Visible label under icon */
+        .style-btn .btn-label {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            font-weight: normal;
         }
         .style-btn:hover:not(:disabled) {
             background: rgba(37, 99, 235, 0.1);
@@ -446,20 +666,21 @@
         }
 
         /* Font Size Control */
+        /* ELDERLY UX: Larger controls for easier interaction */
         .font-size-control {
             display: flex;
             align-items: center;
-            gap: 2px;
+            gap: 4px;
         }
         .size-btn {
-            width: 24px;
-            height: 24px;
+            width: 36px;
+            height: 36px;
             padding: 0;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 6px;
             background: var(--card-bg);
             cursor: pointer;
-            font-size: 14px;
+            font-size: 18px;
             line-height: 1;
             display: flex;
             align-items: center;
@@ -470,17 +691,17 @@
             border-color: var(--primary);
         }
         .size-btn:disabled {
-            opacity: 0.4;
+            opacity: 0.5;
             cursor: not-allowed;
         }
         .size-input {
-            width: 40px;
-            height: 24px;
-            padding: 2px 4px;
+            width: 50px;
+            height: 36px;
+            padding: 4px 6px;
             border: 1px solid var(--border);
-            border-radius: 4px;
+            border-radius: 6px;
             text-align: center;
-            font-size: 12px;
+            font-size: 16px;
             -moz-appearance: textfield;
         }
         .size-input::-webkit-inner-spin-button,
@@ -489,22 +710,29 @@
             margin: 0;
         }
         .size-input:disabled {
-            opacity: 0.4;
+            opacity: 0.5;
             cursor: not-allowed;
+        }
+        /* ELDERLY UX: Label for font size control group */
+        .size-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-left: 4px;
         }
 
         /* Font Family Select */
+        /* ELDERLY UX: Larger select for easier reading and interaction */
         .style-select {
-            height: 28px;
-            padding: 4px 8px;
+            height: 36px;
+            padding: 6px 10px;
             border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 12px;
+            border-radius: 6px;
+            font-size: 14px;
             background: var(--card-bg);
             cursor: pointer;
         }
         .style-select:disabled {
-            opacity: 0.4;
+            opacity: 0.5;
             cursor: not-allowed;
         }
 
@@ -689,6 +917,8 @@
             display: none;
         }
 
+        /* NOTE: Hover highlight CSS removed per ISSUE-004 - users found it confusing */
+
         /* Inline Text Editor */
         .text-editor-popup {
             position: absolute;
@@ -801,11 +1031,17 @@
 
         /* Whiteout text input (inside the whiteout) */
         .whiteout-text-input {
-            position: absolute;
-            top: 0;
-            left: 0;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
             font-family: inherit;
             z-index: 5;
+            box-sizing: border-box;
         }
         /* Whiteout text content (saved text inside the whiteout) */
         .whiteout-text-content {
@@ -813,33 +1049,181 @@
             z-index: 5;
         }
 
+        /* Blackout Tool Styles (Redaction) */
+        .blackout-preview {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px dashed #ff4444;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+        }
+        .edit-blackout-overlay {
+            position: absolute;
+            background: black;
+            border: none;
+            z-index: 15;
+            cursor: pointer;
+        }
+        .whiteout-tool-active .edit-blackout-overlay {
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
+        }
+        .whiteout-tool-active .edit-blackout-overlay:hover {
+            outline: 2px solid #ff4444;
+            outline-offset: -2px;
+        }
+        .edit-blackout-overlay.selected {
+            outline: 2px solid #ff4444;
+            outline-offset: -2px;
+        }
+        .edit-blackout-overlay.selected .resize-handle {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #ff4444;
+            border: 1px solid white;
+            border-radius: 2px;
+        }
+
+        /* Whiteout button blackout mode */
+        #edit-tool-whiteout.blackout-mode {
+            background: #333;
+            color: white;
+            border-color: #ff4444;
+        }
+        #edit-tool-whiteout.blackout-mode .whiteout-tool-icon {
+            background: black;
+            color: white;
+            border-radius: 2px;
+        }
+
+        /* ACCESSIBILITY: Whiteout/Blackout Mode Dropdown (replaces double-click) */
+        .whiteout-wrapper {
+            position: relative;
+            display: inline-flex;
+        }
+        .whiteout-mode-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 6px;
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            margin-top: 4px;
+            min-width: 120px;
+        }
+        .whiteout-mode-dropdown.show {
+            display: flex;
+        }
+        .whiteout-mode-dropdown .mode-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: transparent;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--text);
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .whiteout-mode-dropdown .mode-option:hover {
+            background: var(--bg);
+        }
+        .whiteout-mode-dropdown .mode-option.active {
+            border-color: var(--primary);
+            background: rgba(37, 99, 235, 0.1);
+        }
+        .whiteout-mode-dropdown .mode-swatch {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .whiteout-wrapper.tool-active .tool-btn::after {
+            content: '';
+            position: absolute;
+            bottom: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 4px;
+            background: var(--current-whiteout-color, #FFFFFF);
+            border: 1px solid #ccc;
+            border-radius: 2px;
+        }
+        .whiteout-wrapper.tool-active.blackout-mode .tool-btn::after {
+            background: #000000;
+            border-color: #000000;
+        }
+
         @media (max-width: 600px) {
             .container { padding: 1rem; }
             .controls { flex-direction: column; }
             .primary-btn { width: 100%; }
-            .edit-toolbar { flex-direction: column; }
+            /* ELDERLY UX: Horizontal scroll toolbar instead of hiding labels */
+            .edit-toolbar {
+                flex-direction: row;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 0.5rem;
+                gap: 0.25rem;
+            }
+            .toolbar-section {
+                flex-shrink: 0;
+            }
             .tool-btn { min-width: 50px; padding: 0.25rem 0.5rem; }
-            .tool-label { display: none; }
+            /* ELDERLY UX: Keep tool labels visible on mobile */
+            .tool-label { display: block; font-size: 0.7rem; }
+            /* Hide right toolbar section items that wrap badly */
+            .toolbar-right {
+                flex-direction: row;
+                gap: 0.25rem;
+            }
+            /* Ensure download button doesn't get cut off */
+            .toolbar-right .primary-btn {
+                white-space: nowrap;
+                font-size: 0.85rem;
+                padding: 0.5rem 0.75rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- ACCESSIBILITY: Skip link for keyboard users (WCAG 2.4.1) -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <!-- ACCESSIBILITY: Live region for screen reader announcements -->
+    <div id="aria-live-region" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+
     <div class="container">
-        <header>
+        <header role="banner">
             <h1>PDFJoin</h1>
             <p>PDF Tools for Frequent Flyers</p>
         </header>
 
-        <nav class="tabs">
+        <nav class="tabs" role="navigation" aria-label="PDF Tools">
             <button class="tab active" data-tab="split">Split PDF</button>
             <button class="tab" data-tab="merge">Merge PDFs</button>
             <button class="tab" data-tab="edit">Edit PDF</button>
         </nav>
 
+        <!-- ACCESSIBILITY: Main content landmark (WCAG 1.3.1) -->
+        <main id="main-content" role="main">
+
         <!-- Split View -->
-        <section id="split-view" class="view">
+        <section id="split-view" class="view" aria-label="Split PDF">
             <div id="split-drop-zone" class="drop-zone">
-                <input type="file" id="split-file-input" accept=".pdf" hidden>
+                <input type="file" id="split-file-input" accept=".pdf" hidden aria-label="Select PDF file to split">
                 <div class="drop-content">
                     <div class="drop-icon">&#9986;</div>
                     <p>Drag & drop a PDF here or <button id="split-browse-btn">browse</button></p>
@@ -879,7 +1263,7 @@
         <!-- Merge View -->
         <section id="merge-view" class="view hidden">
             <div id="merge-drop-zone" class="drop-zone">
-                <input type="file" id="merge-file-input" accept=".pdf" multiple hidden>
+                <input type="file" id="merge-file-input" accept=".pdf" multiple hidden aria-label="Select PDF files to merge">
                 <div class="drop-content">
                     <div class="drop-icon">&#128209;</div>
                     <p>Drag & drop PDFs here or <button id="merge-browse-btn">browse</button></p>
@@ -909,7 +1293,7 @@
         <section id="edit-view" class="view hidden">
             <!-- Drop zone (initial state) -->
             <div id="edit-drop-zone" class="drop-zone">
-                <input type="file" id="edit-file-input" accept=".pdf" hidden>
+                <input type="file" id="edit-file-input" accept=".pdf" hidden aria-label="Select PDF file to edit">
                 <div class="drop-content">
                     <div class="drop-icon">&#9998;</div>
                     <p>Drag & drop a PDF here or <button id="edit-browse-btn">browse</button></p>
@@ -950,16 +1334,35 @@
                             <span class="tool-icon">T</span>
                             <span class="tool-label">Text Box</span>
                         </button>
-                        <button id="edit-tool-whiteout" class="tool-btn" title="Cover Content">
-                            <span class="tool-icon">&#9634;</span>
-                            <span class="tool-label">Whiteout</span>
-                        </button>
-                        <div class="highlight-color-wrapper">
-                            <button id="edit-tool-highlight" class="tool-btn" title="Highlight (select text)">
-                                <span class="tool-icon">&#128397;</span>
+                        <div class="whiteout-wrapper" id="whiteout-wrapper">
+                            <button id="edit-tool-whiteout" class="tool-btn" title="Cover Content">
+                                <span class="tool-icon whiteout-tool-icon">&#9634;</span>
+                                <span class="tool-label whiteout-tool-text">Whiteout</span>
+                            </button>
+                            <!-- ACCESSIBILITY: Explicit toggle replaces double-click (motor impairment) -->
+                            <div id="whiteout-mode-dropdown" class="whiteout-mode-dropdown">
+                                <button class="mode-option active" data-mode="whiteout" title="White rectangle to cover content">
+                                    <span class="mode-swatch" style="background: #FFFFFF; border: 1px solid #ccc;"></span>
+                                    <span>Whiteout</span>
+                                </button>
+                                <button class="mode-option" data-mode="blackout" title="Black rectangle to redact content">
+                                    <span class="mode-swatch" style="background: #000000;"></span>
+                                    <span>Blackout</span>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- HIDDEN: Highlight tool disabled due to ISSUE-001 (not functional) -->
+                        <div class="highlight-color-wrapper hidden" id="highlight-wrapper">
+                            <button id="edit-tool-highlight" class="tool-btn" title="Highlight text - click again for colors">
+                                <span class="tool-icon">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M4 19L5.5 17.5M5.5 17.5L15 8L18 11L8.5 20.5L5.5 17.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M15 8L17.5 5.5C18.5 4.5 20 4.5 21 5.5C22 6.5 22 8 21 9L18 11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <rect x="3" y="19" width="6" height="3" rx="1" fill="currentColor" id="highlight-icon-fill" style="fill: #FFFF00;"/>
+                                    </svg>
+                                </span>
                                 <span class="tool-label">Highlight</span>
                             </button>
-                            <button id="highlight-color-btn" class="highlight-color-btn" style="background: #FFFF00;" title="Change highlight color"></button>
                             <div id="highlight-color-dropdown" class="highlight-color-dropdown">
                                 <div class="highlight-color-swatch active" data-color="#FFFF00" style="background: #FFFF00;" title="Yellow"></div>
                                 <div class="highlight-color-swatch" data-color="#FFD580" style="background: #FFD580;" title="Orange"></div>
@@ -968,26 +1371,33 @@
                                 <div class="highlight-color-swatch" data-color="#FFB6C1" style="background: #FFB6C1;" title="Pink"></div>
                             </div>
                         </div>
-                        <button id="edit-tool-underline" class="tool-btn" title="Underline (select text)">
+                        <!-- HIDDEN: Underline tool disabled due to ISSUE-002 (not functional) -->
+                        <button id="edit-tool-underline" class="tool-btn hidden" title="Underline (select text)">
                             <span class="tool-icon" style="text-decoration: underline;">U</span>
                             <span class="tool-label">Underline</span>
                         </button>
-                        <button id="edit-tool-checkbox" class="tool-btn" title="Checkbox">
+                        <!-- HIDDEN: Checkbox tool disabled due to ISSUE-003 (not functional) -->
+                        <button id="edit-tool-checkbox" class="tool-btn hidden" title="Checkbox">
                             <span class="tool-icon">&#9745;</span>
                             <span class="tool-label">Check</span>
                         </button>
                         <span class="toolbar-divider"></span>
-                        <button id="style-bold" class="style-btn" title="Bold (⌘B)" disabled>
+                        <!-- ELDERLY UX: Added aria-labels and visible labels for screen readers -->
+                        <button id="style-bold" class="style-btn" title="Bold (⌘B)" aria-label="Bold text" disabled>
                             <strong>B</strong>
+                            <span class="btn-label">Bold</span>
                         </button>
-                        <button id="style-italic" class="style-btn" title="Italic (⌘I)" disabled>
+                        <button id="style-italic" class="style-btn" title="Italic (⌘I)" aria-label="Italic text" disabled>
                             <em>I</em>
+                            <span class="btn-label">Italic</span>
                         </button>
                         <span class="toolbar-divider"></span>
                         <div class="font-size-control" id="font-size-control">
-                            <button id="font-size-decrease" class="size-btn" title="Decrease font size" disabled>&minus;</button>
-                            <input type="number" id="font-size-value" class="size-input" value="12" min="6" max="72" title="Font size" disabled />
-                            <button id="font-size-increase" class="size-btn" title="Increase font size" disabled>+</button>
+                            <!-- ELDERLY UX: Added aria-labels for accessibility -->
+                            <button id="font-size-decrease" class="size-btn" title="Decrease font size" aria-label="Decrease font size" disabled>&minus;</button>
+                            <input type="number" id="font-size-value" class="size-input" value="12" min="6" max="72" title="Font size" aria-label="Font size" disabled />
+                            <button id="font-size-increase" class="size-btn" title="Increase font size" aria-label="Increase font size" disabled>+</button>
+                            <span class="size-label">Size</span>
                         </div>
                         <select id="style-font-family" class="style-select" title="Font Family" disabled>
                             <option value="sans-serif">Sans-serif</option>
@@ -1045,7 +1455,9 @@
             </div>
         </section>
 
-        <footer>
+        </main><!-- End main content landmark -->
+
+        <footer role="contentinfo">
             <p class="privacy-note">Files Never Left Your Device</p>
             <p class="footer-branding">
                 <a href="https://bobamatchasolutions.com/#/blog/announcing-pdfjoin" target="_blank" rel="noopener">Secure + Verifiable Privacy</a>
@@ -1053,6 +1465,21 @@
                 <a href="https://bobamatchasolutions.com" target="_blank" rel="noopener">Boba Matcha Solutions</a>
             </p>
         </footer>
+    </div>
+
+    <!-- ACCESSIBILITY: Confirmation Dialog for Destructive Actions (WCAG 3.3.4) -->
+    <div id="confirm-dialog-overlay" class="confirm-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+        <div class="confirm-dialog">
+            <h2 id="confirm-dialog-title">
+                <span class="confirm-dialog-icon" id="confirm-dialog-icon">&#9888;</span>
+                <span id="confirm-dialog-heading">Confirm Action</span>
+            </h2>
+            <p id="confirm-dialog-message">Are you sure you want to continue?</p>
+            <div class="confirm-dialog-actions">
+                <button id="confirm-dialog-cancel" class="cancel-btn">Cancel</button>
+                <button id="confirm-dialog-confirm" class="confirm-btn">Remove</button>
+            </div>
+        </div>
     </div>
 
     <script type="module">
