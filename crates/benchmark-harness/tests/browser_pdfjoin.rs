@@ -10226,3 +10226,502 @@ async fn test_ux_whiteout_respects_page_boundary_bottom() {
         );
     }
 }
+
+// ============ Phase 4b: Undo/Redo UI Tests ============
+
+/// Test that the Redo button exists in the edit toolbar
+#[tokio::test]
+async fn test_undo_redo_buttons_exist() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Switch to edit tab
+    let _: bool = page
+        .evaluate(
+            r#"(() => {
+                const tab = document.querySelector('[data-tab="edit"]');
+                if (tab) { tab.click(); return true; }
+                return false;
+            })()"#,
+        )
+        .await
+        .expect("Should click edit tab")
+        .into_value()
+        .expect("Should get value");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Check for both undo and redo buttons
+    let result: serde_json::Value = page
+        .evaluate(
+            r#"(() => {
+                const undoBtn = document.getElementById('edit-undo-btn');
+                const redoBtn = document.getElementById('edit-redo-btn');
+                return {
+                    hasUndo: !!undoBtn,
+                    hasRedo: !!redoBtn,
+                    undoDisabled: undoBtn?.disabled,
+                    redoDisabled: redoBtn?.disabled
+                };
+            })()"#,
+        )
+        .await
+        .expect("Should check buttons")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Undo/Redo buttons: {:?}", result);
+
+    assert!(
+        result["hasUndo"].as_bool().unwrap_or(false),
+        "Undo button should exist"
+    );
+    assert!(
+        result["hasRedo"].as_bool().unwrap_or(false),
+        "Redo button should exist"
+    );
+}
+
+/// Test that Ctrl+Z triggers undo and removes element from DOM
+#[tokio::test]
+async fn test_undo_keyboard_shortcut() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                }});
+                document.getElementById('edit-drop-zone').dispatchEvent(dropEvent);
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Click whiteout tool
+                const whiteoutBtn = document.getElementById('edit-tool-whiteout');
+                if (!whiteoutBtn) return {{ success: false, error: 'No whiteout button' }};
+                whiteoutBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Find page container and create whiteout
+                const pageDiv = document.querySelector('.edit-page');
+                if (!pageDiv) return {{ success: false, error: 'No page container' }};
+
+                const rect = pageDiv.getBoundingClientRect();
+
+                // Simulate drawing a whiteout (all events on pageDiv with coordinates)
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true, clientX: rect.left + 100, clientY: rect.top + 100
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const whiteoutsBefore = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                // Press Ctrl+Z
+                document.dispatchEvent(new KeyboardEvent('keydown', {{
+                    key: 'z',
+                    code: 'KeyZ',
+                    ctrlKey: true,
+                    bubbles: true
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteoutsAfter = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                return {{
+                    success: true,
+                    whiteoutsBefore: whiteoutsBefore,
+                    whiteoutsAfter: whiteoutsAfter,
+                    undoWorked: whiteoutsAfter < whiteoutsBefore
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test undo shortcut")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Undo keyboard shortcut test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["undoWorked"].as_bool().unwrap_or(false),
+        "Ctrl+Z should remove the whiteout. Before: {}, After: {}",
+        result["whiteoutsBefore"],
+        result["whiteoutsAfter"]
+    );
+}
+
+/// Test that Ctrl+Shift+Z triggers redo and recreates element in DOM
+#[tokio::test]
+async fn test_redo_keyboard_shortcut() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                }});
+                document.getElementById('edit-drop-zone').dispatchEvent(dropEvent);
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Click whiteout tool
+                const whiteoutBtn = document.getElementById('edit-tool-whiteout');
+                if (!whiteoutBtn) return {{ success: false, error: 'No whiteout button' }};
+                whiteoutBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Find page container and create whiteout
+                const pageDiv = document.querySelector('.edit-page');
+                if (!pageDiv) return {{ success: false, error: 'No page container' }};
+
+                const rect = pageDiv.getBoundingClientRect();
+
+                // Simulate drawing a whiteout (all events on pageDiv with coordinates)
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true, clientX: rect.left + 100, clientY: rect.top + 100
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const whiteoutsOriginal = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                // Press Ctrl+Z to undo
+                document.dispatchEvent(new KeyboardEvent('keydown', {{
+                    key: 'z',
+                    code: 'KeyZ',
+                    ctrlKey: true,
+                    bubbles: true
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteoutsAfterUndo = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                // Press Ctrl+Shift+Z to redo
+                document.dispatchEvent(new KeyboardEvent('keydown', {{
+                    key: 'z',
+                    code: 'KeyZ',
+                    ctrlKey: true,
+                    shiftKey: true,
+                    bubbles: true
+                }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteoutsAfterRedo = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                return {{
+                    success: true,
+                    whiteoutsOriginal: whiteoutsOriginal,
+                    whiteoutsAfterUndo: whiteoutsAfterUndo,
+                    whiteoutsAfterRedo: whiteoutsAfterRedo,
+                    undoWorked: whiteoutsAfterUndo < whiteoutsOriginal,
+                    redoWorked: whiteoutsAfterRedo === whiteoutsOriginal
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test redo shortcut")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Redo keyboard shortcut test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["redoWorked"].as_bool().unwrap_or(false),
+        "Ctrl+Shift+Z should restore the whiteout. Original: {}, After Undo: {}, After Redo: {}",
+        result["whiteoutsOriginal"],
+        result["whiteoutsAfterUndo"],
+        result["whiteoutsAfterRedo"]
+    );
+}
+
+/// Test that clicking Undo button removes element and Redo button restores it
+#[tokio::test]
+async fn test_undo_redo_button_clicks() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                }});
+                document.getElementById('edit-drop-zone').dispatchEvent(dropEvent);
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Click whiteout tool
+                const whiteoutBtn = document.getElementById('edit-tool-whiteout');
+                if (!whiteoutBtn) return {{ success: false, error: 'No whiteout button' }};
+                whiteoutBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Find page container and create whiteout
+                const pageDiv = document.querySelector('.edit-page');
+                if (!pageDiv) return {{ success: false, error: 'No page container' }};
+
+                const rect = pageDiv.getBoundingClientRect();
+
+                // Simulate drawing a whiteout (all events on pageDiv with coordinates)
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true, clientX: rect.left + 100, clientY: rect.top + 100
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true, clientX: rect.left + 200, clientY: rect.top + 150
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const whiteoutsOriginal = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                // Click Undo button
+                const undoBtn = document.getElementById('edit-undo-btn');
+                if (!undoBtn) return {{ success: false, error: 'No undo button' }};
+                undoBtn.click();
+
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteoutsAfterUndo = document.querySelectorAll('.edit-whiteout-overlay').length;
+
+                // Check canRedo BEFORE clicking redo
+                const canRedoBefore = window.editSession?.canRedo?.() || false;
+                const canUndoAfterUndo = window.editSession?.canUndo?.() || false;
+
+                // Click Redo button
+                const redoBtn = document.getElementById('edit-redo-btn');
+                if (!redoBtn) return {{ success: false, error: 'No redo button' }};
+
+                // Check redo button state before clicking
+                const redoBtnDisabled = redoBtn.disabled;
+
+                // Capture console logs
+                const logs = [];
+                const originalLog = console.log;
+                console.log = (...args) => {{
+                    logs.push(args.map(a => typeof a === 'bigint' ? a.toString() : String(a)).join(' '));
+                    originalLog.apply(console, args);
+                }};
+
+                redoBtn.click();
+
+                await new Promise(r => setTimeout(r, 300));
+
+                console.log = originalLog;
+
+                const whiteoutsAfterRedo = document.querySelectorAll('.edit-whiteout-overlay').length;
+                const canRedoAfter = window.editSession?.canRedo?.() || false;
+
+                return {{
+                    success: true,
+                    whiteoutsOriginal: whiteoutsOriginal,
+                    whiteoutsAfterUndo: whiteoutsAfterUndo,
+                    whiteoutsAfterRedo: whiteoutsAfterRedo,
+                    undoWorked: whiteoutsAfterUndo < whiteoutsOriginal,
+                    redoWorked: whiteoutsAfterRedo === whiteoutsOriginal,
+                    canRedoBefore: canRedoBefore,
+                    canRedoAfter: canRedoAfter,
+                    canUndoAfterUndo: canUndoAfterUndo,
+                    hasEditSession: !!window.editSession,
+                    redoBtnDisabled: redoBtnDisabled,
+                    consoleLogs: logs,
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test undo/redo buttons")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Undo/Redo button clicks test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["undoWorked"].as_bool().unwrap_or(false),
+        "Undo button should remove the whiteout"
+    );
+
+    assert!(
+        result["redoWorked"].as_bool().unwrap_or(false),
+        "Redo button should restore the whiteout. canRedo: {:?}, hasEditSession: {:?}",
+        result["canRedoBefore"],
+        result["hasEditSession"]
+    );
+}

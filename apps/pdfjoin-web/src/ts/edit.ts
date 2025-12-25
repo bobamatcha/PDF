@@ -108,6 +108,10 @@ export function setupEditView(): void {
   downloadBtn.addEventListener('click', downloadEditedPdf);
   undoBtn.addEventListener('click', undoLastOperation);
 
+  // Redo button
+  const redoBtn = document.getElementById('edit-redo-btn');
+  redoBtn?.addEventListener('click', redoLastOperation);
+
   // Signed PDF warning actions
   goBackBtn?.addEventListener('click', resetEditView);
   useSplitBtn?.addEventListener('click', () => {
@@ -155,6 +159,24 @@ export function setupEditView(): void {
       } else if (selectedWhiteout) {
         deleteWhiteout(selectedWhiteout);
         e.preventDefault();
+      }
+    }
+  });
+
+  // Undo/Redo keyboard shortcuts (Ctrl+Z / Ctrl+Shift+Z)
+  document.addEventListener('keydown', (e) => {
+    // Only handle if Ctrl/Cmd is pressed and not in text editing mode
+    if (!(e.ctrlKey || e.metaKey)) return;
+
+    if (e.key === 'z' || e.key === 'Z') {
+      // Shift+Z or Shift+Ctrl+Z = Redo
+      if (e.shiftKey) {
+        e.preventDefault();
+        redoLastOperation();
+      } else if (!activeTextInput) {
+        // Ctrl+Z = Undo (but not when editing text - let browser handle it)
+        e.preventDefault();
+        undoLastOperation();
       }
     }
   });
@@ -2369,11 +2391,263 @@ function redoLastOperation(): void {
   const redoneIds = editSession.redo();
   if (!redoneIds) return;
 
-  // For now, we can't recreate DOM elements easily without operation details
-  // The operations are restored in Rust, so export will work correctly
-  // TODO: Recreate DOM elements using getOperationJson if needed for visual feedback
+  // Recreate DOM elements for redone operations
+  for (let i = 0; i < redoneIds.length; i++) {
+    const opId = redoneIds[i];
+    recreateOperationElement(opId);
+  }
 
   updateButtons();
+}
+
+// Recreate a DOM element for an operation (used during redo)
+function recreateOperationElement(opId: bigint): void {
+  if (!editSession) return;
+
+  const json = editSession.getOperationJson(opId);
+  if (!json) return;
+
+  try {
+    const op = JSON.parse(json) as { type: string; page: number; rect: PdfRect; text?: string; style?: TextStyle; checked?: boolean };
+
+    // Handle serde adjacent tag format: {"type":"AddWhiteRect","page":1,"rect":{...}}
+    switch (op.type) {
+      case 'AddWhiteRect':
+        recreateWhiteRect(opId, { page: op.page, rect: op.rect });
+        break;
+      case 'AddText':
+        recreateTextBox(opId, { page: op.page, rect: op.rect, text: op.text || '', style: op.style });
+        break;
+      case 'AddCheckbox':
+        recreateCheckbox(opId, { page: op.page, rect: op.rect, checked: op.checked || false });
+        break;
+      case 'AddHighlight':
+        recreateHighlight(opId, { page: op.page, rect: op.rect });
+        break;
+    }
+  } catch {
+    // Ignore parse errors
+  }
+}
+
+interface PdfRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface TextStyle {
+  font_size?: number;
+  font_name?: string;
+  color?: string;
+  is_bold?: boolean;
+  is_italic?: boolean;
+}
+
+function recreateWhiteRect(opId: bigint, data: { page: number; rect: PdfRect }): void {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+
+  // Convert PDF coords to DOM coords
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  // PDF Y is from bottom, DOM Y is from top
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+
+  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+
+  const whiteRect = document.createElement('div');
+  whiteRect.className = 'edit-whiteout-overlay';
+  whiteRect.style.left = domX + 'px';
+  whiteRect.style.top = domY + 'px';
+  whiteRect.style.width = domWidth + 'px';
+  whiteRect.style.height = domHeight + 'px';
+  setOpId(whiteRect, opId);
+  whiteRect.dataset.page = String(pageNum);
+
+  // Add event handlers
+  whiteRect.addEventListener('mousedown', (e) => {
+    if ((e.target as HTMLElement).classList.contains('resize-handle')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    selectWhiteout(whiteRect);
+    startMove(e, whiteRect);
+  });
+
+  whiteRect.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    openWhiteoutTextEditor(whiteRect, pageNum);
+  });
+
+  overlay.appendChild(whiteRect);
+}
+
+function recreateTextBox(opId: bigint, data: { page: number; rect: PdfRect; text: string; style?: TextStyle }): void {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+
+  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+
+  const box = document.createElement('div');
+  box.className = 'text-box transparent';
+  box.dataset.page = String(pageNum);
+  box.style.left = domX + 'px';
+  box.style.top = domY + 'px';
+  box.style.width = domWidth + 'px';
+  box.style.height = domHeight + 'px';
+  box.style.zIndex = String(nextTextBoxZIndex++);
+  setOpId(box, opId);
+
+  // Add delete button
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.innerHTML = '&times;';
+  deleteBtn.title = 'Delete';
+  deleteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteTextBox(box);
+  });
+  box.appendChild(deleteBtn);
+
+  // Add text content
+  const textContent = document.createElement('div');
+  textContent.className = 'text-content';
+  textContent.contentEditable = 'true';
+  textContent.textContent = data.text || '';
+
+  const style = data.style || {};
+  textContent.dataset.fontSize = String(style.font_size || 12);
+  textContent.dataset.fontFamily = style.font_name || 'sans-serif';
+  textContent.dataset.isBold = String(style.is_bold || false);
+  textContent.dataset.isItalic = String(style.is_italic || false);
+  textContent.style.fontSize = (style.font_size || 12) + 'px';
+  textContent.style.fontFamily = style.font_name || 'sans-serif';
+  if (style.is_bold) textContent.style.fontWeight = 'bold';
+  if (style.is_italic) textContent.style.fontStyle = 'italic';
+  if (style.color) textContent.style.color = style.color;
+
+  textContent.addEventListener('focus', () => {
+    activeTextInput = textContent;
+    updateStyleButtons();
+  });
+  textContent.addEventListener('blur', () => {
+    activeTextInput = null;
+    updateStyleButtons();
+    commitTextBox(box);
+  });
+  box.appendChild(textContent);
+
+  // Add resize handles
+  const handles = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+  handles.forEach((pos) => {
+    const handle = document.createElement('div');
+    handle.className = `resize-handle resize-handle-${pos}`;
+    handle.dataset.handle = pos;
+    handle.addEventListener('mousedown', (e) => startTextBoxResize(e, box, pos));
+    box.appendChild(handle);
+  });
+
+  box.addEventListener('mousedown', (e) => {
+    if ((e.target as HTMLElement).classList.contains('resize-handle') ||
+        (e.target as HTMLElement).classList.contains('delete-btn')) {
+      return;
+    }
+    selectTextBox(box);
+    startTextBoxMove(e, box);
+  });
+
+  overlay.appendChild(box);
+}
+
+function recreateCheckbox(opId: bigint, data: { page: number; rect: PdfRect; checked: boolean }): void {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+
+  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+
+  const checkbox = document.createElement('div');
+  checkbox.className = 'edit-checkbox';
+  checkbox.style.left = domX + 'px';
+  checkbox.style.top = domY + 'px';
+  checkbox.style.width = domWidth + 'px';
+  checkbox.style.height = domHeight + 'px';
+  checkbox.dataset.page = String(pageNum);
+  setOpId(checkbox, opId);
+
+  if (data.checked) {
+    checkbox.classList.add('checked');
+    checkbox.textContent = '✓';
+  }
+
+  checkbox.addEventListener('click', () => {
+    checkbox.classList.toggle('checked');
+    const isChecked = checkbox.classList.contains('checked');
+    checkbox.textContent = isChecked ? '✓' : '';
+    if (editSession) {
+      editSession.setCheckbox(opId, isChecked);
+    }
+  });
+
+  overlay.appendChild(checkbox);
+}
+
+function recreateHighlight(opId: bigint, data: { page: number; rect: PdfRect }): void {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+
+  const overlay = document.querySelector<HTMLElement>(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+
+  const highlight = document.createElement('div');
+  highlight.className = 'edit-highlight';
+  highlight.style.left = domX + 'px';
+  highlight.style.top = domY + 'px';
+  highlight.style.width = domWidth + 'px';
+  highlight.style.height = domHeight + 'px';
+  highlight.dataset.page = String(pageNum);
+  setOpId(highlight, opId);
+
+  overlay.appendChild(highlight);
 }
 
 function updateButtons(): void {

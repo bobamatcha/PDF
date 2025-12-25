@@ -174,6 +174,7 @@ export interface EditSession {
   canRedo(): boolean;
   getOperationJson(id: OpId): string | null;
   recordRemovedOp(id: OpId): boolean;
+  setCheckbox(id: OpId, checked: boolean): boolean;
 }
 
 /**

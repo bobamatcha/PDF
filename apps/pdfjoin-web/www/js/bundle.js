@@ -275,6 +275,8 @@ function setupEditView() {
   removeBtn.addEventListener("click", resetEditView);
   downloadBtn.addEventListener("click", downloadEditedPdf);
   undoBtn.addEventListener("click", undoLastOperation);
+  const redoBtn = document.getElementById("edit-redo-btn");
+  redoBtn?.addEventListener("click", redoLastOperation);
   goBackBtn?.addEventListener("click", resetEditView);
   useSplitBtn?.addEventListener("click", () => {
     resetEditView();
@@ -311,6 +313,18 @@ function setupEditView() {
       } else if (selectedWhiteout) {
         deleteWhiteout(selectedWhiteout);
         e.preventDefault();
+      }
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "z" || e.key === "Z") {
+      if (e.shiftKey) {
+        e.preventDefault();
+        redoLastOperation();
+      } else if (!activeTextInput) {
+        e.preventDefault();
+        undoLastOperation();
       }
     }
   });
@@ -1835,6 +1849,203 @@ function undoLastOperation() {
     if (el) el.remove();
   }
   updateButtons();
+}
+function redoLastOperation() {
+  if (!editSession || !editSession.canRedo()) return;
+  const redoneIds = editSession.redo();
+  if (!redoneIds) return;
+  for (let i = 0; i < redoneIds.length; i++) {
+    const opId = redoneIds[i];
+    recreateOperationElement(opId);
+  }
+  updateButtons();
+}
+function recreateOperationElement(opId) {
+  if (!editSession) return;
+  const json = editSession.getOperationJson(opId);
+  if (!json) return;
+  try {
+    const op = JSON.parse(json);
+    switch (op.type) {
+      case "AddWhiteRect":
+        recreateWhiteRect(opId, { page: op.page, rect: op.rect });
+        break;
+      case "AddText":
+        recreateTextBox(opId, { page: op.page, rect: op.rect, text: op.text || "", style: op.style });
+        break;
+      case "AddCheckbox":
+        recreateCheckbox(opId, { page: op.page, rect: op.rect, checked: op.checked || false });
+        break;
+      case "AddHighlight":
+        recreateHighlight(opId, { page: op.page, rect: op.rect });
+        break;
+    }
+  } catch {
+  }
+}
+function recreateWhiteRect(opId, data) {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+  const whiteRect = document.createElement("div");
+  whiteRect.className = "edit-whiteout-overlay";
+  whiteRect.style.left = domX + "px";
+  whiteRect.style.top = domY + "px";
+  whiteRect.style.width = domWidth + "px";
+  whiteRect.style.height = domHeight + "px";
+  setOpId(whiteRect, opId);
+  whiteRect.dataset.page = String(pageNum);
+  whiteRect.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("resize-handle")) return;
+    e.stopPropagation();
+    e.preventDefault();
+    selectWhiteout(whiteRect);
+    startMove(e, whiteRect);
+  });
+  whiteRect.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    openWhiteoutTextEditor(whiteRect, pageNum);
+  });
+  overlay.appendChild(whiteRect);
+}
+function recreateTextBox(opId, data) {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+  const box = document.createElement("div");
+  box.className = "text-box transparent";
+  box.dataset.page = String(pageNum);
+  box.style.left = domX + "px";
+  box.style.top = domY + "px";
+  box.style.width = domWidth + "px";
+  box.style.height = domHeight + "px";
+  box.style.zIndex = String(nextTextBoxZIndex++);
+  setOpId(box, opId);
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "delete-btn";
+  deleteBtn.innerHTML = "&times;";
+  deleteBtn.title = "Delete";
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteTextBox(box);
+  });
+  box.appendChild(deleteBtn);
+  const textContent = document.createElement("div");
+  textContent.className = "text-content";
+  textContent.contentEditable = "true";
+  textContent.textContent = data.text || "";
+  const style = data.style || {};
+  textContent.dataset.fontSize = String(style.font_size || 12);
+  textContent.dataset.fontFamily = style.font_name || "sans-serif";
+  textContent.dataset.isBold = String(style.is_bold || false);
+  textContent.dataset.isItalic = String(style.is_italic || false);
+  textContent.style.fontSize = (style.font_size || 12) + "px";
+  textContent.style.fontFamily = style.font_name || "sans-serif";
+  if (style.is_bold) textContent.style.fontWeight = "bold";
+  if (style.is_italic) textContent.style.fontStyle = "italic";
+  if (style.color) textContent.style.color = style.color;
+  textContent.addEventListener("focus", () => {
+    activeTextInput = textContent;
+    updateStyleButtons();
+  });
+  textContent.addEventListener("blur", () => {
+    activeTextInput = null;
+    updateStyleButtons();
+    commitTextBox(box);
+  });
+  box.appendChild(textContent);
+  const handles = ["nw", "n", "ne", "w", "e", "sw", "s", "se"];
+  handles.forEach((pos) => {
+    const handle = document.createElement("div");
+    handle.className = `resize-handle resize-handle-${pos}`;
+    handle.dataset.handle = pos;
+    handle.addEventListener("mousedown", (e) => startTextBoxResize(e, box, pos));
+    box.appendChild(handle);
+  });
+  box.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("resize-handle") || e.target.classList.contains("delete-btn")) {
+      return;
+    }
+    selectTextBox(box);
+    startTextBoxMove(e, box);
+  });
+  overlay.appendChild(box);
+}
+function recreateCheckbox(opId, data) {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+  const checkbox = document.createElement("div");
+  checkbox.className = "edit-checkbox";
+  checkbox.style.left = domX + "px";
+  checkbox.style.top = domY + "px";
+  checkbox.style.width = domWidth + "px";
+  checkbox.style.height = domHeight + "px";
+  checkbox.dataset.page = String(pageNum);
+  setOpId(checkbox, opId);
+  if (data.checked) {
+    checkbox.classList.add("checked");
+    checkbox.textContent = "\u2713";
+  }
+  checkbox.addEventListener("click", () => {
+    checkbox.classList.toggle("checked");
+    const isChecked = checkbox.classList.contains("checked");
+    checkbox.textContent = isChecked ? "\u2713" : "";
+    if (editSession) {
+      editSession.setCheckbox(opId, isChecked);
+    }
+  });
+  overlay.appendChild(checkbox);
+}
+function recreateHighlight(opId, data) {
+  const pageNum = data.page;
+  const pageInfo = PdfBridge.getPageInfo(pageNum);
+  if (!pageInfo) return;
+  const scaleX = pageInfo.page.view[2] / pageInfo.viewport.width;
+  const scaleY = pageInfo.page.view[3] / pageInfo.viewport.height;
+  const pdfRect = data.rect;
+  const domX = pdfRect.x / scaleX;
+  const domWidth = pdfRect.width / scaleX;
+  const domHeight = pdfRect.height / scaleY;
+  const domY = (pageInfo.page.view[3] - pdfRect.y - pdfRect.height) / scaleY;
+  const overlay = document.querySelector(`.overlay-container[data-page="${pageNum}"]`);
+  if (!overlay) return;
+  const highlight = document.createElement("div");
+  highlight.className = "edit-highlight";
+  highlight.style.left = domX + "px";
+  highlight.style.top = domY + "px";
+  highlight.style.width = domWidth + "px";
+  highlight.style.height = domHeight + "px";
+  highlight.dataset.page = String(pageNum);
+  setOpId(highlight, opId);
+  overlay.appendChild(highlight);
 }
 function updateButtons() {
   const downloadBtn = document.getElementById("edit-download-btn");
