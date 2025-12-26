@@ -2073,6 +2073,19 @@ async function downloadEditedPdf() {
   const btnContent = downloadBtn?.querySelector(".download-btn-content");
   if (!btnContent) return;
   try {
+    const opCount = editSession.getOperationCount();
+    const textBoxCount = document.querySelectorAll(".text-box").length;
+    const whiteoutCount = document.querySelectorAll(".edit-whiteout-overlay").length;
+    const highlightCount = document.querySelectorAll(".edit-highlight-overlay").length;
+    const checkboxCount = document.querySelectorAll(".edit-checkbox-overlay").length;
+    const replaceCount = document.querySelectorAll(".edit-replace-overlay").length;
+    const underlineCount = document.querySelectorAll(".edit-underline-overlay").length;
+    const domAnnotations = textBoxCount + whiteoutCount + highlightCount + checkboxCount + replaceCount + underlineCount;
+    if (opCount > 0 && Math.abs(opCount - domAnnotations) > domAnnotations) {
+      console.warn(
+        `[PDFJoin Parity Warning] Operation count (${opCount}) significantly differs from DOM elements (${domAnnotations}). TextBoxes: ${textBoxCount}, Whiteouts: ${whiteoutCount}, Highlights: ${highlightCount}, Checkboxes: ${checkboxCount}, Replaces: ${replaceCount}, Underlines: ${underlineCount}. This may indicate preview/download mismatch.`
+      );
+    }
     if (downloadBtn) downloadBtn.disabled = true;
     btnContent.innerHTML = `
       <span class="spinner"></span>

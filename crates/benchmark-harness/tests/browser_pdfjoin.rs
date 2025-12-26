@@ -13170,3 +13170,455 @@ async fn test_a11y_reduced_motion_css_exists() {
         "Prefers-reduced-motion CSS should exist (WCAG 2.3.3)"
     );
 }
+
+// ============================================================================
+// REGRESSION TESTS: Text Box Edit Persistence (Bug: Text not in download)
+// ============================================================================
+// These tests verify that text edits in text boxes are persisted to the
+// exported PDF. This addresses the bug where preview shows edited text but
+// the downloaded PDF shows original text.
+
+/// REGRESSION TEST: Text box edits MUST be persisted to exported PDF
+/// BUG: commitTextBox() returns early when operation exists, never calls updateText()
+/// This test should FAIL until the bug is fixed.
+#[tokio::test]
+async fn test_pdfjoin_textbox_edit_persisted_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Get wasmBindings and editSession
+                if (!window.wasmBindings) {{
+                    return {{ success: false, error: 'wasmBindings not available' }};
+                }}
+
+                // Step 1: Add initial text via WASM
+                const {{ EditSession }} = window.wasmBindings;
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Add text with original content
+                session.beginAction('textbox');
+                const opId = session.addText(
+                    1, 100, 700, 200, 20,
+                    'ORIGINAL_TEXT_BEFORE_EDIT',
+                    12.0, '#000000', null, false, false
+                );
+                session.commitAction();
+
+                // Step 2: Update the text (simulating user edit)
+                const updateResult = session.updateText(opId, 'UPDATED_TEXT_AFTER_EDIT');
+                if (!updateResult) {{
+                    return {{ success: false, error: 'updateText returned false' }};
+                }}
+
+                // Step 3: Export the PDF
+                const exportedBytes = session.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                // Step 4: Check if the exported PDF contains the UPDATED text
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasUpdatedText = pdfText.includes('UPDATED_TEXT_AFTER_EDIT');
+                const hasOriginalText = pdfText.includes('ORIGINAL_TEXT_BEFORE_EDIT');
+
+                return {{
+                    success: true,
+                    hasUpdatedText: hasUpdatedText,
+                    hasOriginalText: hasOriginalText,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text box edit persistence test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // CRITICAL ASSERTION: Exported PDF MUST contain UPDATED text
+    assert!(
+        result["hasUpdatedText"].as_bool().unwrap_or(false),
+        "REGRESSION BUG: Exported PDF does NOT contain the updated text! \
+         The text was changed from 'ORIGINAL_TEXT_BEFORE_EDIT' to 'UPDATED_TEXT_AFTER_EDIT' \
+         but the download still has the original. This means text edits are NOT persisted."
+    );
+
+    // Exported PDF should NOT contain original text (it was replaced)
+    assert!(
+        !result["hasOriginalText"].as_bool().unwrap_or(true),
+        "REGRESSION BUG: Exported PDF still contains the ORIGINAL text! \
+         The updateText call should have replaced it with the new text."
+    );
+}
+
+/// REGRESSION TEST: Full UI flow - create text box, edit, export
+/// This tests the actual commitTextBox() flow which currently has a bug
+#[tokio::test]
+async fn test_pdfjoin_textbox_ui_edit_persisted_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 3000));
+
+                // Select Text Box tool (button has id="edit-tool-textbox")
+                const textboxBtn = document.getElementById('edit-tool-textbox');
+                if (!textboxBtn) {{
+                    return {{ success: false, error: 'Text box tool button not found (id=edit-tool-textbox)' }};
+                }}
+                textboxBtn.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Find the overlay container and click to create text box
+                const overlay = document.querySelector('.overlay-container');
+                if (!overlay) {{
+                    return {{ success: false, error: 'Overlay container not found' }};
+                }}
+
+                // Simulate click to create text box
+                const rect = overlay.getBoundingClientRect();
+                const clickEvent = new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: rect.left + 100,
+                    clientY: rect.top + 100,
+                    view: window
+                }});
+                overlay.dispatchEvent(clickEvent);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find the text box and its content
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{
+                    return {{ success: false, error: 'Text box not created' }};
+                }}
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) {{
+                    return {{ success: false, error: 'Text content not found in text box' }};
+                }}
+
+                // Type original text
+                textContent.focus();
+                textContent.textContent = 'ORIGINAL_UI_TEXT';
+                textContent.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // Blur to commit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Get the operation ID
+                const opId1 = textBox.dataset.opId;
+
+                // Now edit the text
+                textContent.focus();
+                textContent.textContent = 'UPDATED_UI_TEXT_AFTER_EDIT';
+                textContent.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // Blur to commit the edit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check if operation ID changed (it shouldn't if we're updating)
+                const opId2 = textBox.dataset.opId;
+
+                // Get the edit session and export
+                // Access the global editSession via debug API
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'editSession not available (window.__editSession__ is null)' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasUpdatedText = pdfText.includes('UPDATED_UI_TEXT_AFTER_EDIT');
+                const hasOriginalText = pdfText.includes('ORIGINAL_UI_TEXT');
+
+                // Also check what the DOM shows
+                const domText = textContent.textContent;
+
+                return {{
+                    success: true,
+                    opId1: opId1,
+                    opId2: opId2,
+                    opIdChanged: opId1 !== opId2,
+                    hasUpdatedText: hasUpdatedText,
+                    hasOriginalText: hasOriginalText,
+                    domText: domText,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test UI text persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text box UI edit persistence test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // The DOM should show the updated text
+    assert_eq!(
+        result["domText"].as_str().unwrap_or(""),
+        "UPDATED_UI_TEXT_AFTER_EDIT",
+        "DOM should show the updated text"
+    );
+
+    // CRITICAL ASSERTION: Exported PDF MUST match what the user sees in the DOM
+    // This is the actual bug - preview shows one thing, download shows another
+    assert!(
+        result["hasUpdatedText"].as_bool().unwrap_or(false),
+        "REGRESSION BUG: Preview/Download mismatch! \
+         DOM shows: {:?}, but exported PDF does NOT contain updated text. \
+         The commitTextBox() function is not calling updateText() for existing operations.",
+        result["domText"]
+    );
+
+    // If original text is still in export but not in DOM, that's the bug
+    if result["hasOriginalText"].as_bool().unwrap_or(false) {
+        panic!(
+            "REGRESSION BUG: Exported PDF contains ORIGINAL text ('ORIGINAL_UI_TEXT') \
+             but DOM shows UPDATED text ('{}'). \
+             Text edits are NOT being persisted to the download!",
+            result["domText"].as_str().unwrap_or("")
+        );
+    }
+}
+
+/// Test that text typed into a whiteout box is persisted to the exported PDF
+/// This replicates the user bug:
+/// 1. Upload PDF
+/// 2. Click whiteout tool
+/// 3. Draw whiteout over some area
+/// 4. Click in middle of whiteout, type text
+/// 5. Download - text should be in the PDF
+#[tokio::test]
+async fn test_pdfjoin_whiteout_text_persisted_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Load PDF into editor
+                const pdfBytes = Uint8Array.from(atob('{}'), c => c.charCodeAt(0));
+
+                // Wait for WASM to be ready
+                let wasmReady = false;
+                for (let i = 0; i < 30; i++) {{
+                    if (window.wasm_bindgen && window.EditSession) {{
+                        wasmReady = true;
+                        break;
+                    }}
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+                if (!wasmReady) {{
+                    return {{ success: false, error: 'WASM not ready after 3s' }};
+                }}
+
+                // Create edit session
+                const session = new window.EditSession('test.pdf', pdfBytes);
+                window.__editSession__ = session;
+
+                // Get page info for coordinate conversion
+                await new Promise(r => setTimeout(r, 500));
+
+                // === Step 1: Add a whiteout rectangle ===
+                const whiteoutOpId = session.addWhiteRect(1, 100, 500, 200, 50, '#FFFFFF');
+
+                // === Step 2: Add text on top of the whiteout (simulating typing in whiteout) ===
+                const textOpId = session.addText(
+                    1,           // page
+                    100, 500,    // x, y (same position as whiteout)
+                    200, 50,     // width, height
+                    'WHITEOUT_TEXT_SHOULD_PERSIST',  // text
+                    12,          // fontSize
+                    '#000000',   // color
+                    null,        // fontName
+                    false,       // isItalic
+                    false        // isBold
+                );
+
+                // Check operation count - should have 2 ops (whiteout + text)
+                const opCount = session.getOperationCount();
+
+                // === Step 3: Export and check for text ===
+                const exportedBytes = session.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasWhiteoutText = pdfText.includes('WHITEOUT_TEXT_SHOULD_PERSIST');
+
+                // Also check for the white rectangle marker (1 1 1 rg is white in PDF)
+                const hasWhiteRect = pdfText.includes('1 1 1 rg') || pdfText.includes('1 1 1 RG');
+
+                return {{
+                    success: true,
+                    opCount: opCount,
+                    whiteoutOpId: whiteoutOpId,
+                    textOpId: textOpId,
+                    hasWhiteoutText: hasWhiteoutText,
+                    hasWhiteRect: hasWhiteRect,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout text persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Whiteout text persistence test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Should have 2 operations (whiteout + text)
+    assert_eq!(
+        result["opCount"].as_i64().unwrap_or(0),
+        2,
+        "Should have 2 operations (whiteout rect + text)"
+    );
+
+    // CRITICAL: Text must be in exported PDF
+    assert!(
+        result["hasWhiteoutText"].as_bool().unwrap_or(false),
+        "BUG: Text typed into whiteout ('WHITEOUT_TEXT_SHOULD_PERSIST') is NOT in exported PDF! \
+         This is the bug the user reported: whiteout text doesn't persist to download."
+    );
+}

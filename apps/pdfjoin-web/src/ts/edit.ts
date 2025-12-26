@@ -1990,20 +1990,32 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
   // Begin whiteout action (may include whiteout resize + text)
   editSession.beginAction('whiteout');
 
+  console.log('[saveWhiteoutText] Starting - text:', text, 'page:', pageNum);
+  console.log('[saveWhiteoutText] PDF coords:', { pdfX, pdfY, pdfWidth, pdfHeight });
+  console.log('[saveWhiteoutText] DOM coords:', { domX, domY, domWidth, domHeight });
+  console.log('[saveWhiteoutText] Original dims:', { originalWidth, originalHeight });
+
   // If whiteout was resized, update the whiteout operation
   // Note: This only runs for whiteouts (not blackouts) since blackouts don't allow text editing
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
+    console.log('[saveWhiteoutText] Whiteout resized, old opId:', existingOpId);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
       // Add new whiteout with updated dimensions (always white since this is a whiteout text editor)
       const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, '#FFFFFF');
       setOpId(whiteRect, newWhiteOpId);
+      console.log('[saveWhiteoutText] Added new whiteout with opId:', newWhiteOpId);
     }
+  } else {
+    console.log('[saveWhiteoutText] Whiteout NOT resized');
   }
 
   // Add text annotation at the whiteout position (with font styling)
   const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
+  console.log('[saveWhiteoutText] Added text with opId:', opId);
+  console.log('[saveWhiteoutText] Total operations now:', editSession.getOperationCount());
+
   editSession.commitAction();
 
   // Replace input with text span INSIDE the whiteout (auto-sizing)
@@ -2739,6 +2751,27 @@ async function downloadEditedPdf(): Promise<void> {
   if (!btnContent) return;
 
   try {
+    // Parity check: Verify DOM elements match WASM operations (debug aid)
+    const opCount = editSession.getOperationCount();
+    const textBoxCount = document.querySelectorAll('.text-box').length;
+    const whiteoutCount = document.querySelectorAll('.edit-whiteout-overlay').length;
+    const highlightCount = document.querySelectorAll('.edit-highlight-overlay').length;
+    const checkboxCount = document.querySelectorAll('.edit-checkbox-overlay').length;
+    const replaceCount = document.querySelectorAll('.edit-replace-overlay').length;
+    const underlineCount = document.querySelectorAll('.edit-underline-overlay').length;
+    const domAnnotations = textBoxCount + whiteoutCount + highlightCount + checkboxCount + replaceCount + underlineCount;
+
+    // Whiteout with text creates 2 operations (whiteout + text), so adjust expected count
+    // This is an approximation - exact parity requires tracking op types
+    if (opCount > 0 && Math.abs(opCount - domAnnotations) > domAnnotations) {
+      console.warn(
+        `[PDFJoin Parity Warning] Operation count (${opCount}) significantly differs from DOM elements (${domAnnotations}). ` +
+        `TextBoxes: ${textBoxCount}, Whiteouts: ${whiteoutCount}, Highlights: ${highlightCount}, ` +
+        `Checkboxes: ${checkboxCount}, Replaces: ${replaceCount}, Underlines: ${underlineCount}. ` +
+        `This may indicate preview/download mismatch.`
+      );
+    }
+
     // Disable button during verification
     if (downloadBtn) downloadBtn.disabled = true;
 

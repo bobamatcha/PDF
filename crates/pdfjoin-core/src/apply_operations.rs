@@ -1714,6 +1714,85 @@ mod tests {
         );
     }
 
+    /// REGRESSION TEST: Exported PDF must contain UPDATED text after update_text() is called.
+    /// This tests the scenario where a user edits text in a text box after initial creation.
+    /// The downloaded PDF must reflect the latest text, not the original.
+    #[test]
+    fn test_export_contains_updated_text_after_update() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Add text with original content
+        let op_id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 20.0,
+            },
+            text: "ORIGINAL_TEXT_BEFORE_EDIT".to_string(),
+            style: TextStyle::default(),
+        });
+
+        // Update the text (simulating user editing the text box)
+        let updated = log.update_text(op_id, "UPDATED_TEXT_AFTER_EDIT", None);
+        assert!(updated, "update_text should succeed");
+
+        // Export the PDF
+        let result = apply_operations(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        // CRITICAL: The exported PDF must contain the UPDATED text, NOT the original
+        assert!(
+            result_str.contains("UPDATED_TEXT_AFTER_EDIT"),
+            "Exported PDF MUST contain the updated text. \
+             This proves that text edits are persisted to the download."
+        );
+
+        // And it should NOT contain the original text
+        assert!(
+            !result_str.contains("ORIGINAL_TEXT_BEFORE_EDIT"),
+            "Exported PDF must NOT contain the original text after update. \
+             Found original text when it should have been replaced."
+        );
+    }
+
+    /// Same test but for flattened export
+    #[test]
+    fn test_flattened_export_contains_updated_text_after_update() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        let op_id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 200.0,
+                height: 20.0,
+            },
+            text: "ORIGINAL_FLATTENED_TEXT".to_string(),
+            style: TextStyle::default(),
+        });
+
+        log.update_text(op_id, "UPDATED_FLATTENED_TEXT", None);
+
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(
+            result_str.contains("UPDATED_FLATTENED_TEXT"),
+            "Flattened export must contain updated text"
+        );
+        assert!(
+            !result_str.contains("ORIGINAL_FLATTENED_TEXT"),
+            "Flattened export must not contain original text after update"
+        );
+    }
+
     #[test]
     fn test_flattened_whiteout_produces_white_color() {
         let pdf = create_test_pdf();
@@ -2054,5 +2133,711 @@ mod tests {
         assert!(pages.contains_key(&1), "Should have page 1");
         assert!(pages.contains_key(&2), "Should have page 2");
         assert_eq!(pages.len(), 2, "Should have exactly 2 pages");
+    }
+
+    /// Test that whiteout + text on same position both appear in exported PDF
+    /// This is the user's reported bug: text typed into whiteout doesn't persist
+    #[test]
+    fn test_whiteout_with_text_both_persist_to_export() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Add whiteout rectangle
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+
+        // Add text on top of the whiteout (same position)
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            text: "WHITEOUT_TEXT_MUST_PERSIST".to_string(),
+            style: TextStyle::default(),
+        });
+
+        // Test annotation-based export (compress)
+        let result = apply_operations(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(
+            result_str.contains("WHITEOUT_TEXT_MUST_PERSIST"),
+            "Annotation export MUST contain text typed into whiteout. \
+             This is the user's reported bug. PDF content snippet: {}",
+            &result_str[..std::cmp::min(1000, result_str.len())]
+        );
+    }
+
+    /// REGRESSION TEST: Z-order bug where whiteout covers text in exported PDF
+    /// User reported: "text is being included in the downloaded PDF but not rendered
+    /// because the z ordering of the whiteout is greater than the text box"
+    ///
+    /// This test verifies that when whiteout and text are at the SAME position:
+    /// 1. Both annotations exist in the PDF
+    /// 2. Square (whiteout) comes FIRST in /Annots array (renders at bottom)
+    /// 3. FreeText (text) comes SECOND in /Annots array (renders on top)
+    /// 4. The text annotation's Rect OVERLAPS with the whiteout's Rect
+    #[test]
+    fn test_zorder_text_renders_on_top_of_whiteout_at_same_position() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // These coordinates are IDENTICAL - complete overlap
+        let shared_rect = PdfRect {
+            x: 100.0,
+            y: 500.0,
+            width: 200.0,
+            height: 50.0,
+        };
+
+        // 1. Add whiteout FIRST (should render at bottom)
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: shared_rect.clone(),
+            color: "#FFFFFF".to_string(),
+        });
+
+        // 2. Add text SECOND at SAME position (should render on top)
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: shared_rect.clone(),
+            text: "VISIBLE_TEXT_ON_TOP".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let doc = Document::load_mem(&result).unwrap();
+
+        // Get the page and its annotations
+        let pages: Vec<_> = doc.get_pages().into_iter().collect();
+        let (_page_num, page_id) = pages[0];
+
+        let page = doc.get_object(page_id).unwrap();
+        let page_dict = match page {
+            Object::Dictionary(d) => d,
+            _ => panic!("Page should be a Dictionary"),
+        };
+
+        let annots = match page_dict.get(b"Annots") {
+            Ok(Object::Array(arr)) => arr,
+            _ => panic!("Page should have Annots array"),
+        };
+
+        assert_eq!(annots.len(), 2, "Should have exactly 2 annotations");
+
+        // Extract annotation details in order
+        let mut annotation_info: Vec<(String, Vec<f32>)> = Vec::new();
+        for annot_ref in annots {
+            if let Object::Reference(annot_id) = annot_ref {
+                if let Ok(Object::Dictionary(annot)) = doc.get_object(*annot_id) {
+                    let subtype = match annot.get(b"Subtype") {
+                        Ok(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+                        _ => "Unknown".to_string(),
+                    };
+                    let rect = match annot.get(b"Rect") {
+                        Ok(Object::Array(arr)) => arr
+                            .iter()
+                            .filter_map(|v| match v {
+                                Object::Real(f) => Some(*f),
+                                Object::Integer(i) => Some(*i as f32),
+                                _ => None,
+                            })
+                            .collect(),
+                        _ => vec![],
+                    };
+                    annotation_info.push((subtype, rect));
+                }
+            }
+        }
+
+        eprintln!("Annotations in order: {:?}", annotation_info);
+
+        // CRITICAL Z-ORDER CHECK:
+        // Square (whiteout) MUST be first (index 0) - renders at bottom
+        // FreeText (text) MUST be second (index 1) - renders on top
+        assert_eq!(
+            annotation_info[0].0, "Square",
+            "Z-ORDER BUG: First annotation should be Square (whiteout) but got {}. \
+             Whiteout must come first to render at the bottom!",
+            annotation_info[0].0
+        );
+        assert_eq!(
+            annotation_info[1].0, "FreeText",
+            "Z-ORDER BUG: Second annotation should be FreeText (text) but got {}. \
+             Text must come second to render on top of whiteout!",
+            annotation_info[1].0
+        );
+
+        // Verify rects overlap (both should be at approximately the same position)
+        let whiteout_rect = &annotation_info[0].1;
+        let text_rect = &annotation_info[1].1;
+
+        // The rects should have significant overlap
+        // whiteout_rect and text_rect should both cover the same area
+        if whiteout_rect.len() == 4 && text_rect.len() == 4 {
+            let whiteout_x1 = whiteout_rect[0];
+            let whiteout_y1 = whiteout_rect[1];
+            let whiteout_x2 = whiteout_rect[2];
+            let whiteout_y2 = whiteout_rect[3];
+
+            let text_x1 = text_rect[0];
+            let text_y1 = text_rect[1];
+            let text_x2 = text_rect[2];
+            let text_y2 = text_rect[3];
+
+            // Check for overlap: text rect should be within or overlapping whiteout rect
+            let overlaps_x = text_x1 < whiteout_x2 && text_x2 > whiteout_x1;
+            let overlaps_y = text_y1 < whiteout_y2 && text_y2 > whiteout_y1;
+
+            assert!(
+                overlaps_x && overlaps_y,
+                "Z-ORDER BUG: Text rect {:?} should overlap with whiteout rect {:?}. \
+                 If they don't overlap, z-order doesn't matter - but user reported \
+                 text IS at same position as whiteout!",
+                text_rect,
+                whiteout_rect
+            );
+        }
+
+        eprintln!("✓ Z-order is correct: Square at index 0 (bottom), FreeText at index 1 (top)");
+    }
+
+    /// REGRESSION TEST: Z-order after doc.compress() reorders objects
+    /// User's bug: When we call doc.compress() to clean up the PDF,
+    /// it may reorder objects in a way that breaks annotation z-order.
+    /// This test creates a PDF with existing annotations, adds our whiteout+text,
+    /// and verifies z-order is preserved after compress.
+    #[test]
+    fn test_zorder_preserved_after_compress_with_existing_annotations() {
+        // Create a PDF that already has an annotation (simulating user's real PDF)
+        use lopdf::content::{Content, Operation};
+
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        // Create page content
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new(
+                    "Tf",
+                    vec![Object::Name(b"F1".to_vec()), Object::Integer(12)],
+                ),
+                Operation::new("Td", vec![Object::Integer(100), Object::Integer(700)]),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(
+                        b"Original Page Content".to_vec(),
+                        lopdf::StringFormat::Literal,
+                    )],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let content_id = doc.add_object(lopdf::Stream::new(
+            Dictionary::new(),
+            content.encode().unwrap(),
+        ));
+
+        // Create an EXISTING annotation on the page (like form fields in real PDFs)
+        let mut existing_annot = Dictionary::new();
+        existing_annot.set("Type", Object::Name(b"Annot".to_vec()));
+        existing_annot.set("Subtype", Object::Name(b"Widget".to_vec())); // Form field
+        existing_annot.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Integer(200),
+                Object::Integer(600),
+                Object::Integer(400),
+                Object::Integer(620),
+            ]),
+        );
+        let existing_annot_id = doc.add_object(Object::Dictionary(existing_annot));
+
+        // Create page WITH existing annotation
+        let page = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Page".to_vec())),
+            ("Parent", Object::Reference(pages_id)),
+            (
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Integer(612),
+                    Object::Integer(792),
+                ]),
+            ),
+            ("Contents", Object::Reference(content_id)),
+            (
+                "Annots",
+                Object::Array(vec![Object::Reference(existing_annot_id)]),
+            ), // EXISTING!
+        ]);
+        let page_id = doc.add_object(page);
+
+        let pages = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Pages".to_vec())),
+            ("Count", Object::Integer(1)),
+            ("Kids", Object::Array(vec![Object::Reference(page_id)])),
+        ]);
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let catalog = Dictionary::from_iter(vec![
+            ("Type", Object::Name(b"Catalog".to_vec())),
+            ("Pages", Object::Reference(pages_id)),
+        ]);
+        let catalog_id = doc.add_object(catalog);
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Save to bytes
+        let mut pdf_bytes = Vec::new();
+        doc.save_to(&mut pdf_bytes).unwrap();
+
+        // Now apply our whiteout + text operations
+        let mut log = OperationLog::new();
+
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            text: "TEXT_MUST_BE_ON_TOP".to_string(),
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf_bytes, &log).unwrap();
+        let result_doc = Document::load_mem(&result).unwrap();
+
+        // Get annotations from the result
+        let result_pages: Vec<_> = result_doc.get_pages().into_iter().collect();
+        let (_page_num, result_page_id) = result_pages[0];
+
+        let result_page = result_doc.get_object(result_page_id).unwrap();
+        let result_page_dict = match result_page {
+            Object::Dictionary(d) => d,
+            _ => panic!("Page should be a Dictionary"),
+        };
+
+        let annots = match result_page_dict.get(b"Annots") {
+            Ok(Object::Array(arr)) => arr,
+            _ => panic!("Page should have Annots array"),
+        };
+
+        // Should have 3 annotations: existing Widget + our Square + our FreeText
+        eprintln!("Total annotations after compress: {}", annots.len());
+        assert!(annots.len() >= 2, "Should have at least our 2 annotations");
+
+        // Find our Square and FreeText annotations and get their indices
+        let mut square_index: Option<usize> = None;
+        let mut freetext_index: Option<usize> = None;
+
+        for (i, annot_ref) in annots.iter().enumerate() {
+            if let Object::Reference(annot_id) = annot_ref {
+                if let Ok(Object::Dictionary(annot)) = result_doc.get_object(*annot_id) {
+                    if let Ok(Object::Name(subtype)) = annot.get(b"Subtype") {
+                        let subtype_str = String::from_utf8_lossy(subtype);
+                        eprintln!("Annotation {}: {}", i, subtype_str);
+                        if subtype_str == "Square" {
+                            square_index = Some(i);
+                        } else if subtype_str == "FreeText" {
+                            freetext_index = Some(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        let square_idx = square_index.expect("Should have Square annotation");
+        let freetext_idx = freetext_index.expect("Should have FreeText annotation");
+
+        // CRITICAL: FreeText index MUST be greater than Square index
+        // (later in array = renders on top)
+        assert!(
+            freetext_idx > square_idx,
+            "Z-ORDER BUG AFTER COMPRESS: FreeText (text) is at index {}, \
+             Square (whiteout) is at index {}. \
+             FreeText MUST come AFTER Square for text to render on top! \
+             doc.compress() may be reordering annotations.",
+            freetext_idx,
+            square_idx
+        );
+
+        eprintln!(
+            "✓ Z-order preserved after compress: Square at {}, FreeText at {}",
+            square_idx, freetext_idx
+        );
+    }
+
+    /// REGRESSION TEST: Test with REAL user's PDF (florida_lease_demo.pdf)
+    /// This tests the exact scenario the user reported
+    #[test]
+    fn test_zorder_with_real_florida_lease_pdf() {
+        // Read the actual PDF the user is testing with
+        let pdf_path = "/tmp/florida_lease_demo.pdf";
+        let pdf_bytes = match std::fs::read(pdf_path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                eprintln!("Skipping test: {} not found", pdf_path);
+                return;
+            }
+        };
+
+        let mut log = OperationLog::new();
+
+        // Add whiteout at a position near the top of page 1
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 300.0,
+                height: 50.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+
+        // Add text at SAME position
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 700.0,
+                width: 300.0,
+                height: 50.0,
+            },
+            text: "Test Test Test".to_string(),
+            style: TextStyle {
+                font_size: 36.0,
+                color: "#000000".to_string(),
+                font_name: None,
+                is_italic: false,
+                is_bold: false,
+            },
+        });
+
+        let result = apply_operations(&pdf_bytes, &log).unwrap();
+        let result_doc = Document::load_mem(&result).unwrap();
+
+        // Check page 1 annotations
+        let result_pages: Vec<_> = result_doc.get_pages().into_iter().collect();
+        let page_1 = result_pages.iter().find(|(num, _)| *num == 1);
+
+        if let Some((_page_num, page_id)) = page_1 {
+            let page = result_doc.get_object(*page_id).unwrap();
+            if let Object::Dictionary(page_dict) = page {
+                if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                    eprintln!("Page 1 has {} annotations", annots.len());
+
+                    let mut square_index: Option<usize> = None;
+                    let mut freetext_index: Option<usize> = None;
+
+                    for (i, annot_ref) in annots.iter().enumerate() {
+                        if let Object::Reference(annot_id) = annot_ref {
+                            if let Ok(Object::Dictionary(annot)) = result_doc.get_object(*annot_id)
+                            {
+                                if let Ok(Object::Name(subtype)) = annot.get(b"Subtype") {
+                                    let subtype_str = String::from_utf8_lossy(subtype);
+                                    eprintln!("Annotation {}: {}", i, subtype_str);
+                                    if subtype_str == "Square" {
+                                        square_index = Some(i);
+                                    } else if subtype_str == "FreeText" {
+                                        freetext_index = Some(i);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let square_idx = square_index.expect("Should have Square annotation");
+                    let freetext_idx = freetext_index.expect("Should have FreeText annotation");
+
+                    assert!(
+                        freetext_idx > square_idx,
+                        "Z-ORDER BUG WITH REAL PDF: FreeText at index {}, Square at index {}. \
+                         Text must come AFTER whiteout!",
+                        freetext_idx,
+                        square_idx
+                    );
+
+                    eprintln!(
+                        "✓ Real PDF z-order correct: Square at {}, FreeText at {}",
+                        square_idx, freetext_idx
+                    );
+                } else {
+                    eprintln!("Page 1 has no Annots array");
+                }
+            }
+        }
+
+        // Also verify the text is in the PDF content
+        let result_str = String::from_utf8_lossy(&result);
+        assert!(
+            result_str.contains("Test Test Test"),
+            "Text should be in exported PDF"
+        );
+
+        // Save the output for visual verification
+        std::fs::write("/tmp/florida_lease_demo_OUTPUT.pdf", &result)
+            .expect("Failed to write output");
+        eprintln!(
+            "Saved output to /tmp/florida_lease_demo_OUTPUT.pdf - open to verify text is visible!"
+        );
+    }
+
+    /// EXACT USER FLOW TEST: Matches the bug report exactly
+    /// 1. User draws whiteout over "Residential Lease Agreement" text
+    /// 2. User clicks ON the whiteout to open text editor
+    /// 3. User types "Test Test Test" into the whiteout
+    /// 4. Whiteout EXPANDS to fit text (saveWhiteoutText removes old whiteout, adds new one)
+    /// 5. Text is added via addText at same position
+    /// 6. User downloads - text should be visible on top of whiteout
+    #[test]
+    fn test_exact_user_flow_whiteout_then_type_text_into_it() {
+        let pdf_path = "/tmp/florida_lease_demo.pdf";
+        let pdf_bytes = match std::fs::read(pdf_path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                eprintln!("Skipping test: {} not found", pdf_path);
+                return;
+            }
+        };
+
+        let mut log = OperationLog::new();
+
+        // STEP 1: User draws whiteout (this happens when mouseup after drawing)
+        // Whiteout covers "Residential Lease Agreement" near top of page 1
+        let original_whiteout_id = log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 150.0,
+                y: 680.0,
+                width: 300.0,
+                height: 40.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+        eprintln!(
+            "Step 1: Added original whiteout with ID {}",
+            original_whiteout_id
+        );
+
+        // STEP 2-3: User clicks whiteout, types "Test Test Test"
+        // The text is larger (36pt) so the whiteout needs to expand
+        // saveWhiteoutText() does this:
+        //   - Removes old whiteout
+        //   - Adds new whiteout with expanded dimensions
+        //   - Adds text at same position
+
+        // Simulate saveWhiteoutText removing old whiteout and adding expanded one
+        log.remove(original_whiteout_id);
+        eprintln!("Step 2: Removed old whiteout {}", original_whiteout_id);
+
+        // STEP 4: Add expanded whiteout (wider to fit "Test Test Test" at 36pt)
+        let new_whiteout_id = log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 150.0,
+                y: 680.0,
+                width: 350.0,
+                height: 50.0,
+            }, // Expanded
+            color: "#FFFFFF".to_string(),
+        });
+        eprintln!(
+            "Step 3: Added expanded whiteout with ID {}",
+            new_whiteout_id
+        );
+
+        // STEP 5: Add text at same position
+        let text_id = log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 150.0,
+                y: 680.0,
+                width: 350.0,
+                height: 50.0,
+            },
+            text: "Test Test Test".to_string(),
+            style: TextStyle {
+                font_size: 36.0,
+                color: "#000000".to_string(),
+                font_name: None,
+                is_italic: false,
+                is_bold: false,
+            },
+        });
+        eprintln!("Step 4: Added text with ID {}", text_id);
+
+        // Verify operations list
+        eprintln!("Operations count: {}", log.operations().len());
+        for (i, op) in log.operations().iter().enumerate() {
+            let op_type = match op {
+                EditOperation::AddWhiteRect { .. } => "AddWhiteRect",
+                EditOperation::AddText { .. } => "AddText",
+                EditOperation::AddHighlight { .. } => "AddHighlight",
+                EditOperation::AddCheckbox { .. } => "AddCheckbox",
+                EditOperation::AddUnderline { .. } => "AddUnderline",
+                EditOperation::ReplaceText { .. } => "ReplaceText",
+            };
+            eprintln!("  Op {}: {}", i, op_type);
+        }
+
+        // STEP 6: Export (this is what happens when user clicks Download)
+        let result = apply_operations(&pdf_bytes, &log).unwrap();
+        let result_doc = Document::load_mem(&result).unwrap();
+
+        // Check annotations on page 1
+        let result_pages: Vec<_> = result_doc.get_pages().into_iter().collect();
+        let page_1 = result_pages.iter().find(|(num, _)| *num == 1);
+
+        if let Some((_page_num, page_id)) = page_1 {
+            let page = result_doc.get_object(*page_id).unwrap();
+            if let Object::Dictionary(page_dict) = page {
+                if let Ok(Object::Array(annots)) = page_dict.get(b"Annots") {
+                    eprintln!("\nExported PDF - Page 1 annotations:");
+
+                    let mut square_idx: Option<usize> = None;
+                    let mut freetext_idx: Option<usize> = None;
+
+                    for (i, annot_ref) in annots.iter().enumerate() {
+                        if let Object::Reference(annot_id) = annot_ref {
+                            if let Ok(Object::Dictionary(annot)) = result_doc.get_object(*annot_id)
+                            {
+                                let subtype = match annot.get(b"Subtype") {
+                                    Ok(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+                                    _ => "Unknown".to_string(),
+                                };
+                                let rect = match annot.get(b"Rect") {
+                                    Ok(Object::Array(arr)) => format!("{:?}", arr),
+                                    _ => "no rect".to_string(),
+                                };
+                                eprintln!("  Annotation {}: {} at {}", i, subtype, rect);
+
+                                if subtype == "Square" {
+                                    square_idx = Some(i);
+                                }
+                                if subtype == "FreeText" {
+                                    freetext_idx = Some(i);
+                                }
+                            }
+                        }
+                    }
+
+                    // CRITICAL ASSERTIONS
+                    assert!(
+                        square_idx.is_some(),
+                        "BUG: No Square (whiteout) annotation found!"
+                    );
+                    assert!(
+                        freetext_idx.is_some(),
+                        "BUG: No FreeText (text) annotation found! Text was not exported!"
+                    );
+
+                    let sq_idx = square_idx.unwrap();
+                    let ft_idx = freetext_idx.unwrap();
+
+                    assert!(
+                        ft_idx > sq_idx,
+                        "Z-ORDER BUG: FreeText at index {} but Square at index {}. \
+                         FreeText MUST come AFTER Square for text to render on top!",
+                        ft_idx,
+                        sq_idx
+                    );
+
+                    eprintln!(
+                        "\n✓ Z-order correct: Square at {}, FreeText at {}",
+                        sq_idx, ft_idx
+                    );
+                } else {
+                    panic!("Page 1 should have annotations!");
+                }
+            }
+        }
+
+        // Save for visual verification
+        std::fs::write("/tmp/florida_lease_EXACT_FLOW_OUTPUT.pdf", &result)
+            .expect("Failed to write output");
+        eprintln!("\nSaved to /tmp/florida_lease_EXACT_FLOW_OUTPUT.pdf - OPEN THIS AND CHECK IF TEXT IS VISIBLE!");
+    }
+
+    /// Same test but for flattened export
+    #[test]
+    fn test_whiteout_with_text_both_persist_to_flattened_export() {
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Add whiteout rectangle
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+
+        // Add text on top of the whiteout (same position)
+        log.add(EditOperation::AddText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            text: "WHITEOUT_FLATTENED_TEXT".to_string(),
+            style: TextStyle::default(),
+        });
+
+        // Test flattened export
+        let result = apply_operations_flattened(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(
+            result_str.contains("WHITEOUT_FLATTENED_TEXT"),
+            "Flattened export MUST contain text typed into whiteout. \
+             This is the user's reported bug. PDF content snippet: {}",
+            &result_str[..std::cmp::min(1000, result_str.len())]
+        );
     }
 }

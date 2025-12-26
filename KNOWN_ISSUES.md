@@ -16,6 +16,7 @@ This document tracks known issues that need investigation or resolution.
 | [006](#issue-006-highlightunderline-y-coordinate-offset) | Highlight/Underline Y-Coordinate Offset | Resolved | High |
 | [007](#issue-007-underline-tool-color-and-gap) | Underline Tool Color and Gap | Resolved | Low |
 | [008](#issue-008-highlight-tool-icon-and-color-picker) | Highlight Tool Icon and Color Picker | Partial | Low |
+| [009](#issue-009-whiteout-text-not-visible-in-exported-pdf) | Whiteout Text Not Visible in Exported PDF | Open | **Critical** |
 
 ---
 
@@ -280,4 +281,90 @@ For legal redaction requirements, the current flattened export approach is corre
 - The content stream is permanently modified
 
 The only way to "see" the original would be to have access to the original PDF file before redaction.
+
+---
+
+## ISSUE-009: Whiteout Text Not Visible in Exported PDF
+
+**Status:** Open
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts, pdfjoin-core / apply_operations.rs
+**Date Identified:** 2024-12-25
+
+### Description
+
+When a user types text INTO a whiteout box, the text appears correctly in the browser preview but is **not visible** in the exported/downloaded PDF. The text IS present in the PDF file (verified by checking annotation count), but it is being rendered BEHIND the whiteout rectangle instead of on top of it.
+
+### Steps to Reproduce
+
+1. Upload any PDF (e.g., Florida lease agreement)
+2. Select the Whiteout tool
+3. Draw a whiteout rectangle **over existing text** (e.g., cover "Residential Lease Agreement")
+4. Click on the whiteout box to activate text input
+5. Type text (e.g., "Test Test Test")
+6. Click elsewhere to commit the text
+7. Click "Download Edited PDF"
+8. Open the downloaded PDF - **the typed text is not visible**
+
+### Expected Behavior
+
+The typed text should appear on top of the white rectangle in the exported PDF, exactly as shown in the browser preview.
+
+### Actual Behavior
+
+- Browser preview: Text visible on white background ✓
+- Exported PDF: Only white rectangle visible, text hidden behind it ✗
+
+### Suspected Root Cause
+
+**Z-order (rendering order) bug in annotation processing.**
+
+When text is typed into a whiteout, `saveWhiteoutText()` in edit.ts:
+1. If whiteout was resized: removes old whiteout, adds new whiteout, then adds text
+2. Adds text annotation via `editSession.addText()`
+
+The operations are stored in order (whiteout first, text second) in the `OperationLog`. When `apply_operations()` processes them:
+- Square annotation (whiteout) should be at index N in `/Annots`
+- FreeText annotation (text) should be at index N+1 in `/Annots`
+
+PDF rendering order: later annotations in `/Annots` array render ON TOP of earlier ones.
+
+**However**, something is causing the text to render behind the whiteout. Possible causes:
+1. `doc.compress()` in `apply_operations()` may be reordering annotations
+2. Annotation appearance stream (AP) rendering differences between PDF viewers
+3. Some edge case in the resize flow that inverts the order
+
+### Investigation Notes
+
+- Unit tests checking z-order all PASS (Square at index 0, FreeText at index 1)
+- Tests verify correct order even after `doc.compress()` is called
+- Bug only manifests in actual browser usage, not in Rust unit tests
+- This suggests the issue may be in the TypeScript/WASM boundary or specific to certain PDFs
+
+### Files Involved
+
+- `apps/pdfjoin-web/src/ts/edit.ts` - `saveWhiteoutText()` function (lines ~1951-2053)
+- `crates/pdfjoin-core/src/apply_operations.rs` - `apply_operations()`, `add_annotation_to_page()`
+- `apps/pdfjoin-web/wasm/src/edit_session.rs` - `export()` function
+
+### Debug Logging Added
+
+Console logs were added to `saveWhiteoutText()` to track:
+- Text content and page number
+- PDF coordinates
+- Whether whiteout was resized
+- Operation IDs for whiteout and text
+- Total operation count
+
+### Next Steps
+
+1. Reproduce with debug logging to see exact operation order
+2. Inspect the raw exported PDF to verify `/Annots` array order
+3. Compare annotation appearance streams between whiteout and text
+4. Test if removing `doc.compress()` from `apply_operations()` fixes the issue
+5. Consider if the bug is viewer-specific (test in multiple PDF readers)
+
+### Workaround
+
+None currently. Users cannot type text into whiteout boxes and have it appear in exported PDFs.
 
