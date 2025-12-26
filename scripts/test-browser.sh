@@ -2,7 +2,7 @@
 # Browser integration tests with automatic server management
 # Usage: ./scripts/test-browser.sh [--quick]
 #
-# Starts trunk servers for both apps, runs browser tests, then cleans up.
+# Starts trunk servers for all apps, runs browser tests, then cleans up.
 # Use --quick to skip the full test suite and only run browser tests.
 
 set -e
@@ -20,6 +20,7 @@ NC='\033[0m' # No Color
 # Track PIDs for cleanup
 AGENTPDF_PID=""
 DOCSIGN_PID=""
+PDFJOIN_PID=""
 
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up servers...${NC}"
@@ -31,9 +32,14 @@ cleanup() {
         kill "$DOCSIGN_PID" 2>/dev/null || true
         echo "  Stopped docsign server (PID $DOCSIGN_PID)"
     fi
+    if [ -n "$PDFJOIN_PID" ] && kill -0 "$PDFJOIN_PID" 2>/dev/null; then
+        kill "$PDFJOIN_PID" 2>/dev/null || true
+        echo "  Stopped pdfjoin server (PID $PDFJOIN_PID)"
+    fi
     # Also kill any orphaned trunk processes on our ports
     lsof -ti:8080 | xargs kill 2>/dev/null || true
     lsof -ti:8081 | xargs kill 2>/dev/null || true
+    lsof -ti:8082 | xargs kill 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -81,7 +87,8 @@ echo "================================"
 echo -e "\n${YELLOW}Checking ports...${NC}"
 check_port 8080 "agentpdf"
 check_port 8081 "docsign"
-echo -e "  Ports 8080 and 8081 are ${GREEN}available${NC}"
+check_port 8082 "pdfjoin"
+echo -e "  Ports 8080, 8081, and 8082 are ${GREEN}available${NC}"
 
 # Start agentpdf server
 echo -e "\n${YELLOW}Starting agentpdf server on :8080...${NC}"
@@ -97,6 +104,13 @@ trunk serve --port 8081 > /tmp/docsign-trunk.log 2>&1 &
 DOCSIGN_PID=$!
 echo "  PID: $DOCSIGN_PID"
 
+# Start pdfjoin server
+echo -e "\n${YELLOW}Starting pdfjoin server on :8082...${NC}"
+cd "$PROJECT_ROOT/apps/pdfjoin-web"
+trunk serve --port 8082 > /tmp/pdfjoin-trunk.log 2>&1 &
+PDFJOIN_PID=$!
+echo "  PID: $PDFJOIN_PID"
+
 # Wait for servers to be ready
 echo -e "\n${YELLOW}Waiting for servers...${NC}"
 if ! wait_for_server "http://127.0.0.1:8080" "agentpdf"; then
@@ -105,6 +119,10 @@ if ! wait_for_server "http://127.0.0.1:8080" "agentpdf"; then
 fi
 if ! wait_for_server "http://127.0.0.1:8081" "docsign"; then
     echo -e "${RED}Failed to start docsign. Check /tmp/docsign-trunk.log${NC}"
+    exit 1
+fi
+if ! wait_for_server "http://127.0.0.1:8082" "pdfjoin"; then
+    echo -e "${RED}Failed to start pdfjoin. Check /tmp/pdfjoin-trunk.log${NC}"
     exit 1
 fi
 
@@ -139,6 +157,15 @@ else
     TEST_FAILED=1
 fi
 
+# Run pdfjoin browser tests
+echo -e "\n  ${YELLOW}PDFJoin tests:${NC}"
+if $TEST_CMD -p benchmark-harness --test browser_pdfjoin 2>&1 | tee /tmp/pdfjoin-tests.log; then
+    echo -e "  ${GREEN}✓ PDFJoin tests passed${NC}"
+else
+    echo -e "  ${RED}✗ PDFJoin tests failed${NC}"
+    TEST_FAILED=1
+fi
+
 # Summary
 echo -e "\n================================"
 if [ $TEST_FAILED -eq 0 ]; then
@@ -146,6 +173,6 @@ if [ $TEST_FAILED -eq 0 ]; then
     exit 0
 else
     echo -e "${RED}❌ Some browser tests failed${NC}"
-    echo "  Check logs at /tmp/docsign-tests.log and /tmp/agentpdf-tests.log"
+    echo "  Check logs at /tmp/docsign-tests.log, /tmp/agentpdf-tests.log, and /tmp/pdfjoin-tests.log"
     exit 1
 fi

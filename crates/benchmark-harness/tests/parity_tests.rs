@@ -197,6 +197,80 @@ fn test_coords_rs_test_parity() {
     eprintln!("✓ coords.rs has matching test coverage in both apps");
 }
 
+// ============================================================================
+// Build Configuration Parity
+// ============================================================================
+
+/// ISSUE-016: Test that pdfjoin-web Trunk.toml has the required pre_build hook.
+/// This hook compiles TypeScript (src/ts/*.ts -> www/js/bundle.js) before Trunk serves.
+/// Without this, the browser tests will fail because bundle.js may be stale.
+#[test]
+fn test_pdfjoin_trunk_toml_has_prebuild_hook() {
+    let workspace_root = paths::workspace_root();
+    let trunk_toml_path = workspace_root.join("apps/pdfjoin-web/Trunk.toml");
+
+    let content =
+        std::fs::read_to_string(&trunk_toml_path).expect("Should read pdfjoin-web Trunk.toml");
+
+    // Check that there's a [[hooks]] section with pre_build stage
+    assert!(
+        content.contains("[[hooks]]"),
+        "pdfjoin-web Trunk.toml must have a [[hooks]] section for TypeScript compilation"
+    );
+
+    // Check for pre_build stage
+    assert!(
+        content.contains("stage = \"pre_build\""),
+        "pdfjoin-web Trunk.toml must have a pre_build hook stage"
+    );
+
+    // Check that npm run build is called
+    assert!(
+        content.contains("command = \"npm\"") && content.contains("[\"run\", \"build\"]"),
+        "pdfjoin-web Trunk.toml pre_build hook must run 'npm run build' to compile TypeScript"
+    );
+
+    eprintln!("✓ pdfjoin-web Trunk.toml has required pre_build hook for TypeScript");
+}
+
+/// Test that pdfjoin-web Trunk.toml watches the TypeScript source directory.
+/// Without this, TypeScript changes won't trigger rebuilds during development.
+#[test]
+fn test_pdfjoin_trunk_toml_watches_typescript() {
+    let workspace_root = paths::workspace_root();
+    let trunk_toml_path = workspace_root.join("apps/pdfjoin-web/Trunk.toml");
+
+    let content =
+        std::fs::read_to_string(&trunk_toml_path).expect("Should read pdfjoin-web Trunk.toml");
+
+    // Check that src/ts is in the watch paths
+    assert!(
+        content.contains("src/ts"),
+        "pdfjoin-web Trunk.toml [watch] must include 'src/ts' to detect TypeScript changes"
+    );
+
+    eprintln!("✓ pdfjoin-web Trunk.toml watches src/ts for TypeScript changes");
+}
+
+/// Test that pdfjoin-web Trunk.toml ignores the bundle output to prevent rebuild loops.
+/// The pre_build hook writes bundle.js, which would trigger another rebuild if not ignored.
+#[test]
+fn test_pdfjoin_trunk_toml_ignores_bundle_output() {
+    let workspace_root = paths::workspace_root();
+    let trunk_toml_path = workspace_root.join("apps/pdfjoin-web/Trunk.toml");
+
+    let content =
+        std::fs::read_to_string(&trunk_toml_path).expect("Should read pdfjoin-web Trunk.toml");
+
+    // Check that bundle.js is ignored to prevent rebuild loops
+    assert!(
+        content.contains("www/js/bundle.js"),
+        "pdfjoin-web Trunk.toml [watch].ignore must include 'www/js/bundle.js' to prevent rebuild loops"
+    );
+
+    eprintln!("✓ pdfjoin-web Trunk.toml ignores bundle.js to prevent rebuild loops");
+}
+
 /// Test that all apps have proper viewport meta tag for mobile support
 #[test]
 fn test_viewport_meta_parity() {

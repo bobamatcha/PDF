@@ -168,6 +168,30 @@ apps/                       # Deployable applications
 - **Undo/Redo**: Full action history with Ctrl+Z/Ctrl+Shift+Z support
 - **Flattened Export**: Burns all edits permanently into PDF (non-removable)
 
+### PDFJoin UX Design (Elderly-Focused)
+
+Designed for clarity over flexibility, following Nielsen Norman Group accessibility guidelines:
+
+**Core Principles:**
+- **Visual over textual** - Thumbnail grids instead of typing page numbers
+- **Direct manipulation** - Click to select, drag to reorder
+- **Immediate feedback** - Selection state visible instantly
+- **Large touch targets** - 44px minimum for all interactive elements
+- **High contrast** - Selected vs unselected states obvious
+- **Minimal text** - Self-explanatory UI, no verbose instructions
+
+**Split PDF:**
+- Visual page thumbnail grid with click-to-select
+- Quick select buttons: All, None, Odd, Even, First 5, Last 5
+- Shift+Click for range selection
+- Keyboard navigation (Arrow keys + Space/Enter)
+
+**Merge PDFs:**
+- Expandable document accordions with page thumbnails
+- Per-document page selection (All/None per file)
+- Drag-and-drop preview strip for reorder
+- Short codes (C1, A2) for document identification
+
 ### MCP Integration
 - **Claude Desktop Compatible**: JSON-RPC over stdio
 - **HTTP Transport**: Optional REST API mode (feature flag)

@@ -436,6 +436,7 @@
             cursor: pointer;
             transition: all 0.2s;
             min-width: 60px;
+            min-height: 44px; /* ELDERLY UX: WCAG 44px touch target */
         }
         .tool-btn:hover {
             background: rgba(37, 99, 235, 0.1);
@@ -526,7 +527,7 @@
         .text-box {
             position: absolute;
             min-width: 100px;
-            min-height: 24px;
+            min-height: 44px; /* ELDERLY UX: WCAG 44px touch target */
             cursor: move;
             box-sizing: border-box;
             display: flex;
@@ -551,20 +552,21 @@
         }
         .text-box .delete-btn {
             position: absolute;
-            top: -12px;
-            right: -12px;
-            width: 24px;
-            height: 24px;
+            top: -22px;
+            right: -22px;
+            width: 44px;
+            height: 44px;
             background: #ff4444;
             border: none;
             border-radius: 50%;
             color: white;
-            font-size: 14px;
+            font-size: 20px;
             cursor: pointer;
             display: none;
             align-items: center;
             justify-content: center;
             z-index: 110;
+            /* ELDERLY UX: 44px touch target for accessibility */
         }
         .text-box.selected .delete-btn {
             display: flex;
@@ -801,6 +803,7 @@
             border-radius: 8px;
             cursor: pointer;
             font-size: 1rem;
+            min-height: 44px; /* ELDERLY UX: WCAG 44px touch target */
         }
         .nav-btn:disabled {
             opacity: 0.5;
@@ -1196,6 +1199,901 @@
                 padding: 0.5rem 0.75rem;
             }
         }
+
+        /* ========================================
+           TOOL PICKER HOMEPAGE (Phase 1 UX)
+           Replaces tabs with large clickable cards
+           for elderly-friendly navigation
+           ======================================== */
+        .tool-picker {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .tool-card {
+            background: var(--card-bg);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            min-height: 180px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+        }
+
+        .tool-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+            border-color: var(--primary);
+        }
+
+        .tool-card:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+            border-color: var(--primary);
+        }
+
+        .tool-card:active {
+            transform: translateY(-2px);
+        }
+
+        .tool-card-icon {
+            font-size: 3rem;
+            line-height: 1;
+        }
+
+        .tool-card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text);
+            margin: 0;
+        }
+
+        .tool-card-desc {
+            font-size: 1rem;
+            color: var(--text-muted);
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        /* Back to Tools link - positioned at top of each tool view */
+        .back-to-tools {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--primary);
+            text-decoration: none;
+            font-size: 1rem;
+            font-weight: 500;
+            padding: 0.5rem 0;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            background: none;
+            border: none;
+            transition: color 0.15s;
+        }
+
+        .back-to-tools:hover {
+            color: var(--primary-dark);
+            text-decoration: underline;
+        }
+
+        .back-to-tools:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+            border-radius: 4px;
+        }
+
+        .back-to-tools-arrow {
+            font-size: 1.25rem;
+        }
+
+        /* Hide tabs when tool picker is shown (tabs become sr-only fallback) */
+        .tabs.tabs-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* Tool picker hidden state */
+        .tool-picker.hidden {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            .tool-picker {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+                margin: 1rem auto;
+            }
+            .tool-card {
+                min-height: 140px;
+                padding: 1.5rem 1rem;
+            }
+            .tool-card-icon {
+                font-size: 2.5rem;
+            }
+            .tool-card-title {
+                font-size: 1.25rem;
+            }
+        }
+
+        /* ========================================
+           SPLIT PDF: Visual Page Selection (Phase 2)
+           Thumbnail grid for selecting pages to extract
+           ======================================== */
+
+        /* Instruction text */
+        .selection-instruction {
+            font-size: 1rem;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        /* Page Thumbnail Grid Container */
+        .page-thumbnail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 1rem;
+            padding: 1rem;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        /* Individual Page Thumbnail */
+        .page-thumbnail {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: var(--card-bg);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+            min-height: 140px;
+        }
+
+        .page-thumbnail:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .page-thumbnail:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* Selected state - high contrast for elderly UX */
+        .page-thumbnail.selected {
+            border-color: var(--primary);
+            border-width: 3px;
+            background: rgba(37, 99, 235, 0.08);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+        }
+
+        /* Thumbnail image container */
+        .page-thumbnail-preview {
+            position: relative;
+            width: 100%;
+            max-height: 150px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            background: #f1f5f9;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .page-thumbnail-preview img {
+            max-width: 100%;
+            max-height: 150px;
+            object-fit: contain;
+            display: block;
+        }
+
+        /* Loading state for thumbnails */
+        .page-thumbnail-preview.loading {
+            min-height: 100px;
+        }
+
+        .page-thumbnail-preview.loading::after {
+            content: '';
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        /* Checkmark overlay for selected pages - large for elderly UX (24px+) */
+        .page-thumbnail-check {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 28px;
+            height: 28px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .page-thumbnail.selected .page-thumbnail-check {
+            display: flex;
+        }
+
+        /* Page number label */
+        .page-thumbnail-number {
+            font-size: 1rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-align: center;
+            margin-top: auto;
+        }
+
+        .page-thumbnail.selected .page-thumbnail-number {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        /* Quick select buttons row */
+        .quick-select-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: var(--bg);
+            border-radius: 8px;
+        }
+
+        .quick-select-label {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-right: 0.5rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .quick-select-btn {
+            padding: 0.5rem 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            color: var(--text);
+            transition: background 0.15s, border-color 0.15s;
+            min-height: 44px; /* ELDERLY UX: 44px touch target */
+        }
+
+        .quick-select-btn:hover {
+            background: rgba(37, 99, 235, 0.1);
+            border-color: var(--primary);
+        }
+
+        .quick-select-btn:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* Selection summary display */
+        .selection-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .selection-count {
+            font-size: 1rem;
+            color: var(--text);
+        }
+
+        .selection-count strong {
+            color: var(--primary);
+        }
+
+        .selection-pages {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            max-width: 60%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Separate files checkbox - visible when multiple pages selected */
+        .separate-files-option {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--bg);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .separate-files-option input[type="checkbox"] {
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .separate-files-option label {
+            font-size: 1rem;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        /* Thumbnail loading progress */
+        .thumbnail-progress {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+        }
+
+        .thumbnail-progress-bar {
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem auto;
+            max-width: 300px;
+        }
+
+        .thumbnail-progress-fill {
+            height: 100%;
+            background: var(--primary);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        /* Hidden state for old text input (kept for accessibility fallback) */
+        .range-input-fallback {
+            display: none;
+        }
+
+        .range-input-fallback.show-fallback {
+            display: block;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .range-input-fallback .toggle-btn {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            background: none;
+            border: none;
+            cursor: pointer;
+            text-decoration: underline;
+            padding: 0;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Responsive adjustments for thumbnail grid */
+        @media (max-width: 600px) {
+            .page-thumbnail-grid {
+                grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+                gap: 0.75rem;
+                padding: 0.75rem;
+            }
+
+            .page-thumbnail {
+                min-height: 110px;
+                padding: 6px;
+            }
+
+            .page-thumbnail-preview {
+                max-height: 100px;
+            }
+
+            .page-thumbnail-preview img {
+                max-height: 100px;
+            }
+
+            .page-thumbnail-check {
+                width: 24px;
+                height: 24px;
+                font-size: 14px;
+            }
+
+            .quick-select-row {
+                gap: 0.375rem;
+            }
+
+            .quick-select-btn {
+                padding: 0.375rem 0.75rem;
+                font-size: 0.85rem;
+            }
+        }
+
+        /* ========================================
+           MERGE MULTI-DOCUMENT PAGE PICKER (Phase 3 UX)
+           Accordion documents with per-page selection
+           and draggable merge preview strip
+           ======================================== */
+
+        /* Merge Document Accordion */
+        .merge-documents {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .merge-document {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .merge-document:focus-within {
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+        }
+
+        .merge-document-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.875rem 1rem;
+            background: var(--bg);
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+
+        .merge-document-header:hover {
+            background: rgba(37, 99, 235, 0.05);
+        }
+
+        .merge-document-icon {
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .merge-document-shortcode {
+            background: var(--primary);
+            color: white;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            min-width: 1.5rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .merge-document-name {
+            flex: 1;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .merge-document-pages {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            flex-shrink: 0;
+        }
+
+        .merge-document-toggle {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.25rem;
+            padding: 0.5rem;
+            min-width: 44px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            transition: color 0.15s, transform 0.2s;
+            border-radius: 8px;
+        }
+
+        .merge-document-toggle:hover {
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+        }
+
+        .merge-document-toggle:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        .merge-document.expanded .merge-document-toggle {
+            transform: rotate(180deg);
+        }
+
+        .merge-document-remove {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--error);
+            font-size: 1.25rem;
+            padding: 0.5rem;
+            min-width: 44px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            transition: background 0.15s;
+        }
+
+        .merge-document-remove:hover {
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .merge-document-remove:focus-visible {
+            outline: 3px solid var(--error);
+            outline-offset: 2px;
+        }
+
+        .merge-document-content {
+            display: none;
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            background: var(--card-bg);
+        }
+
+        .merge-document.expanded .merge-document-content {
+            display: block;
+        }
+
+        /* Page Grid within Document Accordion */
+        .merge-page-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .merge-page-thumb {
+            position: relative;
+            background: white;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            cursor: pointer;
+            transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .merge-page-thumb:hover {
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+        }
+
+        .merge-page-thumb:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        .merge-page-thumb.selected {
+            border-color: var(--primary);
+            background: rgba(37, 99, 235, 0.05);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+        }
+
+        .merge-page-thumb.selected::after {
+            content: '\2713';
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: var(--primary);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.875rem;
+            font-weight: bold;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        }
+
+        .merge-page-canvas {
+            width: 100%;
+            height: auto;
+            max-height: 120px;
+            object-fit: contain;
+            border-radius: 4px;
+            background: #f1f5f9;
+        }
+
+        .merge-page-num {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text);
+        }
+
+        /* Quick Select Buttons */
+        .merge-page-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-start;
+        }
+
+        .merge-quick-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            min-height: 36px;
+        }
+
+        .merge-quick-select:hover {
+            background: rgba(37, 99, 235, 0.1);
+            border-color: var(--primary);
+        }
+
+        .merge-quick-select:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        /* Loading State for Thumbnails */
+        .merge-page-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100px;
+            color: var(--text-muted);
+        }
+
+        .merge-page-loading::before {
+            content: '';
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 0.5rem;
+        }
+
+        /* Merge Preview Strip (Bottom Panel) */
+        .merge-preview-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .merge-preview-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .merge-preview-title {
+            font-weight: 600;
+            font-size: 1rem;
+            margin: 0;
+        }
+
+        .merge-preview-hint {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            font-weight: normal;
+        }
+
+        .merge-preview-strip {
+            display: flex;
+            gap: 0.5rem;
+            overflow-x: auto;
+            padding: 0.5rem 0;
+            min-height: 80px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .merge-preview-strip:empty::before {
+            content: 'Select pages from the documents above to add them to the merge';
+            color: var(--text-muted);
+            font-style: italic;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 1rem;
+        }
+
+        .merge-preview-page {
+            flex-shrink: 0;
+            width: 60px;
+            background: white;
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            padding: 0.25rem;
+            cursor: grab;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.25rem;
+            transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+            position: relative;
+        }
+
+        .merge-preview-page:hover {
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.15);
+        }
+
+        .merge-preview-page:focus-visible {
+            outline: 3px solid var(--primary);
+            outline-offset: 2px;
+        }
+
+        .merge-preview-page.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+
+        .merge-preview-page.drop-target {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
+        }
+
+        .merge-preview-page-img {
+            width: 100%;
+            height: 50px;
+            object-fit: contain;
+            border-radius: 3px;
+            background: #f1f5f9;
+        }
+
+        .merge-preview-page-placeholder {
+            width: 100%;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #e2e8f0;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .merge-preview-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text);
+            background: var(--bg);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+
+        .merge-preview-remove {
+            position: absolute;
+            top: -6px;
+            right: -6px;
+            background: var(--error);
+            color: white;
+            border: 2px solid white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .merge-preview-page:hover .merge-preview-remove {
+            display: flex;
+        }
+
+        .merge-preview-summary {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .merge-preview-summary-text {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        .merge-controls-inline {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        /* Empty state for merge documents */
+        .merge-empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+        }
+
+        /* Add more files button in documents panel */
+        .merge-add-more {
+            display: flex;
+            justify-content: center;
+            margin-top: 0.75rem;
+        }
+
+        /* Responsive adjustments for merge page picker */
+        @media (max-width: 600px) {
+            .merge-page-grid {
+                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            }
+            .merge-page-canvas {
+                max-height: 80px;
+            }
+            .merge-preview-page {
+                width: 50px;
+            }
+            .merge-preview-page-img {
+                height: 40px;
+            }
+            .merge-document-name {
+                max-width: 120px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1211,7 +2109,8 @@
             <p>PDF Tools for Frequent Flyers</p>
         </header>
 
-        <nav class="tabs" role="navigation" aria-label="PDF Tools">
+        <!-- Tabs hidden visually but kept for screen reader navigation fallback -->
+        <nav class="tabs tabs-hidden" role="navigation" aria-label="PDF Tools (keyboard navigation)">
             <button class="tab active" data-tab="split">Split PDF</button>
             <button class="tab" data-tab="merge">Merge PDFs</button>
             <button class="tab" data-tab="edit">Edit PDF</button>
@@ -1220,8 +2119,33 @@
         <!-- ACCESSIBILITY: Main content landmark (WCAG 1.3.1) -->
         <main id="main-content" role="main">
 
+        <!-- Tool Picker Homepage (Phase 1 UX) -->
+        <section id="tool-picker" class="tool-picker" aria-label="Choose a PDF tool">
+            <button class="tool-card" data-tool="split" type="button" aria-describedby="split-desc">
+                <div class="tool-card-icon" aria-hidden="true">&#9986;</div>
+                <h2 class="tool-card-title">Split</h2>
+                <p class="tool-card-desc" id="split-desc">Extract pages from a PDF</p>
+            </button>
+
+            <button class="tool-card" data-tool="merge" type="button" aria-describedby="merge-desc">
+                <div class="tool-card-icon" aria-hidden="true">&#128209;</div>
+                <h2 class="tool-card-title">Merge</h2>
+                <p class="tool-card-desc" id="merge-desc">Combine files into one PDF</p>
+            </button>
+
+            <button class="tool-card" data-tool="edit" type="button" aria-describedby="edit-desc">
+                <div class="tool-card-icon" aria-hidden="true">&#9998;</div>
+                <h2 class="tool-card-title">Edit</h2>
+                <p class="tool-card-desc" id="edit-desc">Add text or make changes</p>
+            </button>
+        </section>
+
         <!-- Split View -->
-        <section id="split-view" class="view" aria-label="Split PDF">
+        <section id="split-view" class="view hidden" aria-label="Split PDF">
+            <button class="back-to-tools" type="button" aria-label="Back to tool selection">
+                <span class="back-to-tools-arrow" aria-hidden="true">&larr;</span>
+                Back to Tools
+            </button>
             <div id="split-drop-zone" class="drop-zone">
                 <input type="file" id="split-file-input" accept=".pdf" hidden aria-label="Select PDF file to split">
                 <div class="drop-content">
@@ -1239,8 +2163,50 @@
                     <button id="split-remove-btn" class="remove-btn" title="Remove file">&times;</button>
                 </div>
 
-                <div class="controls">
-                    <div class="range-input">
+                <!-- Visual Page Selection (Phase 2 UX) -->
+                <div id="split-visual-selection">
+
+                    <!-- Thumbnail loading progress -->
+                    <div id="split-thumbnail-progress" class="thumbnail-progress hidden">
+                        <p>Loading page previews...</p>
+                        <div class="thumbnail-progress-bar">
+                            <div class="thumbnail-progress-fill" id="split-thumbnail-progress-fill"></div>
+                        </div>
+                        <p class="thumbnail-progress-text" id="split-thumbnail-progress-text">0 of 0 pages</p>
+                    </div>
+
+                    <!-- Page thumbnail grid - populated by JavaScript -->
+                    <div id="split-page-grid" class="page-thumbnail-grid" role="grid" aria-label="Page thumbnails - click to select">
+                        <!-- Thumbnails inserted here by JS -->
+                    </div>
+
+                    <!-- Quick select buttons -->
+                    <div id="split-quick-select" class="quick-select-row">
+                        <button type="button" class="quick-select-btn" data-action="all">All</button>
+                        <button type="button" class="quick-select-btn" data-action="none">None</button>
+                        <button type="button" class="quick-select-btn" data-action="odd">Odd</button>
+                        <button type="button" class="quick-select-btn" data-action="even">Even</button>
+                        <button type="button" class="quick-select-btn" data-action="first5" id="split-first5-btn">First 5</button>
+                        <button type="button" class="quick-select-btn" data-action="last5" id="split-last5-btn">Last 5</button>
+                    </div>
+
+                    <!-- Selection summary -->
+                    <div id="split-selection-summary" class="selection-summary">
+                        <span class="selection-count">Selected: <strong id="split-selected-count">0</strong> pages</span>
+                        <span class="selection-pages" id="split-selected-pages"></span>
+                    </div>
+
+                    <!-- Separate files option -->
+                    <div class="separate-files-option">
+                        <input type="checkbox" id="split-separate-files">
+                        <label for="split-separate-files">Save each page as separate file</label>
+                    </div>
+                </div>
+
+                <!-- Fallback text input (hidden but functional for accessibility) -->
+                <div id="split-range-fallback" class="range-input-fallback show-fallback">
+                    <button type="button" class="toggle-btn" id="split-show-text-input">Or enter page numbers manually</button>
+                    <div class="range-input" id="split-text-input-container" style="display: none;">
                         <label for="page-range">Pages to extract:</label>
                         <input type="text" id="page-range" placeholder="e.g., 1-3, 5, 8-10">
                         <small class="range-hint">Use commas for multiple ranges: 1-3, 5, 8-10</small>
@@ -1250,7 +2216,10 @@
                             <label for="split-multiple-files">Save each range as separate file</label>
                         </div>
                     </div>
-                    <button id="split-btn" class="primary-btn" disabled>Split PDF</button>
+                </div>
+
+                <div class="controls" style="justify-content: flex-end;">
+                    <button id="split-btn" class="primary-btn" disabled>Extract Selected Pages</button>
                 </div>
 
                 <div id="split-progress" class="progress hidden">
@@ -1261,7 +2230,11 @@
         </section>
 
         <!-- Merge View -->
-        <section id="merge-view" class="view hidden">
+        <section id="merge-view" class="view hidden" aria-label="Merge PDFs">
+            <button class="back-to-tools" type="button" aria-label="Back to tool selection">
+                <span class="back-to-tools-arrow" aria-hidden="true">&larr;</span>
+                Back to Tools
+            </button>
             <div id="merge-drop-zone" class="drop-zone">
                 <input type="file" id="merge-file-input" accept=".pdf" multiple hidden aria-label="Select PDF files to merge">
                 <div class="drop-content">
@@ -1272,14 +2245,29 @@
             </div>
             <div id="merge-error" class="error-msg hidden"><span class="error-text"></span><button class="dismiss">&times;</button></div>
 
-            <div id="merge-file-list" class="file-list hidden">
-                <h3>Files to merge <span id="merge-count">(0)</span></h3>
-                <ul id="merge-files"></ul>
-                <p class="drag-hint">Drag to reorder files</p>
+            <!-- Phase 3: Multi-Document Page Picker -->
+            <div id="merge-page-picker" class="hidden">
+                <!-- Document Accordions Container -->
+                <div id="merge-documents" class="merge-documents">
+                    <!-- Documents will be dynamically added here -->
+                </div>
 
-                <div class="controls">
+                <!-- Add more files button -->
+                <div class="merge-add-more">
                     <button id="merge-add-btn" class="secondary-btn">+ Add more files</button>
-                    <button id="merge-btn" class="primary-btn" disabled>Merge PDFs</button>
+                </div>
+
+                <!-- Merge Preview Strip -->
+                <div class="merge-preview-container">
+                    <div id="merge-preview-strip" class="merge-preview-strip" role="list" aria-label="Pages to merge, drag to reorder">
+                        <!-- Preview pages will be dynamically added here -->
+                    </div>
+                    <div class="merge-preview-summary">
+                        <span id="merge-summary-text" class="merge-preview-summary-text">No pages selected</span>
+                        <div class="merge-controls-inline">
+                            <button id="merge-btn" class="primary-btn" disabled>Merge Selected Pages</button>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="merge-progress" class="progress hidden">
@@ -1290,7 +2278,11 @@
         </section>
 
         <!-- Edit View -->
-        <section id="edit-view" class="view hidden">
+        <section id="edit-view" class="view hidden" aria-label="Edit PDF">
+            <button class="back-to-tools" type="button" aria-label="Back to tool selection">
+                <span class="back-to-tools-arrow" aria-hidden="true">&larr;</span>
+                Back to Tools
+            </button>
             <!-- Drop zone (initial state) -->
             <div id="edit-drop-zone" class="drop-zone">
                 <input type="file" id="edit-file-input" accept=".pdf" hidden aria-label="Select PDF file to edit">

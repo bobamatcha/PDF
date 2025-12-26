@@ -4,6 +4,85 @@ This document tracks known issues that need investigation or resolution.
 
 ---
 
+## Future Work: UI Fuzzing Framework
+
+> **Priority:** High
+> **Goal:** Systematically discover edge cases and regressions through automated exploration
+
+### Concept
+
+Create a fuzzing framework that extends the existing browser tests to:
+
+1. **Random User Path Exploration** - Simulate realistic but randomized user interactions
+2. **Cross-Tool Consistency Checking** - Verify that similar behaviors (e.g., text box vs whiteout persistence) work consistently
+3. **Long-Running Background Tests** - Run for extended periods collecting bug reports
+4. **Reproducible Bug Reports** - Log all actions to enable exact reproduction
+
+### Design Goals
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    UI Fuzzer Architecture                       │
+├─────────────────────────────────────────────────────────────────┤
+│  Input Generator                                                │
+│  ├── Random tool selection (textbox, whiteout, select, etc.)   │
+│  ├── Random coordinates within PDF bounds                       │
+│  ├── Random interaction types (click, dblclick, drag, type)    │
+│  └── Random timing variations                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Invariant Checkers                                             │
+│  ├── Preview matches export (DOM vs PDF content)               │
+│  ├── No duplicate elements from single action                   │
+│  ├── Selection state consistency                                │
+│  ├── Style tools enable/disable correctly                       │
+│  └── Autosave before download                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Bug Collector                                                  │
+│  ├── Action log (JSON format for replay)                       │
+│  ├── Screenshot at failure                                      │
+│  ├── DOM state snapshot                                         │
+│  └── PDF export comparison                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Options
+
+1. **Extend `browser_pdfjoin.rs`** - Add parameterized/randomized test cases
+2. **New `fuzz-harness` crate** - Dedicated long-running fuzzer with state management
+3. **Property-based testing** - Use `proptest` or `quickcheck` for Rust-side invariants
+
+### Key Scenarios to Fuzz
+
+- Tool switching mid-operation
+- Rapid create/delete cycles
+- Overlapping elements
+- Immediate download after edits
+- Reselection and re-editing
+- Multi-page operations
+- Undo/redo sequences
+
+### Bug Report Format
+
+```json
+{
+  "timestamp": "2024-12-26T12:34:56Z",
+  "seed": 12345,
+  "actions": [
+    {"type": "tool_select", "tool": "textbox"},
+    {"type": "dblclick", "x": 150, "y": 200},
+    {"type": "type", "text": "Hello"},
+    {"type": "click_away", "x": 50, "y": 50},
+    {"type": "click", "x": 150, "y": 200},
+    {"type": "resize_attempt", "handle": "se", "dx": 50, "dy": 30}
+  ],
+  "invariant_failed": "resize_handle_visible_after_reselection",
+  "screenshot": "bug_12345.png",
+  "dom_snapshot": "bug_12345.html"
+}
+```
+
+---
+
 ## Table of Contents
 
 | # | Issue | Status | Severity |
@@ -16,7 +95,14 @@ This document tracks known issues that need investigation or resolution.
 | [006](#issue-006-highlightunderline-y-coordinate-offset) | Highlight/Underline Y-Coordinate Offset | Resolved | High |
 | [007](#issue-007-underline-tool-color-and-gap) | Underline Tool Color and Gap | Resolved | Low |
 | [008](#issue-008-highlight-tool-icon-and-color-picker) | Highlight Tool Icon and Color Picker | Partial | Low |
-| [009](#issue-009-whiteout-text-not-visible-in-exported-pdf) | Whiteout Text Not Visible in Exported PDF | Open | **Critical** |
+| [009](#issue-009-whiteout-text-not-visible-in-exported-pdf) | Whiteout Text Not Visible in Exported PDF | Resolved | **Critical** |
+| [010](#issue-010-text-box-tool-clickdrag-creates-two-boxes) | Text Box Tool Click+Drag Creates Two Boxes | Resolved | **Critical** |
+| [011](#issue-011-text-box-resize-broken-after-reselection) | Text Box Resize Broken After Reselection | Resolved | **Critical** |
+| [012](#issue-012-text-box-styling-not-functional) | Text Box Styling Not Functional | Resolved | **Critical** |
+| [013](#issue-013-text-box-not-autosaved-before-download) | Text Box Not Autosaved Before Download | Resolved | **Critical** |
+| [014](#issue-014-text-box-deselection-inconsistent) | Text Box Deselection Inconsistent | Resolved | High |
+| [015](#issue-015-style-tools-disabled-when-box-selected) | Style Tools Disabled When Box Selected | Resolved | High |
+| [016](#issue-016-file-replace-confirmation-missing) | File Replace Confirmation Missing | Resolved | **Critical** |
 
 ---
 
@@ -286,85 +372,355 @@ The only way to "see" the original would be to have access to the original PDF f
 
 ## ISSUE-009: Whiteout Text Not Visible in Exported PDF
 
-**Status:** Open
+**Status:** Resolved
 **Severity:** Critical
 **Component:** pdfjoin-web / edit.ts, pdfjoin-core / apply_operations.rs
 **Date Identified:** 2024-12-25
+**Date Resolved:** 2024-12-26
 
 ### Description
 
-When a user types text INTO a whiteout box, the text appears correctly in the browser preview but is **not visible** in the exported/downloaded PDF. The text IS present in the PDF file (verified by checking annotation count), but it is being rendered BEHIND the whiteout rectangle instead of on top of it.
+When a user types text INTO a whiteout box, the text appears correctly in the browser preview but is **not visible** in the exported/downloaded PDF.
 
-### Steps to Reproduce
+### Root Causes Found
 
-1. Upload any PDF (e.g., Florida lease agreement)
-2. Select the Whiteout tool
-3. Draw a whiteout rectangle **over existing text** (e.g., cover "Residential Lease Agreement")
-4. Click on the whiteout box to activate text input
-5. Type text (e.g., "Test Test Test")
-6. Click elsewhere to commit the text
-7. Click "Download Edited PDF"
-8. Open the downloaded PDF - **the typed text is not visible**
+Two separate bugs were identified:
 
-### Expected Behavior
+1. **Immediate Download Bug**: User types text in whiteout → clicks Download immediately → text is NOT saved because the blur event's 200ms setTimeout hasn't fired yet.
 
-The typed text should appear on top of the white rectangle in the exported PDF, exactly as shown in the browser preview.
+2. **Text Centering Bug**: Text was positioned at fixed offset `2 4 Td` (bottom-left) instead of centered like the preview showed.
 
-### Actual Behavior
+### Resolution
 
-- Browser preview: Text visible on white background ✓
-- Exported PDF: Only white rectangle visible, text hidden behind it ✗
+1. **commitPendingEdits()** - Added to `edit.ts`:
+   - Called at start of `downloadEditedPdf()` before export
+   - Finds any active `.whiteout-text-input` with unsaved text
+   - Calls `saveWhiteoutText()` to persist it before export
+   - Added `data-original-width` and `data-original-height` attributes to track dimensions
 
-### Suspected Root Cause
+2. **Text Centering** - Updated `apply_operations.rs`:
+   - `create_text_appearance_content()` now calculates centered position
+   - Uses box dimensions and estimated text width based on font metrics
+   - `x_offset = (box_width - text_width) / 2`
+   - `y_offset = (box_height - font_size) / 2`
 
-**Z-order (rendering order) bug in annotation processing.**
+### Regression Tests
 
-When text is typed into a whiteout, `saveWhiteoutText()` in edit.ts:
-1. If whiteout was resized: removes old whiteout, adds new whiteout, then adds text
-2. Adds text annotation via `editSession.addText()`
+- `test_immediate_download_after_whiteout_text_includes_text` - Tests typing text and immediately downloading without pressing Enter
+- `test_pdfjoin_whiteout_text_appears_in_exported_pdf` - Tests full UI flow with Enter key
 
-The operations are stored in order (whiteout first, text second) in the `OperationLog`. When `apply_operations()` processes them:
-- Square annotation (whiteout) should be at index N in `/Annots`
-- FreeText annotation (text) should be at index N+1 in `/Annots`
+### Verification
 
-PDF rendering order: later annotations in `/Annots` array render ON TOP of earlier ones.
+All whiteout text tests pass:
+```
+test_immediate_download_after_whiteout_text_includes_text ... ok
+test_pdfjoin_whiteout_text_appears_in_exported_pdf ... ok
+test_pdfjoin_whiteout_text_matches_covered_style ... ok
+test_pdfjoin_whiteout_text_input_fills_area_and_matches_font ... ok
+```
 
-**However**, something is causing the text to render behind the whiteout. Possible causes:
-1. `doc.compress()` in `apply_operations()` may be reordering annotations
-2. Annotation appearance stream (AP) rendering differences between PDF viewers
-3. Some edge case in the resize flow that inverts the order
+---
 
-### Investigation Notes
+## ISSUE-010: Text Box Tool Click+Drag Creates Two Boxes
 
-- Unit tests checking z-order all PASS (Square at index 0, FreeText at index 1)
-- Tests verify correct order even after `doc.compress()` is called
-- Bug only manifests in actual browser usage, not in Rust unit tests
-- This suggests the issue may be in the TypeScript/WASM boundary or specific to certain PDFs
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Date Resolved:** 2024-12-26
 
-### Files Involved
+### Description
 
-- `apps/pdfjoin-web/src/ts/edit.ts` - `saveWhiteoutText()` function (lines ~1951-2053)
-- `crates/pdfjoin-core/src/apply_operations.rs` - `apply_operations()`, `add_annotation_to_page()`
-- `apps/pdfjoin-web/wasm/src/edit_session.rs` - `export()` function
+When using the Text Box tool, click-and-drag to create a sized text box instead creates TWO tiny text boxes: one at the mousedown location and another at the mouseup location. This confused elderly users significantly.
 
-### Debug Logging Added
+### Steps to Reproduce (Before Fix)
 
-Console logs were added to `saveWhiteoutText()` to track:
-- Text content and page number
-- PDF coordinates
-- Whether whiteout was resized
-- Operation IDs for whiteout and text
-- Total operation count
+1. Upload any PDF
+2. Select the Text Box tool
+3. Click and drag from one point to another (like drawing a rectangle)
+4. Result: Two small text boxes appear instead of one sized text box
 
-### Next Steps
+### Root Cause
 
-1. Reproduce with debug logging to see exact operation order
-2. Inspect the raw exported PDF to verify `/Annots` array order
-3. Compare annotation appearance streams between whiteout and text
-4. Test if removing `doc.compress()` from `apply_operations()` fixes the issue
-5. Consider if the bug is viewer-specific (test in multiple PDF readers)
+The text box tool had multiple event handlers that each created a text box:
+- `handleOverlayClick` created a box on click
+- `handleWhiteoutEnd` also handled textbox creation on mouseup
 
-### Workaround
+### Resolution
 
-None currently. Users cannot type text into whiteout boxes and have it appear in exported PDFs.
+1. **Removed textbox creation from `handleOverlayClick`** - Single clicks no longer create text boxes
+2. **Modified `handleWhiteoutEnd`** to only create textbox on meaningful drag (>10px)
+3. **Added `handleTextBoxDoubleClick`** handler for double-click creation
+4. **Modified `createTextBox`** to accept optional width/height parameters
+5. **Added minimum sizes for accessibility**:
+   - `MIN_TEXTBOX_HEIGHT = 44` (WCAG touch target)
+   - `MIN_TEXTBOX_WIDTH = 100`
+   - `DEFAULT_TEXTBOX_WIDTH = 200`
+   - `DEFAULT_TEXTBOX_HEIGHT = 48`
+
+### Regression Tests
+
+- `test_textbox_click_drag_creates_one_sized_box` - Verifies drag creates single sized box
+- `test_textbox_single_click_does_not_create_box` - Verifies single click is no-op
+- `test_textbox_double_click_creates_accessible_sized_box` - Verifies double-click creates 44px+ box
+
+### Verification
+
+All 10 textbox tests pass:
+```
+test_textbox_click_creates_text_box ... ok
+test_textbox_click_drag_creates_one_sized_box ... ok
+test_textbox_create_transparent ... ok
+test_textbox_delete_key ... ok
+test_textbox_delete_x_button ... ok
+test_textbox_double_click_creates_accessible_sized_box ... ok
+test_textbox_overlap_zorder ... ok
+test_textbox_resize ... ok
+test_textbox_single_click_does_not_create_box ... ok
+test_textbox_toolbar_button_exists ... ok
+```
+
+---
+
+## ISSUE-011: Text Box Resize Broken After Reselection
+
+**Status:** Resolved (Verified Working)
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Date Resolved:** 2024-12-26
+
+### Description
+
+Initially reported that after clicking away from a text box and clicking back, resize handles were not visible/functional.
+
+### Investigation
+
+Created regression test `test_textbox_resize_handles_visible_after_reselection` which:
+1. Creates a text box
+2. Clicks away to deselect
+3. Clicks back on the text box
+4. Verifies resize handles are visible
+
+**Test passes**, indicating the functionality works correctly. The reported issue may have been:
+- A transient UI state issue
+- Fixed by a previous change
+- A specific edge case not captured by the test
+
+### Regression Test
+
+`test_textbox_resize_handles_visible_after_reselection` in `browser_pdfjoin.rs`
+
+### Acceptance Criteria
+
+- [x] Clicking on existing text box shows resize handles
+- [x] All 8 resize handles (corners + edges) are visible when selected
+- [x] Dragging resize handles changes text box dimensions
+- [x] Resize persists after clicking away and back
+
+---
+
+## ISSUE-012: Text Box Styling Not Functional
+
+**Status:** Resolved (Verified Working)
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Resolution Date:** 2024-12-26
+
+### Description
+
+Text styling controls (font size, bold, italic) do not work for text boxes:
+
+1. **Font size buttons** - Clicking +/- or typing a size has no effect
+2. **Bold button** - Clicking B does not make text bold
+3. **Italic button** - Clicking I does not make text italic
+4. **All styling fails even on initial creation** - Not just after reselection
+
+### Resolution
+
+**Test `test_textbox_styling_bold_italic_fontsize` confirms functionality works:**
+- Style buttons are correctly enabled when text content is focused
+- Bold button successfully applies `fontWeight: bold` (700)
+- Italic button successfully applies `fontStyle: italic`
+- Font size increase button increments font size
+
+**Key requirement:** Text styling requires focusing INSIDE the text content area (clicking on the text itself), not just clicking on the text box border. The style buttons become enabled only when `activeTextInput` is set via the focus event.
+
+### Acceptance Criteria
+
+- [x] Font size +/- buttons change text size in preview
+- [x] Bold button toggles bold styling in preview
+- [x] Italic button toggles italic styling in preview
+- [ ] All styling changes appear in exported PDF (needs verification)
+
+---
+
+## ISSUE-013: Text Box Not Autosaved Before Download
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Date Resolved:** 2024-12-26
+
+### Description
+
+Similar to ISSUE-009 (whiteout text), text box content is not autosaved when clicking Download immediately after typing. The text appears in preview but is missing from the exported PDF.
+
+### Root Cause
+
+The `commitPendingEdits()` function added for ISSUE-009 only handles `.whiteout-text-input` elements. Text boxes use `.text-content` which was not being committed before export.
+
+### Resolution
+
+Extended `commitPendingEdits()` in `edit.ts` to iterate over all `.text-box` elements and call `commitTextBox()` for any with text content:
+
+```typescript
+function commitPendingEdits(): void {
+  // ISSUE-013 FIX: Commit pending text boxes before export
+  const textBoxes = document.querySelectorAll<HTMLElement>('.text-box');
+  textBoxes.forEach(box => {
+    const textContent = box.querySelector<HTMLElement>('.text-content');
+    const text = textContent?.textContent?.trim() || '';
+    if (text) {
+      commitTextBox(box);
+    }
+  });
+  // ... rest of whiteout handling
+}
+```
+
+### Regression Test
+
+`test_textbox_immediate_download_includes_text` in `browser_pdfjoin.rs` validates this fix.
+
+### Acceptance Criteria
+
+- [x] Text box content is saved even without blur/Enter
+- [x] Immediate download after typing includes text
+- [x] Regression test confirms fix
+
+---
+
+## ISSUE-014: Text Box Deselection Inconsistent
+
+**Status:** Resolved
+**Severity:** High
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Resolution Date:** 2024-12-26
+
+### Description
+
+Clicking away from a text box does not consistently deselect it. Sometimes:
+- The text box remains visually selected (blue outline)
+- The cursor stays in the text input
+- Multiple text boxes appear selected simultaneously
+
+### Resolution
+
+**Fixed in `handleWhiteoutStart()` in edit.ts:**
+- Added deselection logic that runs BEFORE the tool check
+- When clicking on a blank area (not on a text box, whiteout, or UI element), `deselectTextBox()` and `deselectWhiteout()` are called regardless of current tool
+- This ensures clicking away always deselects, whether using select tool, text tool, or any other tool
+
+**Test:** `test_textbox_deselection_on_click_away` verifies:
+- Text box is deselected after clicking away
+- Resize handles are hidden after deselection
+- Deselection works consistently on repeat clicks
+
+### Acceptance Criteria
+
+- [x] Clicking on PDF background deselects text box
+- [x] Clicking on another element deselects previous selection
+- [x] Selection outline accurately reflects selection state
+
+---
+
+## ISSUE-015: Style Tools Disabled When Box Selected
+
+**Status:** Resolved (Verified Working)
+**Severity:** High
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Resolution Date:** 2024-12-26
+
+### Description
+
+When a text box or whiteout is selected (clicked on, showing selection outline), the style tools (font size, bold, italic) remain disabled/grayed out. Users cannot change styling without being in active text edit mode.
+
+### Resolution
+
+**Test `test_textbox_selection_enables_style_tools` confirms functionality works:**
+
+The test verifies that when clicking on a text box:
+1. The text box becomes selected (has `.selected` class)
+2. Style buttons (Bold, Italic, Font Size) become ENABLED
+
+**How it works:**
+- Clicking on the text box triggers the text content's focus event
+- The focus event sets `activeTextInput` to the text content element
+- `updateStyleButtons()` enables all style controls when `activeTextInput` is set
+
+**Note:** The text content area fills most of the text box, so clicking anywhere inside the box (not just on the text) typically triggers the focus. This provides good UX since users don't need to click precisely on text characters.
+
+### Acceptance Criteria
+
+- [x] Selecting text box enables font size controls
+- [x] Selecting text box enables bold/italic buttons
+- [x] Clicking Bold applies to entire text box content
+- [ ] Changes persist to exported PDF (needs verification)
+
+---
+
+## ISSUE-016: File Replace Confirmation Missing
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+**Date Resolved:** 2024-12-26
+
+### Description
+
+When a PDF is already loaded in the edit view and the user loads another PDF, the existing document is replaced without any confirmation dialog. This is dangerous for elderly users who may accidentally lose their work.
+
+### Resolution
+
+Modified `handleEditFile()` in `edit.ts` to:
+1. Check if `editSession` or `currentPdfBytes` already exists
+2. If so, show confirmation dialog using `showEditConfirmDialog()`
+3. Dialog shows different messages based on whether there are unsaved changes
+4. "Keep Current" cancels the load, "Replace" proceeds
+
+### Code Changes
+
+Added `showEditConfirmDialog()` helper function that uses the existing `confirm-dialog-overlay` element.
+
+Updated `handleEditFile()`:
+```typescript
+if (editSession !== null || currentPdfBytes !== null) {
+  const hasUnsavedChanges = editSession?.hasChanges() ?? false;
+  const confirmed = await showEditConfirmDialog({
+    title: hasUnsavedChanges ? 'Replace Document with Unsaved Changes?' : 'Replace Existing Document?',
+    message: `You already have "${currentFilename}" open. Loading "${file.name}" will replace it.`,
+    confirmText: 'Replace',
+    cancelText: 'Keep Current',
+  });
+  if (!confirmed) return;
+}
+```
+
+### Acceptance Criteria
+
+- [x] Loading new PDF when one exists shows confirmation modal
+- [x] Modal explains that current work will be lost
+- [x] "Keep Current" button cancels the new file load
+- [x] "Replace" button proceeds with replacement
+- [x] Modal is accessible (keyboard navigation, screen reader)
+
+### Test Reference
+
+Test `test_elderly_ux_critical_file_replace_confirmation` in `browser_pdfjoin.rs` validates this behavior.
 

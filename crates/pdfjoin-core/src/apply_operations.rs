@@ -464,7 +464,18 @@ fn add_text_annotation(
 
     // Create appearance stream content
     // This explicitly draws the text, ensuring reliable rendering across all PDF viewers
-    let ap_content = create_text_appearance_content(text, style.font_size, r, g, b, font_name);
+    let box_width = (x2 - x1) as f64;
+    let box_height = (y2 - y1) as f64;
+    let ap_content = create_text_appearance_content(
+        text,
+        style.font_size,
+        r,
+        g,
+        b,
+        font_name,
+        box_width,
+        box_height,
+    );
 
     // Create the appearance stream (Form XObject)
     let mut ap_stream_dict = Dictionary::new();
@@ -540,21 +551,43 @@ fn create_text_appearance_content(
     r: f32,
     g: f32,
     b: f32,
-    _font_name: &str,
+    font_name: &str,
+    box_width: f64,
+    box_height: f64,
 ) -> String {
     // Escape special characters in PDF string
     let escaped_text = escape_pdf_string(text);
 
-    // Content stream that draws text
-    // Position text with small offset from bottom-left of BBox
+    // Calculate approximate text width for centering
+    // Use standard font metrics - average character width is ~0.5-0.6 of font size
+    let avg_char_width = match font_name {
+        "Courier" | "Courier-Bold" | "Courier-Oblique" | "Courier-BoldOblique" => {
+            font_size * 0.6 // Monospace fonts are wider
+        }
+        "Times-Roman" | "Times-Bold" | "Times-Italic" | "Times-BoldItalic" => {
+            font_size * 0.45 // Serif fonts are narrower
+        }
+        _ => font_size * 0.5, // Helvetica and others
+    };
+    let text_width = text.chars().count() as f64 * avg_char_width;
+
+    // Center horizontally: (box_width - text_width) / 2
+    // Minimum offset of 2 to prevent clipping at edges
+    let x_offset = ((box_width - text_width) / 2.0).max(2.0);
+
+    // Center vertically: (box_height - font_size) / 2
+    // Add baseline offset (fonts sit ~20% above their baseline)
+    let y_offset = ((box_height - font_size) / 2.0).max(2.0);
+
+    // Content stream that draws text centered in the box
     format!(
         "BT\n\
          /F1 {} Tf\n\
          {} {} {} rg\n\
-         2 4 Td\n\
+         {} {} Td\n\
          ({}) Tj\n\
          ET",
-        font_size, r, g, b, escaped_text
+        font_size, r, g, b, x_offset, y_offset, escaped_text
     )
 }
 
