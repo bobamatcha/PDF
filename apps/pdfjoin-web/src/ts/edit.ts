@@ -41,6 +41,7 @@ function showEditConfirmDialog(options: {
   confirmText?: string;
   cancelText?: string;
   icon?: string;
+  modalType?: string; // Optional identifier for the modal type (e.g., 'file-replace')
 }): Promise<boolean> {
   return new Promise((resolve) => {
     const overlay = document.getElementById('confirm-dialog-overlay');
@@ -63,6 +64,12 @@ function showEditConfirmDialog(options: {
     confirmBtn.textContent = options.confirmText || 'Replace';
     cancelBtn.textContent = options.cancelText || 'Cancel';
 
+    // Set modal type identifier for testing (e.g., 'file-replace')
+    if (options.modalType) {
+      overlay.setAttribute('data-modal', options.modalType);
+      overlay.classList.add(`${options.modalType}-confirm`);
+    }
+
     // Show dialog
     overlay.classList.add('show');
     confirmBtn.focus();
@@ -70,6 +77,11 @@ function showEditConfirmDialog(options: {
     // Clean up function
     const cleanup = () => {
       overlay.classList.remove('show');
+      // Remove modal type identifiers
+      if (options.modalType) {
+        overlay.removeAttribute('data-modal');
+        overlay.classList.remove(`${options.modalType}-confirm`);
+      }
       confirmBtn.removeEventListener('click', onConfirm);
       cancelBtn.removeEventListener('click', onCancel);
       overlay.removeEventListener('click', onOverlayClick);
@@ -477,6 +489,7 @@ async function handleEditFile(file: File): Promise<void> {
       confirmText: 'Replace',
       cancelText: 'Keep Current',
       icon: hasUnsavedChanges ? '&#9888;' : '&#128196;', // Warning icon for unsaved, doc icon otherwise
+      modalType: 'file-replace', // For elderly UX testing - ISSUE-016
     });
 
     if (!confirmed) {
@@ -1366,6 +1379,80 @@ function deleteSelectedTextBox(): void {
   }
 }
 
+/**
+ * Parse innerHTML into styled text segments.
+ * Extracts text from bold/italic tags and creates segments with appropriate flags.
+ * Returns null if no mixed styling is detected (use simple addText instead).
+ */
+function parseStyledSegments(element: HTMLElement): { text: string; is_bold: boolean; is_italic: boolean }[] | null {
+  const innerHTML = element.innerHTML;
+
+  // Check if there are any styled tags
+  const hasStyledTags = /<(b|strong|i|em)\b/i.test(innerHTML);
+  if (!hasStyledTags) {
+    return null; // No mixed styling, use simple addText
+  }
+
+  const segments: { text: string; is_bold: boolean; is_italic: boolean }[] = [];
+
+  // Helper to recursively walk nodes and extract styled text
+  function walkNode(node: Node, isBold: boolean, isItalic: boolean): void {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || '';
+      if (text) {
+        segments.push({ text, is_bold: isBold, is_italic: isItalic });
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tagName = el.tagName.toLowerCase();
+
+      // Determine style from tag
+      const newBold = isBold || tagName === 'b' || tagName === 'strong';
+      const newItalic = isItalic || tagName === 'i' || tagName === 'em';
+
+      // Recursively process children
+      for (const child of Array.from(el.childNodes)) {
+        walkNode(child, newBold, newItalic);
+      }
+    }
+  }
+
+  // Start walking from root element
+  for (const child of Array.from(element.childNodes)) {
+    walkNode(child, false, false);
+  }
+
+  // Merge adjacent segments with same styling
+  const merged: { text: string; is_bold: boolean; is_italic: boolean }[] = [];
+  for (const seg of segments) {
+    if (merged.length > 0) {
+      const last = merged[merged.length - 1];
+      if (last.is_bold === seg.is_bold && last.is_italic === seg.is_italic) {
+        last.text += seg.text;
+        continue;
+      }
+    }
+    merged.push({ ...seg });
+  }
+
+  // If all segments have the same style, return null (use simple addText)
+  if (merged.length <= 1) {
+    return null;
+  }
+
+  // Check if there's actual mixed styling
+  const firstStyle = { is_bold: merged[0].is_bold, is_italic: merged[0].is_italic };
+  const hasMixedStyles = merged.some(
+    s => s.is_bold !== firstStyle.is_bold || s.is_italic !== firstStyle.is_italic
+  );
+
+  if (!hasMixedStyles) {
+    return null; // All same style, use simple addText
+  }
+
+  return merged;
+}
+
 function commitTextBox(box: HTMLElement): void {
   if (!editSession) return;
 
@@ -1399,27 +1486,50 @@ function commitTextBox(box: HTMLElement): void {
   }
 
   // TextBox is always transparent - just add text, no white rect
-  if (text) {
-    // Get style from text content
-    const style = textContent ? window.getComputedStyle(textContent) : null;
-    const fontSize = style ? parseFloat(style.fontSize) : 12;
-    const isBold = style?.fontWeight === 'bold' || parseInt(style?.fontWeight || '400') >= 700;
-    const isItalic = style?.fontStyle === 'italic';
+  if (text && textContent) {
+    // Get base style from text content
+    const style = window.getComputedStyle(textContent);
+    const fontSize = parseFloat(style.fontSize) || 12;
+
+    // Check for mixed styling (partial bold/italic)
+    const styledSegments = parseStyledSegments(textContent);
 
     editSession.beginAction('textbox');
-    const opId = editSession.addText(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      text,
-      fontSize,
-      '#000000',
-      null, // font name
-      isItalic,
-      isBold
-    );
+
+    let opId: bigint;
+    if (styledSegments) {
+      // Use addStyledText for mixed styling
+      const segmentsJson = JSON.stringify(styledSegments);
+      opId = editSession.addStyledText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        segmentsJson,
+        fontSize,
+        '#000000',
+        null // font name
+      );
+    } else {
+      // Use simple addText for uniform styling
+      const isBold = style.fontWeight === 'bold' || parseInt(style.fontWeight || '400') >= 700;
+      const isItalic = style.fontStyle === 'italic';
+      opId = editSession.addText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        text,
+        fontSize,
+        '#000000',
+        null, // font name
+        isItalic,
+        isBold
+      );
+    }
+
     editSession.commitAction();
     setOpId(box, opId);
   }
@@ -2138,31 +2248,40 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
   // Begin whiteout action (may include whiteout resize + text)
   editSession.beginAction('whiteout');
 
-  console.log('[saveWhiteoutText] Starting - text:', text, 'page:', pageNum);
-  console.log('[saveWhiteoutText] PDF coords:', { pdfX, pdfY, pdfWidth, pdfHeight });
-  console.log('[saveWhiteoutText] DOM coords:', { domX, domY, domWidth, domHeight });
-  console.log('[saveWhiteoutText] Original dims:', { originalWidth, originalHeight });
-
   // If whiteout was resized, update the whiteout operation
   // Note: This only runs for whiteouts (not blackouts) since blackouts don't allow text editing
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
-    console.log('[saveWhiteoutText] Whiteout resized, old opId:', existingOpId);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
       // Add new whiteout with updated dimensions (always white since this is a whiteout text editor)
       const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, '#FFFFFF');
       setOpId(whiteRect, newWhiteOpId);
-      console.log('[saveWhiteoutText] Added new whiteout with opId:', newWhiteOpId);
     }
-  } else {
-    console.log('[saveWhiteoutText] Whiteout NOT resized');
   }
 
-  // Add text annotation at the whiteout position (with font styling)
-  const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
-  console.log('[saveWhiteoutText] Added text with opId:', opId);
-  console.log('[saveWhiteoutText] Total operations now:', editSession.getOperationCount());
+  // Check for mixed styling (partial bold/italic) in the whiteout text input
+  const styledSegments = parseStyledSegments(input);
+
+  let opId: bigint;
+  if (styledSegments) {
+    // Use addStyledText for mixed styling
+    const segmentsJson = JSON.stringify(styledSegments);
+    opId = editSession.addStyledText(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      segmentsJson,
+      fontSize,
+      '#000000',
+      fontFamily
+    );
+  } else {
+    // Use simple addText for uniform styling
+    opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
+  }
 
   editSession.commitAction();
 
@@ -2599,27 +2718,59 @@ function updateStyleButtons(): void {
 function toggleBold(): void {
   if (!activeTextInput) return;
 
-  const currentBold = activeTextInput.dataset.isBold === 'true';
-  const newBold = !currentBold;
+  // ISSUE-025 FIX: Check for text selection within the active input
+  const selection = window.getSelection();
+  const hasSelection =
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.isCollapsed &&
+    activeTextInput.contains(selection.anchorNode);
 
-  activeTextInput.dataset.isBold = String(newBold);
-  activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+  if (hasSelection) {
+    // Apply bold to selected text only using execCommand
+    // This wraps selected text in <b> or <strong> tags
+    document.execCommand('bold', false);
+    activeTextInput.focus();
+  } else {
+    // No selection - apply to entire element (fallback behavior)
+    const currentBold = activeTextInput.dataset.isBold === 'true';
+    const newBold = !currentBold;
 
-  updateStyleButtons();
-  activeTextInput.focus();
+    activeTextInput.dataset.isBold = String(newBold);
+    activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 
 function toggleItalic(): void {
   if (!activeTextInput) return;
 
-  const currentItalic = activeTextInput.dataset.isItalic === 'true';
-  const newItalic = !currentItalic;
+  // ISSUE-025 FIX: Check for text selection within the active input
+  const selection = window.getSelection();
+  const hasSelection =
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.isCollapsed &&
+    activeTextInput.contains(selection.anchorNode);
 
-  activeTextInput.dataset.isItalic = String(newItalic);
-  activeTextInput.style.fontStyle = newItalic ? 'italic' : 'normal';
+  if (hasSelection) {
+    // Apply italic to selected text only using execCommand
+    // This wraps selected text in <i> or <em> tags
+    document.execCommand('italic', false);
+    activeTextInput.focus();
+  } else {
+    // No selection - apply to entire element (fallback behavior)
+    const currentItalic = activeTextInput.dataset.isItalic === 'true';
+    const newItalic = !currentItalic;
 
-  updateStyleButtons();
-  activeTextInput.focus();
+    activeTextInput.dataset.isItalic = String(newItalic);
+    activeTextInput.style.fontStyle = newItalic ? 'italic' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 
 function increaseFontSize(): void {

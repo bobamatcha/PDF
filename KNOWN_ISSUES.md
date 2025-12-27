@@ -103,6 +103,16 @@ Create a fuzzing framework that extends the existing browser tests to:
 | [014](#issue-014-text-box-deselection-inconsistent) | Text Box Deselection Inconsistent | Resolved | High |
 | [015](#issue-015-style-tools-disabled-when-box-selected) | Style Tools Disabled When Box Selected | Resolved | High |
 | [016](#issue-016-file-replace-confirmation-missing) | File Replace Confirmation Missing | Resolved | **Critical** |
+| [017](#issue-017-cannot-re-edit-existing-text-after-first-edit) | Cannot Re-Edit Existing Text After First Edit | Open | **Critical** |
+| [018](#issue-018-text-tools-not-working-when-editing-existing-text) | Text Tools Not Working When Editing Existing Text | Open | **Critical** |
+| [019](#issue-019-text-box-tool-types-on-whiteout-text-instead-of-editing) | Text Box Tool Types On Whiteout Text Instead of Editing | Open | High |
+| [020](#issue-020-text-tools-blur-away-after-multiple-edits) | Text Tools Blur Away After Multiple Edits | Open | **Critical** |
+| [021](#issue-021-test-parity-between-preview-and-downloaded-pdf) | Test Parity Between Preview and Downloaded PDF | Open | High |
+| [022](#issue-022-verify-download-applies-pending-changes-for-all-edit-types) | Verify Download Applies Pending Changes for All Edit Types | Open | **Critical** |
+| [023](#issue-023-cross-tab-document-persistence-arraybuffer-detachment) | Cross-Tab Document Persistence (ArrayBuffer Detachment) | Resolved | **Critical** |
+| [024](#issue-024-filelist-iteration-bug-in-merge-file-handler) | FileList Iteration Bug in Merge File Handler | Resolved | **Critical** |
+| [025](#issue-025-partial-text-selection-styling-not-supported) | Partial Text Selection Styling Not Supported | Resolved | **Critical** |
+| [025b](#issue-025b-mixed-partial-styling-not-exported-to-pdf) | Mixed Partial Styling Not Exported to PDF | Open | **Critical** |
 
 ---
 
@@ -723,4 +733,630 @@ if (editSession !== null || currentPdfBytes !== null) {
 ### Test Reference
 
 Test `test_elderly_ux_critical_file_replace_confirmation` in `browser_pdfjoin.rs` validates this behavior.
+
+---
+
+## ISSUE-017: Cannot Re-Edit Existing Text After First Edit
+
+**Status:** Open
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+
+### Description
+
+After editing existing PDF text for the first time (using the text replacement feature), the user cannot edit it again. The replacement overlay (`edit-replace-overlay`) should be clickable to re-edit, but either:
+
+1. The click handler doesn't fire
+2. The editor doesn't open properly
+3. The second edit doesn't apply
+
+### Steps to Reproduce
+
+1. Load a PDF with existing text
+2. Click on text to edit with Select tool → editor popup appears
+3. Change text and save → replacement overlay appears
+4. Click on the replacement overlay to edit again → **FAILS**
+
+### Expected Behavior
+
+- Clicking on replacement overlay should open the editor with the user's last edit (intermediate text)
+- User can modify and save again
+- The change should persist to PDF export
+
+### Root Cause (Investigation Needed)
+
+The `makeReplaceOverlayEditable()` function in `edit.ts:1798` sets up click handlers, but:
+- The handler may not be firing due to event propagation issues
+- The `originalSpan` lookup may fail because the span has `.replaced` class
+- The WASM operation removal might be causing state issues
+
+### Acceptance Criteria
+
+- [ ] Replacement overlay is re-editable after first save
+- [ ] Editor shows user's intermediate text (last edit), not original PDF text
+- [ ] Multiple re-edits work without issues
+- [ ] All edits persist to exported PDF
+
+### Test References
+
+- `test_pdfjoin_pdf_text_replacement_is_reeditable` (existing, verify if passing)
+- `test_pdfjoin_reedit_shows_intermediate_text_not_original` (existing)
+
+---
+
+## ISSUE-018: Text Tools Not Working When Editing Existing Text
+
+**Status:** Open
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+
+### Description
+
+When editing existing PDF text (replacement overlay mode), the text styling tools (Bold, Italic, Font Size, Font Family) do not work:
+
+1. **Style buttons disabled** - The bold/italic buttons remain disabled when editing
+2. **Font size doesn't change** - Clicking +/- has no effect
+3. **No visual feedback** - Changes don't apply to the preview
+4. **Not persisted** - Even if preview updated, the PDF export doesn't reflect changes
+
+### Steps to Reproduce
+
+1. Load a PDF with existing text
+2. Click on text to open editor popup
+3. Try to click Bold button → disabled or no effect
+4. Try to change font size → no effect
+5. Save and download → original styling only
+
+### Expected Behavior
+
+- All style tools should be enabled when text editor is active
+- Bold/Italic/Font size should update the preview immediately
+- Style changes should persist to the exported PDF
+
+### Acceptance Criteria
+
+- [ ] Bold button works when editing existing text (preview)
+- [ ] Bold persists to exported PDF
+- [ ] Italic button works when editing existing text (preview)
+- [ ] Italic persists to exported PDF
+- [ ] Font size +/- works when editing existing text (preview)
+- [ ] Font size persists to exported PDF
+- [ ] Font family dropdown works when editing existing text (preview)
+- [ ] Font family persists to exported PDF
+
+### Test Parity Requirements
+
+Tests must verify BOTH preview AND exported PDF. Current tests may only check preview.
+
+---
+
+## ISSUE-019: Text Box Tool Types On Whiteout Text Instead of Editing
+
+**Status:** Open
+**Severity:** High
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+
+### Description
+
+When the Text Box tool is selected and the user clicks on text that was typed in a whiteout box, the behavior is wrong:
+
+1. **Creates new text box on top** - Instead of editing the existing whiteout text, a new text box is created overlapping it
+2. **Requires tool switch** - User must switch back to Whiteout tool to edit whiteout text
+3. **UX-hostile for elderly users** - Confusing and not discoverable
+
+### Steps to Reproduce
+
+1. Create a whiteout box
+2. Double-click to add text: "Original Text"
+3. Click away to save
+4. Select Text Box tool
+5. Click on the whiteout text → **BUG: Creates new text box on top**
+
+### Expected Behavior
+
+When ANY text editing tool (Text Box, Select, etc.) is active:
+- Clicking on existing text (in whiteout or text box) should EDIT that text
+- Only clicking on empty space should create new elements
+
+### Acceptance Criteria
+
+- [ ] Text Box tool clicking on whiteout text opens whiteout text editor
+- [ ] Text Box tool clicking on existing text box edits that text box
+- [ ] Select tool clicking on whiteout text opens whiteout text editor
+- [ ] Select tool clicking on text box edits that text box
+
+---
+
+## ISSUE-020: Text Tools Blur Away After Multiple Edits
+
+**Status:** Open
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+
+### Description
+
+After performing multiple edits (creating/editing text boxes, whiteouts, etc.), clicking on text styling tools causes them to immediately blur/lose focus without applying. The tools become non-functional.
+
+### Steps to Reproduce
+
+1. Load PDF
+2. Create text box, type text
+3. Create whiteout, type text
+4. Edit the text box again
+5. Try to click Bold button → **Blurs away immediately, doesn't apply**
+6. Try to click Font Size +/- → **Blurs away, doesn't apply**
+
+### Expected Behavior
+
+- Text style tools should remain functional after any number of edits
+- Focus should be managed properly to prevent premature blur
+- Tools should apply their effect before any blur occurs
+
+### Root Cause (Investigation Needed)
+
+Likely a focus management issue where:
+1. Multiple focus handlers are fighting for `activeTextInput`
+2. Blur events are firing before click events complete
+3. State becomes inconsistent after multiple operations
+
+### Acceptance Criteria
+
+- [ ] Bold button works after 10+ sequential edits
+- [ ] Italic button works after 10+ sequential edits
+- [ ] Font size works after 10+ sequential edits
+- [ ] Font family works after 10+ sequential edits
+- [ ] Same behavior for text boxes, whiteout text, and existing PDF text
+
+---
+
+## ISSUE-021: Test Parity Between Preview and Downloaded PDF
+
+**Status:** Open
+**Severity:** High
+**Component:** pdfjoin-web / browser tests
+**Date Identified:** 2024-12-26
+
+### Description
+
+Current tests may verify UI preview state but not the actual downloaded PDF content. This allows bugs to hide where the preview looks correct but the PDF export is wrong.
+
+### Requirements
+
+Every text editing feature needs TWO assertions:
+1. **Preview assertion** - DOM shows correct content/styling
+2. **Export assertion** - PDF bytes contain correct content/styling
+
+### Features Needing Dual Verification
+
+| Feature | Preview Test | Export Test |
+|---------|--------------|-------------|
+| Text Box text content | ? | ? |
+| Text Box bold styling | ? | ? |
+| Text Box italic styling | ? | ? |
+| Text Box font size | ? | ? |
+| Whiteout text content | ✓ | ✓ |
+| Whiteout text bold | ? | ? |
+| Whiteout text italic | ? | ? |
+| Existing text replacement | ? | ? |
+| Existing text bold | ? | ? |
+| Existing text italic | ? | ? |
+
+### Acceptance Criteria
+
+- [ ] All text editing features have export verification tests
+- [ ] Export tests decode PDF and search for actual content
+- [ ] Style attributes are verified in PDF streams (font flags, size)
+
+---
+
+## ISSUE-022: Verify Download Applies Pending Changes for All Edit Types
+
+**Status:** Open
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-26
+
+### Description
+
+The `commitPendingEdits()` function commits unsaved edits before PDF export. Need to verify this covers ALL edit types:
+
+1. **Text boxes** - ✓ Implemented (ISSUE-013)
+2. **Whiteout text** - ✓ Implemented (ISSUE-009)
+3. **Existing text replacements** - ? Needs verification
+4. **Style changes** - ? Needs verification
+
+### Current Implementation
+
+```typescript
+function commitPendingEdits(): void {
+  // Text boxes - handled
+  const textBoxes = document.querySelectorAll<HTMLElement>('.text-box');
+
+  // Whiteout text - handled
+  const activeWhiteoutInput = document.querySelector<HTMLElement>('.whiteout-text-input');
+
+  // MISSING: Existing text replacements?
+  // MISSING: Pending style changes?
+}
+```
+
+### Acceptance Criteria
+
+- [ ] Audit `commitPendingEdits()` for all edit types
+- [ ] Add handling for any missing edit types
+- [ ] Write tests for each commit scenario
+
+---
+
+## ISSUE-023: Cross-Tab Document Persistence (ArrayBuffer Detachment)
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / app.ts, shared-state.ts
+**Date Identified:** 2024-12-27
+**Date Resolved:** 2024-12-27
+
+### Description
+
+Cross-tab document persistence (allowing users to upload a PDF once and switch between Split/Merge/Edit tabs without re-uploading) was broken due to ArrayBuffer detachment.
+
+When a user uploaded a PDF to the Split tab and then switched to the Edit or Merge tab, the shared PDF bytes were empty (length 0), causing the document to not load in the destination tab.
+
+### Root Cause
+
+**ArrayBuffer ownership transfer to WASM/PDF.js**
+
+When passing a `Uint8Array` to:
+- `splitSession.addDocument()` (WASM)
+- `window.pdfjsLib.getDocument()` (PDF.js)
+
+These APIs **transfer ownership** of the underlying ArrayBuffer, making the original bytes empty/detached. The code was storing a reference to the shared state BEFORE calling these APIs, but since they shared the same ArrayBuffer reference, the stored bytes became empty.
+
+### Resolution
+
+Create copies of the bytes using `bytes.slice()` BEFORE any operation that might detach the buffer:
+
+```typescript
+// In handleSplitFile()
+const bytes = new Uint8Array(await file.arrayBuffer());
+
+// IMPORTANT: Create copies BEFORE any operation that might detach the buffer
+const bytesForWasm = bytes.slice();      // Copy for WASM session
+const bytesForShared = bytes.slice();    // Copy for shared state (cross-tab)
+const bytesForThumbnails = bytes.slice(); // Copy for PDF.js thumbnail rendering
+
+const info: PdfInfo = splitSession.addDocument(file.name, bytesForWasm);
+setSharedPdf(bytesForShared, file.name, 'split');
+splitState.pdfBytes = bytesForThumbnails;
+```
+
+Same pattern applied to:
+- `handleSplitFile()` in app.ts
+- `loadPdfIntoSplit()` in app.ts
+- `loadPdfIntoMerge()` in app.ts
+- `handleMergeFilesArray()` in app.ts
+
+### Regression Tests
+
+- `test_tab_switching_split_to_edit_preserves_document`
+- `test_tab_switching_split_to_merge_adds_document`
+- `test_tab_switching_edit_to_split_preserves_document`
+- `test_tab_switching_merge_to_edit_preserves_document`
+- `test_tab_switching_merge_to_split_preserves_document`
+- `test_tab_switching_roundtrip_preserves_document`
+
+### Acceptance Criteria
+
+- [x] Upload PDF to Split → Switch to Edit → PDF loads automatically
+- [x] Upload PDF to Split → Switch to Merge → PDF added to merge list
+- [x] Upload PDF to Merge → Switch to Split → PDF loads automatically
+- [x] Upload PDF to Edit → Switch to Split → PDF loads automatically
+- [x] Roundtrip (Split → Edit → Merge → Split) preserves document
+
+---
+
+## ISSUE-024: FileList Iteration Bug in Merge File Handler
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / app.ts
+**Date Identified:** 2024-12-27
+**Date Resolved:** 2024-12-27
+
+### Description
+
+When selecting multiple files via the merge file input (Cmd+click or Shift+click), 0 files were being added to the merge list even though `files.length` showed the correct count.
+
+### Root Cause
+
+**FileList is a live object that gets cleared when `fileInput.value = ''` is executed**
+
+The change event handler had this sequence:
+```typescript
+fileInput.addEventListener('change', () => {
+  if (fileInput.files) {
+    handleMergeFiles(fileInput.files);  // async function
+    fileInput.value = '';  // Clears FileList IMMEDIATELY
+  }
+});
+```
+
+Since `handleMergeFiles` is async and starts with `await ensurePdfJsLoaded()`, the `fileInput.value = ''` executed BEFORE the files were actually processed, emptying the FileList.
+
+Additionally, `Array.from(fileList)` doesn't reliably work on synthetic FileList objects created via DataTransfer in browser tests.
+
+### Resolution
+
+1. **Copy File objects to array BEFORE clearing input**:
+```typescript
+fileInput.addEventListener('change', async () => {
+  if (fileInput.files && fileInput.files.length > 0) {
+    // IMPORTANT: Copy files BEFORE clearing input (FileList is live)
+    const filesArray: File[] = [];
+    for (let i = 0; i < fileInput.files.length; i++) {
+      filesArray.push(fileInput.files[i]);
+    }
+    fileInput.value = ''; // Now safe to clear
+    await handleMergeFilesArray(filesArray);
+  }
+});
+```
+
+2. **Created `handleMergeFilesArray(files: File[])` function** that takes an array instead of FileList
+
+3. **Added `handleMergeFiles(files: FileList)` wrapper** that copies to array first (for drop handlers)
+
+### Key Learning
+
+- `FileList` is a **live object** - clearing the input clears ALL references to it
+- `Array.from(fileList)` may return empty array for synthetic FileList objects
+- Always copy File objects individually with index-based access before async operations
+
+### Regression Tests
+
+- `test_pdfjoin_merge_browse_multiple_files` - Verifies multi-file selection works
+- `test_pdfjoin_merge_drag_drop_additional_files` - Verifies drag-drop after initial file works
+
+### Acceptance Criteria
+
+- [x] Selecting 3 files via browse button adds all 3 to merge list
+- [x] Drag-drop additional files after initial file works
+- [x] File names appear correctly in merge document list
+
+---
+
+## ISSUE-025: Partial Text Selection Styling Not Supported
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts
+**Date Identified:** 2024-12-27
+**Date Resolved:** 2024-12-27
+
+### Description
+
+Users cannot apply text styling (bold, italic, font size) to **partial text selections**. When a user types "HELLO WORLD", selects just "HELLO", and clicks Bold, the **entire text** gets bolded instead of just the selected portion.
+
+This is a fundamental feature gap affecting:
+1. **Text Boxes** - Cannot bold part of textbox content
+2. **Whiteout Text** - Cannot style part of whiteout text
+3. **Existing Text Replacement** - Cannot style part of replaced text
+
+### Steps to Reproduce
+
+1. Load a PDF
+2. Create a text box with TextBox tool (double-click)
+3. Type "HELLO WORLD"
+4. Use cursor to select just "HELLO" (first 5 characters)
+5. Click Bold button
+6. **Result:** Entire text "HELLO WORLD" becomes bold
+7. **Expected:** Only "HELLO" should be bold
+
+### Root Cause
+
+The current styling implementation in `edit.ts` applies styles to the **entire element** rather than the current selection:
+
+```typescript
+// Current (broken) implementation
+function toggleBold(): void {
+  if (!activeTextInput) return;
+  activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+  // This affects ALL text in the element, not just selected text
+}
+```
+
+The code should use `document.execCommand('bold')` or the Selection API with `surroundContents()` to wrap only the selected text in styling elements like `<b>` or `<span style="font-weight:bold">`.
+
+### Resolution Required
+
+Implement selection-based styling using one of:
+
+1. **`execCommand` approach** (deprecated but widely supported):
+```typescript
+function toggleBold(): void {
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed) {
+    document.execCommand('bold');  // Only affects selection
+  } else if (activeTextInput) {
+    // Fall back to whole-element styling if no selection
+    activeTextInput.style.fontWeight = ...;
+  }
+}
+```
+
+2. **Modern Selection API approach**:
+```typescript
+function toggleBold(): void {
+  const selection = window.getSelection();
+  if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+    const range = selection.getRangeAt(0);
+    const boldSpan = document.createElement('b');
+    range.surroundContents(boldSpan);
+  }
+}
+```
+
+### Additional Complexity
+
+After implementing partial styling, these need to handle:
+1. **PDF Export** - Parse HTML structure (`<b>`, `<i>`, `<span>`) and generate corresponding PDF text commands with different fonts
+2. **Toggle off** - Detect if selection is already bold/italic and remove formatting
+3. **Nested styles** - Handle `<b><i>text</i></b>` correctly
+4. **Font Size** - Need to handle `<span style="font-size:X">` for partial font size changes
+
+### Acceptance Criteria
+
+- [x] Selecting "HELLO" in "HELLO WORLD" and bolding only bolds "HELLO"
+- [x] innerHTML shows `<b>HELLO</b> WORLD` or equivalent
+- [x] Same behavior works for:
+  - [x] Text boxes
+  - [x] Whiteout text
+  - [ ] Existing text replacement (needs verification)
+- [ ] Partial styling persists to exported PDF (needs verification for mixed-style text)
+- [x] Multiple styles can be combined (bold + italic on same selection)
+- [x] Clicking on box edge (no selection) still applies to entire text
+
+### Test References
+
+- `test_textbox_partial_selection_bold` - Tests textbox partial selection (PASSES)
+- `test_whiteout_partial_selection_bold` - Tests whiteout partial selection (PASSES)
+- `test_textbox_multiple_styles_at_once` - Tests applying multiple whole-text styles (PASSES)
+- `test_textbox_styles_persist_to_pdf` - Tests export persistence (PASSES)
+
+### Resolution
+
+Modified `toggleBold()` and `toggleItalic()` in `edit.ts` to use `document.execCommand()` for selection-based styling:
+
+```typescript
+function toggleBold(): void {
+  if (!activeTextInput) return;
+
+  // ISSUE-025 FIX: Check for text selection within the active input
+  const selection = window.getSelection();
+  const hasSelection =
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.isCollapsed &&
+    activeTextInput.contains(selection.anchorNode);
+
+  if (hasSelection) {
+    // Apply bold to selected text only using execCommand
+    // This wraps selected text in <b> or <strong> tags
+    document.execCommand('bold', false);
+    activeTextInput.focus();
+  } else {
+    // No selection - apply to entire element (fallback behavior)
+    // ... original whole-element styling
+  }
+}
+```
+
+Same pattern applied to `toggleItalic()`.
+
+**Note:** `document.execCommand` is deprecated but still widely supported and is the simplest approach for this use case. The modern Selection API approach with `surroundContents()` has edge cases that make it more complex.
+
+### Verification
+
+All 6 styling tests pass:
+```
+test_textbox_partial_selection_bold ... ok
+test_whiteout_partial_selection_bold ... ok
+test_textbox_styling_bold_italic_fontsize ... ok
+test_whiteout_text_styling_bold_italic_fontsize ... ok
+test_textbox_multiple_styles_at_once ... ok
+test_textbox_styles_persist_to_pdf ... ok
+```
+
+---
+
+## ISSUE-025b: Mixed Partial Styling Not Exported to PDF
+
+**Status:** Resolved
+**Severity:** Critical
+**Component:** pdfjoin-web / edit.ts, pdfjoin-core
+**Date Identified:** 2024-12-27
+**Date Resolved:** 2024-12-27
+
+### Description
+
+While ISSUE-025 fixed partial text selection styling in the **preview** (e.g., selecting "BOLD" and bolding it, then selecting "ITAL" and italicizing it produces `<b>BOLD</b><i>ITAL</i>` in the DOM), this mixed styling was **NOT persisting** to the exported PDF.
+
+The exported PDF only contained a single font style because `commitTextBox()` was reading `textContent.textContent` (plain text) and applying only the computed style of the whole element.
+
+### Resolution
+
+#### New API: `AddStyledText` Operation
+
+Added a new `AddStyledText` operation that accepts an array of styled text segments, each with its own bold/italic flags:
+
+**Rust types (operations.rs):**
+```rust
+pub struct StyledTextSegment {
+    pub text: String,
+    pub is_bold: bool,
+    pub is_italic: bool,
+}
+
+pub enum EditOperation {
+    // ... existing variants ...
+    AddStyledText {
+        id: OpId,
+        page: u32,
+        rect: PdfRect,
+        segments: Vec<StyledTextSegment>,
+        style: TextStyle, // Base style (font_size, color)
+    },
+}
+```
+
+**PDF Generation (apply_operations.rs):**
+The new operation generates a PDF content stream that switches fonts within a single text block:
+```
+BT
+/F1 12 Tf  (Helvetica-Bold)
+(BOLD) Tj
+/F3 12 Tf  (Helvetica-Oblique)
+(ITAL) Tj
+ET
+```
+
+**TypeScript Integration:**
+- Added `parseStyledSegments(element)` function to extract styled segments from innerHTML
+- Modified `commitTextBox()` to detect mixed styling and use `addStyledText` when needed
+- Modified `saveWhiteoutText()` similarly
+
+### Files Changed
+
+1. `crates/pdfjoin-core/src/operations.rs` - Added `StyledTextSegment` struct and `AddStyledText` operation
+2. `crates/pdfjoin-core/src/apply_operations.rs` - Implemented PDF generation for styled text
+3. `apps/pdfjoin-web/wasm/src/edit_session.rs` - Added `addStyledText()` WASM binding
+4. `apps/pdfjoin-web/src/ts/types/wasm-bindings.ts` - Added TypeScript interface
+5. `apps/pdfjoin-web/src/ts/edit.ts` - Added `parseStyledSegments()` and modified commit functions
+
+### Test Results
+
+All styling tests now pass:
+```
+test_mixed_styling_both_fonts_in_pdf_export ... ok
+test_textbox_mixed_partial_styling_export ... ok
+test_textbox_mixed_partial_styling_preview ... ok
+test_textbox_styling_bold_italic_fontsize ... ok
+test_whiteout_mixed_partial_styling_preview ... ok
+test_whiteout_text_styling_bold_italic_fontsize ... ok
+test_textbox_partial_selection_bold ... ok
+test_whiteout_partial_selection_bold ... ok
+```
+
+### Acceptance Criteria
+
+- [x] Export PDF contains BOTH bold AND italic font references when mixed styling used
+- [x] "BOLD" text appears bold in exported PDF
+- [x] "ITAL" text appears italic in exported PDF
+- [x] Works for textbox and whiteout text
+- [x] Handles nested styles (bold-italic)
+- [x] Handles 3+ different style segments
 

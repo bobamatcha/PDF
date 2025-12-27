@@ -1,7 +1,7 @@
 //! Apply operations to PDF documents
 
 use crate::error::PdfJoinError;
-use crate::operations::{EditOperation, OperationLog, PdfRect, TextStyle};
+use crate::operations::{EditOperation, OperationLog, PdfRect, StyledTextSegment, TextStyle};
 use lopdf::{Dictionary, Document, Object, ObjectId};
 
 /// Calculate approximate text width in points for a given string
@@ -139,6 +139,45 @@ fn flatten_operation_to_content(
             // Escape text for PDF
             let escaped = escape_pdf_string(text);
             writeln!(content, "({}) Tj", escaped).unwrap();
+            writeln!(content, "ET").unwrap();
+            // Restore graphics state
+            writeln!(content, "Q").unwrap();
+        }
+        EditOperation::AddStyledText {
+            rect,
+            segments,
+            style,
+            ..
+        } => {
+            let (r, g, b) = parse_hex_color(&style.color);
+
+            // Save graphics state
+            writeln!(content, "q").unwrap();
+            // Set color
+            writeln!(content, "{} {} {} rg", r, g, b).unwrap();
+            writeln!(content, "BT").unwrap();
+            // Position text
+            writeln!(content, "{} {} Td", rect.x, rect.y).unwrap();
+
+            // Output each segment with its own font
+            for segment in segments {
+                // Create a temporary style for this segment with the segment's bold/italic flags
+                let segment_style = TextStyle {
+                    font_size: style.font_size,
+                    color: style.color.clone(),
+                    font_name: style.font_name.clone(),
+                    is_bold: segment.is_bold,
+                    is_italic: segment.is_italic,
+                };
+                let font_name = segment_style.pdf_font_name();
+
+                // Set font for this segment
+                writeln!(content, "/{} {} Tf", font_name, style.font_size).unwrap();
+                // Output the segment text
+                let escaped = escape_pdf_string(&segment.text);
+                writeln!(content, "({}) Tj", escaped).unwrap();
+            }
+
             writeln!(content, "ET").unwrap();
             // Restore graphics state
             writeln!(content, "Q").unwrap();
@@ -406,6 +445,12 @@ fn apply_single_operation(
         EditOperation::AddText {
             rect, text, style, ..
         } => add_text_annotation(doc, page_id, rect, text, style),
+        EditOperation::AddStyledText {
+            rect,
+            segments,
+            style,
+            ..
+        } => add_styled_text_annotation(doc, page_id, rect, segments, style),
         EditOperation::AddHighlight {
             rect,
             color,
@@ -589,6 +634,206 @@ fn create_text_appearance_content(
          ET",
         font_size, r, g, b, x_offset, y_offset, escaped_text
     )
+}
+
+/// Create PDF content stream for styled text appearance with mixed fonts
+fn create_styled_text_appearance_content(
+    segments: &[StyledTextSegment],
+    font_size: f64,
+    r: f32,
+    g: f32,
+    b: f32,
+    _base_font_name: &str,
+    box_width: f64,
+    box_height: f64,
+    _style: &TextStyle,
+) -> String {
+    use std::fmt::Write;
+    let mut content = String::new();
+
+    // Calculate total text width for centering
+    let total_chars: usize = segments.iter().map(|s| s.text.chars().count()).sum();
+    let avg_char_width = font_size * 0.5;
+    let text_width = total_chars as f64 * avg_char_width;
+
+    // Center horizontally
+    let x_offset = ((box_width - text_width) / 2.0).max(2.0);
+    // Center vertically
+    let y_offset = ((box_height - font_size) / 2.0).max(2.0);
+
+    writeln!(content, "BT").unwrap();
+
+    // ISSUE-009 FIX: Font must be set FIRST, before color (rg) and position (Td).
+    // This matches the working create_text_appearance_content() operator order.
+    // Without this, macOS Preview and other strict PDF viewers won't render the text.
+
+    // Set initial font for first segment (MUST come before rg and Td)
+    let first_font = if let Some(first) = segments.first() {
+        match (first.is_bold, first.is_italic) {
+            (false, false) => "F1",
+            (true, false) => "F2",
+            (false, true) => "F3",
+            (true, true) => "F4",
+        }
+    } else {
+        "F1"
+    };
+    writeln!(content, "/{} {} Tf", first_font, font_size).unwrap();
+    writeln!(content, "{} {} {} rg", r, g, b).unwrap();
+    writeln!(content, "{} {} Td", x_offset, y_offset).unwrap();
+
+    // Output each segment, switching font as needed
+    for (i, segment) in segments.iter().enumerate() {
+        let font_ref = match (segment.is_bold, segment.is_italic) {
+            (false, false) => "F1",
+            (true, false) => "F2",
+            (false, true) => "F3",
+            (true, true) => "F4",
+        };
+
+        // Only output font change if different from current (skip first since already set)
+        if i > 0 {
+            writeln!(content, "/{} {} Tf", font_ref, font_size).unwrap();
+        }
+        let escaped = escape_pdf_string(&segment.text);
+        writeln!(content, "({}) Tj", escaped).unwrap();
+    }
+
+    writeln!(content, "ET").unwrap();
+    content
+}
+
+fn add_styled_text_annotation(
+    doc: &mut Document,
+    page_id: ObjectId,
+    rect: &PdfRect,
+    segments: &[StyledTextSegment],
+    style: &TextStyle,
+) -> Result<(), PdfJoinError> {
+    if segments.is_empty() {
+        return Ok(());
+    }
+
+    // Parse color from hex to RGB components
+    let (r, g, b) = parse_hex_color(&style.color);
+
+    // Calculate total text for sizing
+    let total_text: String = segments.iter().map(|s| s.text.as_str()).collect();
+    let font_name = style.pdf_font_name();
+
+    // Calculate minimum required width
+    let min_text_width = calculate_text_width(&total_text, style.font_size, font_name);
+    let actual_width = rect.width.max(min_text_width);
+
+    let x1 = rect.x as f32;
+    let y1 = rect.y as f32;
+    let x2 = (rect.x + actual_width) as f32;
+    let y2 = (rect.y + rect.height) as f32;
+
+    let box_width = (x2 - x1) as f64;
+    let box_height = (y2 - y1) as f64;
+
+    // Create appearance stream content with styled segments
+    let ap_content = create_styled_text_appearance_content(
+        segments,
+        style.font_size,
+        r,
+        g,
+        b,
+        font_name,
+        box_width,
+        box_height,
+        style,
+    );
+
+    // Create the appearance stream (Form XObject)
+    let mut ap_stream_dict = Dictionary::new();
+    ap_stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    ap_stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    ap_stream_dict.set("FormType", Object::Integer(1));
+    ap_stream_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(x2 - x1),
+            Object::Real(y2 - y1),
+        ]),
+    );
+
+    // Resources for the appearance stream - all font variants
+    let mut font_dict = Dictionary::new();
+
+    // F1 = Regular
+    let mut f1 = Dictionary::new();
+    f1.set("Type", Object::Name(b"Font".to_vec()));
+    f1.set("Subtype", Object::Name(b"Type1".to_vec()));
+    f1.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    font_dict.set("F1", Object::Dictionary(f1));
+
+    // F2 = Bold
+    let mut f2 = Dictionary::new();
+    f2.set("Type", Object::Name(b"Font".to_vec()));
+    f2.set("Subtype", Object::Name(b"Type1".to_vec()));
+    f2.set("BaseFont", Object::Name(b"Helvetica-Bold".to_vec()));
+    font_dict.set("F2", Object::Dictionary(f2));
+
+    // F3 = Italic/Oblique
+    let mut f3 = Dictionary::new();
+    f3.set("Type", Object::Name(b"Font".to_vec()));
+    f3.set("Subtype", Object::Name(b"Type1".to_vec()));
+    f3.set("BaseFont", Object::Name(b"Helvetica-Oblique".to_vec()));
+    font_dict.set("F3", Object::Dictionary(f3));
+
+    // F4 = Bold+Italic
+    let mut f4 = Dictionary::new();
+    f4.set("Type", Object::Name(b"Font".to_vec()));
+    f4.set("Subtype", Object::Name(b"Type1".to_vec()));
+    f4.set("BaseFont", Object::Name(b"Helvetica-BoldOblique".to_vec()));
+    font_dict.set("F4", Object::Dictionary(f4));
+
+    let mut resources = Dictionary::new();
+    resources.set("Font", Object::Dictionary(font_dict));
+    ap_stream_dict.set("Resources", Object::Dictionary(resources));
+
+    // Create the stream object
+    let ap_stream = lopdf::Stream::new(ap_stream_dict, ap_content.into_bytes());
+    let ap_stream_id = doc.add_object(Object::Stream(ap_stream));
+
+    // Create AP dictionary
+    let mut ap_dict = Dictionary::new();
+    ap_dict.set("N", Object::Reference(ap_stream_id));
+
+    // Create the annotation
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"FreeText".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]),
+    );
+    annot.set(
+        "Contents",
+        Object::String(total_text.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+    );
+
+    // Default appearance (fallback)
+    let da = format!("/F1 {} Tf {} {} {} rg", style.font_size, r, g, b);
+    annot.set(
+        "DA",
+        Object::String(da.into_bytes(), lopdf::StringFormat::Literal),
+    );
+
+    // Add the appearance stream
+    annot.set("AP", Object::Dictionary(ap_dict));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot));
+    add_annotation_to_page(doc, page_id, annot_id)
 }
 
 /// Escape special characters for PDF string literals
@@ -2743,6 +2988,7 @@ mod tests {
             let op_type = match op {
                 EditOperation::AddWhiteRect { .. } => "AddWhiteRect",
                 EditOperation::AddText { .. } => "AddText",
+                EditOperation::AddStyledText { .. } => "AddStyledText",
                 EditOperation::AddHighlight { .. } => "AddHighlight",
                 EditOperation::AddCheckbox { .. } => "AddCheckbox",
                 EditOperation::AddUnderline { .. } => "AddUnderline",
@@ -2829,6 +3075,107 @@ mod tests {
         eprintln!("\nSaved to /tmp/florida_lease_EXACT_FLOW_OUTPUT.pdf - OPEN THIS AND CHECK IF TEXT IS VISIBLE!");
     }
 
+    /// TEST FOR ISSUE-025b: AddStyledText must produce visible text in PDF
+    /// This is a CRITICAL test - the bug is that styled text shows in preview but NOT in downloaded PDF
+    #[test]
+    fn test_add_styled_text_produces_visible_text_in_pdf() {
+        use crate::operations::StyledTextSegment;
+
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Add styled text with a simple segment (no actual mixed styling)
+        log.add(EditOperation::AddStyledText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            segments: vec![StyledTextSegment {
+                text: "STYLED_TEXT_TEST_VISIBLE".to_string(),
+                is_bold: false,
+                is_italic: false,
+            }],
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        // The text MUST appear in the PDF content
+        assert!(
+            result_str.contains("STYLED_TEXT_TEST_VISIBLE"),
+            "CRITICAL BUG: AddStyledText does not produce visible text in PDF! \
+             The text 'STYLED_TEXT_TEST_VISIBLE' should be in the PDF but is missing. \
+             First 2000 chars of PDF: {}",
+            &result_str[..std::cmp::min(2000, result_str.len())]
+        );
+
+        // Verify the appearance stream (AP) is present - this is what actually renders the text
+        assert!(
+            result_str.contains("/AP"),
+            "CRITICAL BUG: AddStyledText annotation is missing appearance stream (AP)! \
+             Without AP, the text won't render in most PDF viewers."
+        );
+
+        // Save to file for manual inspection
+        std::fs::write("/tmp/styled_text_test.pdf", &result).expect("Failed to write test PDF");
+        eprintln!("Saved styled text test PDF to /tmp/styled_text_test.pdf - OPEN AND VERIFY TEXT IS VISIBLE!");
+    }
+
+    /// TEST: AddStyledText with actual mixed styling (bold + regular)
+    #[test]
+    fn test_add_styled_text_mixed_bold_regular() {
+        use crate::operations::StyledTextSegment;
+
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        log.add(EditOperation::AddStyledText {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 400.0,
+                width: 300.0,
+                height: 50.0,
+            },
+            segments: vec![
+                StyledTextSegment {
+                    text: "BOLD_PART".to_string(),
+                    is_bold: true,
+                    is_italic: false,
+                },
+                StyledTextSegment {
+                    text: "REGULAR_PART".to_string(),
+                    is_bold: false,
+                    is_italic: false,
+                },
+            ],
+            style: TextStyle::default(),
+        });
+
+        let result = apply_operations(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(
+            result_str.contains("BOLD_PART"),
+            "Mixed styled text missing BOLD_PART"
+        );
+        assert!(
+            result_str.contains("REGULAR_PART"),
+            "Mixed styled text missing REGULAR_PART"
+        );
+
+        // Save for manual inspection
+        std::fs::write("/tmp/styled_text_mixed_test.pdf", &result)
+            .expect("Failed to write test PDF");
+        eprintln!("Saved mixed styled text test PDF to /tmp/styled_text_mixed_test.pdf");
+    }
+
     /// Same test but for flattened export
     #[test]
     fn test_whiteout_with_text_both_persist_to_flattened_export() {
@@ -2872,5 +3219,185 @@ mod tests {
              This is the user's reported bug. PDF content snippet: {}",
             &result_str[..std::cmp::min(1000, result_str.len())]
         );
+    }
+
+    /// ISSUE-009: Whiteout with STYLED text (using AddStyledText path) must persist to PDF
+    /// This is the exact bug scenario: user creates whiteout, types styled text, downloads
+    #[test]
+    fn test_whiteout_with_styled_text_persists_to_export() {
+        use crate::operations::StyledTextSegment;
+
+        let pdf = create_test_pdf();
+        let mut log = OperationLog::new();
+
+        // Add whiteout rectangle (covering existing text)
+        log.add(EditOperation::AddWhiteRect {
+            id: 0,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            color: "#FFFFFF".to_string(),
+        });
+
+        // Add STYLED text on top of the whiteout (this is the addStyledText path)
+        log.add(EditOperation::AddStyledText {
+            id: 1,
+            page: 1,
+            rect: PdfRect {
+                x: 100.0,
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+            },
+            segments: vec![StyledTextSegment {
+                text: "WHITEOUT_STYLED_TEXT_TEST".to_string(),
+                is_bold: false,
+                is_italic: false,
+            }],
+            style: TextStyle::default(),
+        });
+
+        // Test regular export (annotations)
+        let result = apply_operations(&pdf, &log).unwrap();
+        let result_str = String::from_utf8_lossy(&result);
+
+        assert!(
+            result_str.contains("WHITEOUT_STYLED_TEXT_TEST"),
+            "ISSUE-009 REGRESSION: AddStyledText on whiteout does NOT produce text in PDF! \
+             The user creates whiteout, types text, and downloads - but text is missing. \
+             PDF content: {}",
+            &result_str[..std::cmp::min(2000, result_str.len())]
+        );
+
+        // Also test flattened export
+        let flat_result = apply_operations_flattened(&pdf, &log).unwrap();
+        let flat_str = String::from_utf8_lossy(&flat_result);
+
+        assert!(
+            flat_str.contains("WHITEOUT_STYLED_TEXT_TEST"),
+            "ISSUE-009 REGRESSION: AddStyledText on whiteout does NOT persist to flattened PDF! \
+             Flattened export is missing the text."
+        );
+
+        // Save for manual visual inspection
+        std::fs::write("/tmp/whiteout_styled_text_test.pdf", &result)
+            .expect("Failed to write test PDF");
+        eprintln!("Saved whiteout+styled text test PDF to /tmp/whiteout_styled_text_test.pdf");
+    }
+
+    /// ISSUE-009 ROOT CAUSE: Styled text appearance stream has WRONG operator order.
+    ///
+    /// PDF content streams require font to be set BEFORE text positioning for proper rendering.
+    /// The working `create_text_appearance_content` uses:
+    ///   BT -> /F1 Tf -> rg -> Td -> Tj -> ET  (font FIRST)
+    ///
+    /// The broken `create_styled_text_appearance_content` uses:
+    ///   BT -> rg -> Td -> /F1 Tf -> Tj -> ET  (font AFTER position - WRONG!)
+    ///
+    /// This causes macOS Preview (and other strict PDF viewers) to not render the text,
+    /// even though the text bytes exist in the PDF.
+    ///
+    /// FIX: In `create_styled_text_appearance_content()`, move the font operator
+    /// BEFORE the color (rg) and position (Td) operators, matching the working function.
+    #[test]
+    fn test_styled_text_appearance_stream_operator_order() {
+        // Test the content stream directly to verify operator order
+        use crate::operations::StyledTextSegment;
+
+        let segments = vec![StyledTextSegment {
+            text: "TEST".to_string(),
+            is_bold: false,
+            is_italic: false,
+        }];
+
+        let content = create_styled_text_appearance_content(
+            &segments,
+            12.0,        // font_size
+            0.0,         // r
+            0.0,         // g
+            0.0,         // b
+            "Helvetica", // base_font_name
+            100.0,       // box_width
+            20.0,        // box_height
+            &TextStyle::default(),
+        );
+
+        // Find positions of key operators
+        let tf_pos = content.find(" Tf");
+        let rg_pos = content.find(" rg");
+        let td_pos = content.find(" Td");
+
+        assert!(
+            tf_pos.is_some(),
+            "Content stream missing font operator (Tf). Content: {}",
+            content
+        );
+        assert!(
+            rg_pos.is_some(),
+            "Content stream missing color operator (rg). Content: {}",
+            content
+        );
+        assert!(
+            td_pos.is_some(),
+            "Content stream missing position operator (Td). Content: {}",
+            content
+        );
+
+        let tf_pos = tf_pos.unwrap();
+        let rg_pos = rg_pos.unwrap();
+        let td_pos = td_pos.unwrap();
+
+        // CRITICAL: Font (Tf) must come BEFORE color (rg) and position (Td)
+        // This matches the working create_text_appearance_content function.
+        //
+        // If this test fails, the fix is in create_styled_text_appearance_content():
+        // Move the font Tf line BEFORE the rg and Td lines.
+        assert!(
+            tf_pos < rg_pos,
+            "ISSUE-009 BUG: Font operator (Tf) at pos {} comes AFTER color operator (rg) at pos {}!\n\
+             \n\
+             FIX: In create_styled_text_appearance_content(), change the operator order from:\n\
+             \n\
+             Current (BROKEN - doesn't render in macOS Preview):\n\
+             ```\n\
+             BT\n\
+             {{r}} {{g}} {{b}} rg     <- color first\n\
+             {{x}} {{y}} Td           <- position second\n\
+             /F1 {{size}} Tf          <- font third (TOO LATE!)\n\
+             (text) Tj\n\
+             ET\n\
+             ```\n\
+             \n\
+             To (WORKING - matches create_text_appearance_content):\n\
+             ```\n\
+             BT\n\
+             /F1 {{size}} Tf          <- font FIRST\n\
+             {{r}} {{g}} {{b}} rg     <- color second\n\
+             {{x}} {{y}} Td           <- position third\n\
+             (text) Tj\n\
+             ET\n\
+             ```\n\
+             \n\
+             Actual content stream:\n{}",
+            tf_pos, rg_pos, content
+        );
+
+        assert!(
+            tf_pos < td_pos,
+            "ISSUE-009 BUG: Font operator (Tf) at pos {} comes AFTER position operator (Td) at pos {}!\n\
+             See fix instructions above.\n\
+             Actual content stream:\n{}",
+            tf_pos, td_pos, content
+        );
+
+        eprintln!(
+            "Content stream operator order is correct: Tf({}) < rg({}) < Td({})",
+            tf_pos, rg_pos, td_pos
+        );
+        eprintln!("Content stream:\n{}", content);
     }
 }

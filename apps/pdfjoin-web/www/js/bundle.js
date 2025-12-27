@@ -234,10 +234,18 @@ function showEditConfirmDialog(options) {
     if (icon) icon.innerHTML = options.icon || "&#9888;";
     confirmBtn.textContent = options.confirmText || "Replace";
     cancelBtn.textContent = options.cancelText || "Cancel";
+    if (options.modalType) {
+      overlay.setAttribute("data-modal", options.modalType);
+      overlay.classList.add(`${options.modalType}-confirm`);
+    }
     overlay.classList.add("show");
     confirmBtn.focus();
     const cleanup = () => {
       overlay.classList.remove("show");
+      if (options.modalType) {
+        overlay.removeAttribute("data-modal");
+        overlay.classList.remove(`${options.modalType}-confirm`);
+      }
       confirmBtn.removeEventListener("click", onConfirm);
       cancelBtn.removeEventListener("click", onCancel);
       overlay.removeEventListener("click", onOverlayClick);
@@ -487,8 +495,10 @@ async function handleEditFile(file) {
       message,
       confirmText: "Replace",
       cancelText: "Keep Current",
-      icon: hasUnsavedChanges ? "&#9888;" : "&#128196;"
+      icon: hasUnsavedChanges ? "&#9888;" : "&#128196;",
       // Warning icon for unsaved, doc icon otherwise
+      modalType: "file-replace"
+      // For elderly UX testing - ISSUE-016
     });
     if (!confirmed) {
       return;
@@ -1093,6 +1103,55 @@ function deleteSelectedTextBox() {
     deleteTextBox(selectedTextBox);
   }
 }
+function parseStyledSegments(element) {
+  const innerHTML = element.innerHTML;
+  const hasStyledTags = /<(b|strong|i|em)\b/i.test(innerHTML);
+  if (!hasStyledTags) {
+    return null;
+  }
+  const segments = [];
+  function walkNode(node, isBold, isItalic) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || "";
+      if (text) {
+        segments.push({ text, is_bold: isBold, is_italic: isItalic });
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node;
+      const tagName = el.tagName.toLowerCase();
+      const newBold = isBold || tagName === "b" || tagName === "strong";
+      const newItalic = isItalic || tagName === "i" || tagName === "em";
+      for (const child of Array.from(el.childNodes)) {
+        walkNode(child, newBold, newItalic);
+      }
+    }
+  }
+  for (const child of Array.from(element.childNodes)) {
+    walkNode(child, false, false);
+  }
+  const merged = [];
+  for (const seg of segments) {
+    if (merged.length > 0) {
+      const last = merged[merged.length - 1];
+      if (last.is_bold === seg.is_bold && last.is_italic === seg.is_italic) {
+        last.text += seg.text;
+        continue;
+      }
+    }
+    merged.push({ ...seg });
+  }
+  if (merged.length <= 1) {
+    return null;
+  }
+  const firstStyle = { is_bold: merged[0].is_bold, is_italic: merged[0].is_italic };
+  const hasMixedStyles = merged.some(
+    (s) => s.is_bold !== firstStyle.is_bold || s.is_italic !== firstStyle.is_italic
+  );
+  if (!hasMixedStyles) {
+    return null;
+  }
+  return merged;
+}
 function commitTextBox(box) {
   if (!editSession) return;
   const textContent = box.querySelector(".text-content");
@@ -1114,26 +1173,44 @@ function commitTextBox(box) {
   if (existingOpId !== null) {
     editSession.removeOperation(existingOpId);
   }
-  if (text) {
-    const style = textContent ? window.getComputedStyle(textContent) : null;
-    const fontSize = style ? parseFloat(style.fontSize) : 12;
-    const isBold = style?.fontWeight === "bold" || parseInt(style?.fontWeight || "400") >= 700;
-    const isItalic = style?.fontStyle === "italic";
+  if (text && textContent) {
+    const style = window.getComputedStyle(textContent);
+    const fontSize = parseFloat(style.fontSize) || 12;
+    const styledSegments = parseStyledSegments(textContent);
     editSession.beginAction("textbox");
-    const opId = editSession.addText(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      text,
-      fontSize,
-      "#000000",
-      null,
-      // font name
-      isItalic,
-      isBold
-    );
+    let opId;
+    if (styledSegments) {
+      const segmentsJson = JSON.stringify(styledSegments);
+      opId = editSession.addStyledText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        segmentsJson,
+        fontSize,
+        "#000000",
+        null
+        // font name
+      );
+    } else {
+      const isBold = style.fontWeight === "bold" || parseInt(style.fontWeight || "400") >= 700;
+      const isItalic = style.fontStyle === "italic";
+      opId = editSession.addText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        text,
+        fontSize,
+        "#000000",
+        null,
+        // font name
+        isItalic,
+        isBold
+      );
+    }
     editSession.commitAction();
     setOpId(box, opId);
   }
@@ -1641,25 +1718,32 @@ function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeig
   const pdfWidth = Math.abs(pdfX2 - pdfX1);
   const pdfHeight = Math.abs(pdfY2 - pdfY1);
   editSession.beginAction("whiteout");
-  console.log("[saveWhiteoutText] Starting - text:", text, "page:", pageNum);
-  console.log("[saveWhiteoutText] PDF coords:", { pdfX, pdfY, pdfWidth, pdfHeight });
-  console.log("[saveWhiteoutText] DOM coords:", { domX, domY, domWidth, domHeight });
-  console.log("[saveWhiteoutText] Original dims:", { originalWidth, originalHeight });
   if (originalWidth && originalHeight && (domWidth !== originalWidth || domHeight !== originalHeight)) {
     const existingOpId = getOpId(whiteRect);
-    console.log("[saveWhiteoutText] Whiteout resized, old opId:", existingOpId);
     if (existingOpId !== null) {
       editSession.removeOperation(existingOpId);
       const newWhiteOpId = editSession.addWhiteRect(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, "#FFFFFF");
       setOpId(whiteRect, newWhiteOpId);
-      console.log("[saveWhiteoutText] Added new whiteout with opId:", newWhiteOpId);
     }
-  } else {
-    console.log("[saveWhiteoutText] Whiteout NOT resized");
   }
-  const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
-  console.log("[saveWhiteoutText] Added text with opId:", opId);
-  console.log("[saveWhiteoutText] Total operations now:", editSession.getOperationCount());
+  const styledSegments = parseStyledSegments(input);
+  let opId;
+  if (styledSegments) {
+    const segmentsJson = JSON.stringify(styledSegments);
+    opId = editSession.addStyledText(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      segmentsJson,
+      fontSize,
+      "#000000",
+      fontFamily
+    );
+  } else {
+    opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
+  }
   editSession.commitAction();
   const textSpan = document.createElement("span");
   textSpan.className = "whiteout-text-content";
@@ -1960,21 +2044,35 @@ function updateStyleButtons() {
 }
 function toggleBold() {
   if (!activeTextInput) return;
-  const currentBold = activeTextInput.dataset.isBold === "true";
-  const newBold = !currentBold;
-  activeTextInput.dataset.isBold = String(newBold);
-  activeTextInput.style.fontWeight = newBold ? "bold" : "normal";
-  updateStyleButtons();
-  activeTextInput.focus();
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && activeTextInput.contains(selection.anchorNode);
+  if (hasSelection) {
+    document.execCommand("bold", false);
+    activeTextInput.focus();
+  } else {
+    const currentBold = activeTextInput.dataset.isBold === "true";
+    const newBold = !currentBold;
+    activeTextInput.dataset.isBold = String(newBold);
+    activeTextInput.style.fontWeight = newBold ? "bold" : "normal";
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 function toggleItalic() {
   if (!activeTextInput) return;
-  const currentItalic = activeTextInput.dataset.isItalic === "true";
-  const newItalic = !currentItalic;
-  activeTextInput.dataset.isItalic = String(newItalic);
-  activeTextInput.style.fontStyle = newItalic ? "italic" : "normal";
-  updateStyleButtons();
-  activeTextInput.focus();
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && activeTextInput.contains(selection.anchorNode);
+  if (hasSelection) {
+    document.execCommand("italic", false);
+    activeTextInput.focus();
+  } else {
+    const currentItalic = activeTextInput.dataset.isItalic === "true";
+    const newItalic = !currentItalic;
+    activeTextInput.dataset.isItalic = String(newItalic);
+    activeTextInput.style.fontStyle = newItalic ? "italic" : "normal";
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 function increaseFontSize() {
   if (!activeTextInput) return;
@@ -2347,6 +2445,11 @@ function showError(containerId, message) {
 }
 
 // src/ts/app.ts
+window.__sharedState__ = {
+  hasSharedPdf,
+  getSharedPdf,
+  setSharedPdf
+};
 var LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024;
 var VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024;
 var splitState = {
@@ -2462,15 +2565,16 @@ function init() {
   setupSplitView();
   setupMergeView();
   setupEditView();
+  window.pdfjoinInitialized = true;
   console.log("PDFJoin initialized (WASM-first architecture)");
 }
 function setupToolPicker() {
   const toolCards = document.querySelectorAll(".tool-card");
   toolCards.forEach((card) => {
-    card.addEventListener("click", () => {
+    card.addEventListener("click", async () => {
       const tool = card.dataset.tool;
       if (tool) {
-        navigateToTool(tool);
+        await navigateToTool(tool);
       }
     });
   });
@@ -2489,7 +2593,7 @@ function setupBackToToolsButtons() {
     });
   });
 }
-function navigateToTool(toolName) {
+async function navigateToTool(toolName) {
   const toolPicker = document.getElementById("tool-picker");
   if (toolPicker) toolPicker.classList.add("hidden");
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
@@ -2505,6 +2609,28 @@ function navigateToTool(toolName) {
     edit: "Edit PDF"
   };
   announceToScreenReader(`Now viewing ${toolNames[toolName] || toolName} tool`);
+  if (hasSharedPdf()) {
+    const shared = getSharedPdf();
+    if (shared.bytes && shared.filename) {
+      if (shared.source !== toolName) {
+        if (toolName === "edit") {
+          const editEditor = document.getElementById("edit-editor");
+          const editAlreadyLoaded = editEditor && !editEditor.classList.contains("hidden");
+          if (!editAlreadyLoaded) {
+            await loadPdfIntoEdit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === "split") {
+          const splitEditor = document.getElementById("split-editor");
+          const splitAlreadyLoaded = splitEditor && !splitEditor.classList.contains("hidden");
+          if (!splitAlreadyLoaded) {
+            await loadPdfIntoSplit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === "merge") {
+          await loadPdfIntoMerge(shared.bytes, shared.filename);
+        }
+      }
+    }
+  }
 }
 function navigateToToolPicker() {
   document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
@@ -2610,7 +2736,7 @@ function setupTabs() {
       const toolPicker = document.getElementById("tool-picker");
       const isOnToolPicker = toolPicker && !toolPicker.classList.contains("hidden");
       if (isOnToolPicker && tabName) {
-        navigateToTool(tabName);
+        await navigateToTool(tabName);
         return;
       }
       if (currentTab === "edit" && tabName !== "edit") {
@@ -2624,7 +2750,7 @@ function setupTabs() {
             if (tabName === "split") {
               await loadPdfIntoSplit(shared.bytes, shared.filename);
             } else if (tabName === "merge") {
-              loadPdfIntoMerge(shared.bytes, shared.filename);
+              await loadPdfIntoMerge(shared.bytes, shared.filename);
             }
           }
         }
@@ -2633,7 +2759,7 @@ function setupTabs() {
         if (hasSharedPdf()) {
           const shared = getSharedPdf();
           if (shared.bytes && shared.filename) {
-            loadPdfIntoMerge(shared.bytes, shared.filename);
+            await loadPdfIntoMerge(shared.bytes, shared.filename);
           }
         }
       }
@@ -2650,7 +2776,7 @@ function setupTabs() {
         }
       }
       if (tabName) {
-        navigateToTool(tabName);
+        await navigateToTool(tabName);
       }
       if (tabName === "edit") {
         const editEditor = document.getElementById("edit-editor");
@@ -2676,20 +2802,48 @@ function setupTabs() {
     });
   });
 }
-function loadPdfIntoMerge(bytes, filename) {
+async function loadPdfIntoMerge(bytes, filename) {
   if (!mergeSession) return;
-  const infos = mergeSession.getDocumentInfos();
-  const alreadyExists = infos.some((info) => info.name === filename);
-  if (alreadyExists) {
-    console.log(`Document "${filename}" already in merge list, skipping`);
-    return;
-  }
+  const alreadyExists = mergeState.documents.some((doc) => doc.filename === filename);
+  if (alreadyExists) return;
   try {
-    mergeSession.addDocument(filename, bytes);
-    updateMergeFileList();
-    console.log(`Added "${filename}" to merge list from tab switch`);
+    await ensurePdfJsLoaded();
+    const bytesForWasm = bytes.slice();
+    const bytesForPdfJs = bytes.slice();
+    const bytesForStorage = bytes.slice();
+    const info = mergeSession.addDocument(filename, bytesForWasm);
+    const pdfDoc = await window.pdfjsLib.getDocument(bytesForPdfJs).promise;
+    const docId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const shortCode = generateShortCode(filename);
+    const mergeDoc = {
+      id: docId,
+      filename,
+      pdfBytes: bytesForStorage,
+      pageCount: info.page_count,
+      pages: [],
+      isExpanded: mergeState.documents.length === 0,
+      // First doc expanded by default
+      shortCode,
+      pdfDoc
+    };
+    for (let i = 1; i <= info.page_count; i++) {
+      mergeDoc.pages.push({
+        pageNumber: i,
+        thumbnailDataUrl: "",
+        // Render lazily
+        isSelected: true
+      });
+      mergeState.mergeOrder.push({
+        documentId: docId,
+        pageNumber: i
+      });
+    }
+    mergeState.documents.push(mergeDoc);
+    updateMergePagePicker();
+    preRenderAllMergeThumbnails();
+    console.log(`[loadPdfIntoMerge] Added "${filename}" to merge list from tab switch (${info.page_count} pages)`);
   } catch (e) {
-    console.error("Failed to add document to merge:", e);
+    console.error("[loadPdfIntoMerge] Failed to add document to merge:", e);
   }
 }
 async function loadPdfIntoSplit(bytes, filename) {
@@ -2699,8 +2853,11 @@ async function loadPdfIntoSplit(bytes, filename) {
     if (splitSession.getDocumentCount() > 0) {
       splitSession.removeDocument(0);
     }
-    const info = splitSession.addDocument(filename, bytes);
-    splitState.pdfBytes = bytes;
+    const bytesForWasm = bytes.slice();
+    const bytesForThumbnails = bytes.slice();
+    const bytesForState = bytes.slice();
+    const info = splitSession.addDocument(filename, bytesForWasm);
+    splitState.pdfBytes = bytesForState;
     splitOriginalFilename = filename.replace(/\.pdf$/i, "");
     document.getElementById("split-drop-zone")?.classList.add("hidden");
     document.getElementById("split-editor")?.classList.remove("hidden");
@@ -2713,7 +2870,7 @@ async function loadPdfIntoSplit(bytes, filename) {
     splitState.selectedPageNumbers.clear();
     splitState.separateFiles = false;
     splitState.lastSelectedIndex = null;
-    await renderPageThumbnails(bytes, info.page_count);
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
     const splitBtn = document.getElementById("split-btn");
     if (splitBtn) splitBtn.disabled = true;
     updateSelectionSummary();
@@ -3029,9 +3186,12 @@ async function handleSplitFile(file) {
       console.warn(`Large file: ${format_bytes(file.size)} - processing may take longer`);
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const info = splitSession.addDocument(file.name, bytes);
-    setSharedPdf(bytes, file.name, "split");
-    splitState.pdfBytes = bytes;
+    const bytesForWasm = bytes.slice();
+    const bytesForShared = bytes.slice();
+    const bytesForThumbnails = bytes.slice();
+    const info = splitSession.addDocument(file.name, bytesForWasm);
+    setSharedPdf(bytesForShared, file.name, "split");
+    splitState.pdfBytes = bytesForThumbnails;
     splitOriginalFilename = file.name.replace(/\.pdf$/i, "");
     document.getElementById("split-drop-zone")?.classList.add("hidden");
     document.getElementById("split-editor")?.classList.remove("hidden");
@@ -3044,7 +3204,7 @@ async function handleSplitFile(file) {
     splitState.selectedPageNumbers.clear();
     splitState.separateFiles = false;
     splitState.lastSelectedIndex = null;
-    await renderPageThumbnails(bytes, info.page_count);
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
     const splitBtn = document.getElementById("split-btn");
     if (splitBtn) splitBtn.disabled = true;
     updateSelectionSummary();
@@ -3301,22 +3461,32 @@ function setupMergeView() {
       }
     });
   }
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files) {
-      handleMergeFiles(fileInput.files);
+  fileInput.addEventListener("change", async () => {
+    if (fileInput.files && fileInput.files.length > 0) {
+      const filesArray = [];
+      for (let i = 0; i < fileInput.files.length; i++) {
+        filesArray.push(fileInput.files[i]);
+      }
       fileInput.value = "";
+      await handleMergeFilesArray(filesArray);
     }
   });
   if (addBtn) addBtn.addEventListener("click", () => fileInput.click());
   mergeBtn.addEventListener("click", executeMerge);
 }
 async function handleMergeFiles(files) {
+  const filesArray = [];
+  for (let i = 0; i < files.length; i++) {
+    filesArray.push(files[i]);
+  }
+  await handleMergeFilesArray(filesArray);
+}
+async function handleMergeFilesArray(files) {
   if (!mergeSession) return;
   const { format_bytes } = window.wasmBindings;
   const wasEmpty = mergeSession.getDocumentCount() === 0;
   await ensurePdfJsLoaded();
-  const fileArray = Array.from(files);
-  for (const file of fileArray) {
+  for (const file of files) {
     if (file.type !== "application/pdf") continue;
     if (file.size > VERY_LARGE_FILE_WARNING_BYTES) {
       if (!confirm(
@@ -3672,9 +3842,6 @@ function updateMergeButtonState() {
   if (mergeBtn) {
     mergeBtn.disabled = mergeState.mergeOrder.length === 0;
   }
-}
-function updateMergeFileList() {
-  updateMergePagePicker();
 }
 async function executeMerge() {
   if (!mergeSession) return;

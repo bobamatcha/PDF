@@ -6,6 +6,13 @@ import { setSharedPdf, getSharedPdf, hasSharedPdf, editHasChanges, exportEditedP
 import { ensurePdfJsLoaded } from './pdf-loader';
 import type { PdfJoinSession, PdfInfo, DocumentInfo, PDFJSDocument } from './types';
 
+// DEBUG: Expose shared state functions on window for testing
+(window as any).__sharedState__ = {
+  hasSharedPdf,
+  getSharedPdf,
+  setSharedPdf,
+};
+
 // Size thresholds
 const LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024; // 50 MB
 const VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024; // 100 MB
@@ -233,6 +240,9 @@ export function init(): void {
   setupMergeView();
   setupEditView(); // Initialize edit tab
 
+  // Signal that initialization is complete (used by tests)
+  (window as unknown as { pdfjoinInitialized: boolean }).pdfjoinInitialized = true;
+
   console.log('PDFJoin initialized (WASM-first architecture)');
 }
 
@@ -246,10 +256,10 @@ function setupToolPicker(): void {
   const toolCards = document.querySelectorAll<HTMLElement>('.tool-card');
 
   toolCards.forEach((card) => {
-    card.addEventListener('click', () => {
+    card.addEventListener('click', async () => {
       const tool = card.dataset.tool;
       if (tool) {
-        navigateToTool(tool);
+        await navigateToTool(tool);
       }
     });
   });
@@ -282,8 +292,9 @@ function setupBackToToolsButtons(): void {
 /**
  * Navigate to a specific tool view.
  * Hides the tool picker and shows the tool view.
+ * Also auto-loads shared PDF if available (cross-tab document persistence).
  */
-function navigateToTool(toolName: string): void {
+async function navigateToTool(toolName: string): Promise<void> {
   // Hide tool picker
   const toolPicker = document.getElementById('tool-picker');
   if (toolPicker) toolPicker.classList.add('hidden');
@@ -308,6 +319,34 @@ function navigateToTool(toolName: string): void {
     edit: 'Edit PDF'
   };
   announceToScreenReader(`Now viewing ${toolNames[toolName] || toolName} tool`);
+
+  // Cross-tab document persistence: Auto-load shared PDF if available
+  if (hasSharedPdf()) {
+    const shared = getSharedPdf();
+    if (shared.bytes && shared.filename) {
+      // Don't reload into the source tool (avoid duplicate)
+      if (shared.source !== toolName) {
+        if (toolName === 'edit') {
+          // Check if Edit already has a document loaded
+          const editEditor = document.getElementById('edit-editor');
+          const editAlreadyLoaded = editEditor && !editEditor.classList.contains('hidden');
+          if (!editAlreadyLoaded) {
+            await loadPdfIntoEdit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === 'split') {
+          // Check if Split already has a document loaded
+          const splitEditor = document.getElementById('split-editor');
+          const splitAlreadyLoaded = splitEditor && !splitEditor.classList.contains('hidden');
+          if (!splitAlreadyLoaded) {
+            await loadPdfIntoSplit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === 'merge') {
+          // Add to merge list if not already there
+          await loadPdfIntoMerge(shared.bytes, shared.filename);
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -451,7 +490,7 @@ function setupTabs(): void {
 
       // If on tool picker, just navigate to the tool
       if (isOnToolPicker && tabName) {
-        navigateToTool(tabName);
+        await navigateToTool(tabName);
         return;
       }
 
@@ -471,7 +510,7 @@ function setupTabs(): void {
               await loadPdfIntoSplit(shared.bytes, shared.filename);
             } else if (tabName === 'merge') {
               // ISSUE-009: Edit → Merge - add document to merge list
-              loadPdfIntoMerge(shared.bytes, shared.filename);
+              await loadPdfIntoMerge(shared.bytes, shared.filename);
             }
           }
         }
@@ -482,7 +521,7 @@ function setupTabs(): void {
         if (hasSharedPdf()) {
           const shared = getSharedPdf();
           if (shared.bytes && shared.filename) {
-            loadPdfIntoMerge(shared.bytes, shared.filename);
+            await loadPdfIntoMerge(shared.bytes, shared.filename);
           }
         }
       }
@@ -502,9 +541,9 @@ function setupTabs(): void {
         }
       }
 
-      // Use centralized navigation (handles tool picker hiding, view showing, tab syncing)
+      // Use centralized navigation (handles tool picker hiding, view showing, tab syncing, and shared PDF loading)
       if (tabName) {
-        navigateToTool(tabName);
+        await navigateToTool(tabName);
       }
 
       // Split/Merge → Edit: Auto-load PDF (ISSUE-009 extended to include Merge)
@@ -540,24 +579,72 @@ function setupTabs(): void {
 /**
  * Load PDF bytes directly into the Merge tab (for Tab PDF Sharing - ISSUE-009)
  * Adds the document to the merge list if not already present
+ * This is an async function because it needs to load PDF.js for thumbnails
  */
-function loadPdfIntoMerge(bytes: Uint8Array, filename: string): void {
+async function loadPdfIntoMerge(bytes: Uint8Array, filename: string): Promise<void> {
   if (!mergeSession) return;
 
-  // Check if document is already in the merge list (by name)
-  const infos = mergeSession.getDocumentInfos();
-  const alreadyExists = infos.some((info) => info.name === filename);
-  if (alreadyExists) {
-    console.log(`Document "${filename}" already in merge list, skipping`);
-    return;
-  }
+  // Check if document is already in the merge list (by name in mergeState)
+  const alreadyExists = mergeState.documents.some((doc) => doc.filename === filename);
+  if (alreadyExists) return;
 
   try {
-    mergeSession.addDocument(filename, bytes);
-    updateMergeFileList();
-    console.log(`Added "${filename}" to merge list from tab switch`);
+    // Ensure PDF.js is loaded for thumbnail rendering
+    await ensurePdfJsLoaded();
+
+    // IMPORTANT: Make copies of bytes to prevent detachment issues
+    const bytesForWasm = bytes.slice();
+    const bytesForPdfJs = bytes.slice();
+    const bytesForStorage = bytes.slice();
+
+    // Add to WASM session for actual merging
+    const info: PdfInfo = mergeSession.addDocument(filename, bytesForWasm);
+
+    // Load PDF.js document for thumbnail rendering
+    const pdfDoc = await window.pdfjsLib!.getDocument(bytesForPdfJs).promise;
+
+    // Generate unique ID for this document
+    const docId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Generate short code (e.g., "C" for contract.pdf)
+    const shortCode = generateShortCode(filename);
+
+    // Create merge document entry (same structure as handleMergeFiles)
+    const mergeDoc: MergeDocument = {
+      id: docId,
+      filename: filename,
+      pdfBytes: bytesForStorage,
+      pageCount: info.page_count,
+      pages: [],
+      isExpanded: mergeState.documents.length === 0, // First doc expanded by default
+      shortCode,
+      pdfDoc,
+    };
+
+    // Add all pages to merge order by default (selected)
+    for (let i = 1; i <= info.page_count; i++) {
+      mergeDoc.pages.push({
+        pageNumber: i,
+        thumbnailDataUrl: '', // Render lazily
+        isSelected: true,
+      });
+      mergeState.mergeOrder.push({
+        documentId: docId,
+        pageNumber: i,
+      });
+    }
+
+    mergeState.documents.push(mergeDoc);
+
+    // Update the UI
+    updateMergePagePicker();
+
+    // Pre-render thumbnails
+    preRenderAllMergeThumbnails();
+
+    console.log(`[loadPdfIntoMerge] Added "${filename}" to merge list from tab switch (${info.page_count} pages)`);
   } catch (e) {
-    console.error('Failed to add document to merge:', e);
+    console.error('[loadPdfIntoMerge] Failed to add document to merge:', e);
   }
 }
 
@@ -574,10 +661,16 @@ async function loadPdfIntoSplit(bytes: Uint8Array, filename: string): Promise<vo
       splitSession.removeDocument(0);
     }
 
-    const info: PdfInfo = splitSession.addDocument(filename, bytes);
+    // IMPORTANT: Create copies BEFORE any operation that might detach the buffer
+    // WASM and PDF.js both may transfer ownership of ArrayBuffer
+    const bytesForWasm = bytes.slice();
+    const bytesForThumbnails = bytes.slice();
+    const bytesForState = bytes.slice();
 
-    // Store bytes in split state
-    splitState.pdfBytes = bytes;
+    const info: PdfInfo = splitSession.addDocument(filename, bytesForWasm);
+
+    // Store bytes in split state (use copy to prevent detachment issues)
+    splitState.pdfBytes = bytesForState;
 
     // Store original filename for smart output naming
     splitOriginalFilename = filename.replace(/\.pdf$/i, '');
@@ -601,7 +694,7 @@ async function loadPdfIntoSplit(bytes: Uint8Array, filename: string): Promise<vo
     splitState.lastSelectedIndex = null;
 
     // Initialize page thumbnails (visual selection - Phase 2 UX)
-    await renderPageThumbnails(bytes, info.page_count);
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
 
     // Reset UI state
     const splitBtn = document.getElementById('split-btn') as HTMLButtonElement | null;
@@ -1016,13 +1109,20 @@ async function handleSplitFile(file: File): Promise<void> {
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const info: PdfInfo = splitSession.addDocument(file.name, bytes);
+
+    // IMPORTANT: Create copies BEFORE any operation that might detach the buffer
+    // PDF.js getDocument() transfers ownership of ArrayBuffer, making original empty
+    const bytesForWasm = bytes.slice();      // Copy for WASM session
+    const bytesForShared = bytes.slice();    // Copy for shared state (cross-tab persistence)
+    const bytesForThumbnails = bytes.slice(); // Copy for PDF.js thumbnail rendering
+
+    const info: PdfInfo = splitSession.addDocument(file.name, bytesForWasm);
 
     // Store PDF bytes in shared state for Tab PDF Sharing (Phase 2)
-    setSharedPdf(bytes, file.name, 'split');
+    setSharedPdf(bytesForShared, file.name, 'split');
 
     // Store bytes in split state for thumbnail rendering
-    splitState.pdfBytes = bytes;
+    splitState.pdfBytes = bytesForThumbnails;
 
     // Store original filename for smart output naming
     splitOriginalFilename = file.name.replace(/\.pdf$/i, '');
@@ -1046,7 +1146,8 @@ async function handleSplitFile(file: File): Promise<void> {
     splitState.lastSelectedIndex = null;
 
     // Initialize page thumbnails (visual selection - Phase 2 UX)
-    await renderPageThumbnails(bytes, info.page_count);
+    // Use bytesForThumbnails since original bytes may be detached by WASM
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
 
     // Reset UI state
     const splitBtn = document.getElementById('split-btn') as HTMLButtonElement | null;
@@ -1442,10 +1543,15 @@ function setupMergeView(): void {
     });
   }
 
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files) {
-      handleMergeFiles(fileInput.files);
-      fileInput.value = ''; // Allow re-selecting same files
+  fileInput.addEventListener('change', async () => {
+    if (fileInput.files && fileInput.files.length > 0) {
+      // IMPORTANT: Copy files BEFORE clearing input (FileList is live)
+      const filesArray: File[] = [];
+      for (let i = 0; i < fileInput.files.length; i++) {
+        filesArray.push(fileInput.files[i]);
+      }
+      fileInput.value = ''; // Now safe to clear
+      await handleMergeFilesArray(filesArray);
     }
   });
 
@@ -1454,6 +1560,15 @@ function setupMergeView(): void {
 }
 
 async function handleMergeFiles(files: FileList): Promise<void> {
+  // Convert FileList to array (FileList is live and may be cleared before async operations complete)
+  const filesArray: File[] = [];
+  for (let i = 0; i < files.length; i++) {
+    filesArray.push(files[i]);
+  }
+  await handleMergeFilesArray(filesArray);
+}
+
+async function handleMergeFilesArray(files: File[]): Promise<void> {
   if (!mergeSession) return;
   const { format_bytes } = window.wasmBindings;
 
@@ -1463,9 +1578,8 @@ async function handleMergeFiles(files: FileList): Promise<void> {
   // Lazy load PDF.js for thumbnail rendering
   await ensurePdfJsLoaded();
 
-  // Convert FileList to array to ensure proper iteration
-  const fileArray = Array.from(files);
-  for (const file of fileArray) {
+  // Process files
+  for (const file of files) {
     if (file.type !== 'application/pdf') continue;
 
     // Check file size and warn if large
