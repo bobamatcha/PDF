@@ -217,6 +217,66 @@ var drawStartX = 0;
 var drawStartY = 0;
 var drawOverlay = null;
 var drawPageNum = null;
+function showEditConfirmDialog(options) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById("confirm-dialog-overlay");
+    const heading = document.getElementById("confirm-dialog-heading");
+    const message = document.getElementById("confirm-dialog-message");
+    const icon = document.getElementById("confirm-dialog-icon");
+    const confirmBtn = document.getElementById("confirm-dialog-confirm");
+    const cancelBtn = document.getElementById("confirm-dialog-cancel");
+    if (!overlay || !heading || !message || !confirmBtn || !cancelBtn) {
+      resolve(window.confirm(options.message));
+      return;
+    }
+    heading.textContent = options.title;
+    message.textContent = options.message;
+    if (icon) icon.innerHTML = options.icon || "&#9888;";
+    confirmBtn.textContent = options.confirmText || "Replace";
+    cancelBtn.textContent = options.cancelText || "Cancel";
+    if (options.modalType) {
+      overlay.setAttribute("data-modal", options.modalType);
+      overlay.classList.add(`${options.modalType}-confirm`);
+    }
+    overlay.classList.add("show");
+    confirmBtn.focus();
+    const cleanup = () => {
+      overlay.classList.remove("show");
+      if (options.modalType) {
+        overlay.removeAttribute("data-modal");
+        overlay.classList.remove(`${options.modalType}-confirm`);
+      }
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      overlay.removeEventListener("click", onOverlayClick);
+      document.removeEventListener("keydown", onKeydown);
+    };
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+    const onOverlayClick = (e) => {
+      if (e.target === overlay) {
+        onCancel();
+      }
+    };
+    const onKeydown = (e) => {
+      if (e.key === "Escape") {
+        onCancel();
+      } else if (e.key === "Enter") {
+        onConfirm();
+      }
+    };
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    overlay.addEventListener("click", onOverlayClick);
+    document.addEventListener("keydown", onKeydown);
+  });
+}
 var drawPreviewEl = null;
 var drawPageDiv = null;
 var resizing = false;
@@ -425,6 +485,25 @@ async function handleEditFile(file) {
     showError("edit-error", "Please select a PDF file");
     return;
   }
+  if (editSession !== null || currentPdfBytes !== null) {
+    const hasUnsavedChanges = editSession?.hasChanges() ?? false;
+    const currentFilename = currentPdfFilename || "current document";
+    const title = hasUnsavedChanges ? "Replace Document with Unsaved Changes?" : "Replace Existing Document?";
+    const message = hasUnsavedChanges ? `You have unsaved changes to "${currentFilename}". Loading "${file.name}" will replace your current document and discard all changes. This cannot be undone.` : `You already have "${currentFilename}" open. Loading "${file.name}" will replace it. Any edits you've made will be lost.`;
+    const confirmed = await showEditConfirmDialog({
+      title,
+      message,
+      confirmText: "Replace",
+      cancelText: "Keep Current",
+      icon: hasUnsavedChanges ? "&#9888;" : "&#128196;",
+      // Warning icon for unsaved, doc icon otherwise
+      modalType: "file-replace"
+      // For elderly UX testing - ISSUE-016
+    });
+    if (!confirmed) {
+      return;
+    }
+  }
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     await loadPdfIntoEditInternal(bytes, file.name);
@@ -507,7 +586,18 @@ async function renderAllPages() {
     pageDiv.addEventListener("mouseleave", () => {
       if (isDrawing) handleWhiteoutCancel();
     });
+    pageDiv.addEventListener("dblclick", (e) => handleTextBoxDoubleClick(e, i, overlay));
   }
+}
+function handleTextBoxDoubleClick(e, pageNum, overlay) {
+  if (currentTool !== "textbox") return;
+  const elementAtClick = document.elementFromPoint(e.clientX, e.clientY);
+  if (elementAtClick?.closest(".text-box")) return;
+  const pageDiv = e.currentTarget;
+  const rect = pageDiv.getBoundingClientRect();
+  const domX = e.clientX - rect.left;
+  const domY = e.clientY - rect.top;
+  createTextBox(pageNum, domX, domY);
 }
 function handleOverlayClick(e, pageNum) {
   if (currentTool === "select") return;
@@ -541,9 +631,6 @@ function handleOverlayClick(e, pageNum) {
   switch (currentTool) {
     case "text":
       addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
-      break;
-    case "textbox":
-      createTextBox(pageNum, domX, domY);
       break;
   }
 }
@@ -737,9 +824,14 @@ function editExistingTextOverlay(textOverlay, pageNum) {
   });
 }
 function handleWhiteoutStart(e, pageNum, overlay, pageDiv) {
-  if (currentTool !== "whiteout" && currentTool !== "textbox") return;
   const target = e.target;
-  if (target.closest(".delete-btn") || target.closest(".resize-handle") || target.closest(".text-content") || target.closest(".text-box") || target.closest(".edit-whiteout-overlay")) {
+  const isOnUIElement = target.closest(".delete-btn") || target.closest(".resize-handle") || target.closest(".text-content") || target.closest(".text-box") || target.closest(".edit-whiteout-overlay");
+  if (!isOnUIElement) {
+    deselectTextBox();
+    deselectWhiteout();
+  }
+  if (currentTool !== "whiteout" && currentTool !== "textbox") return;
+  if (isOnUIElement) {
     return;
   }
   e.preventDefault();
@@ -798,10 +890,8 @@ function handleWhiteoutEnd(e, pageNum) {
     drawPreviewEl = null;
   }
   if (wasTextbox) {
-    if (domWidth < 5 || domHeight < 5) {
-      createTextBox(pageNum, drawStartX, drawStartY);
-    } else {
-      createTextBox(pageNum, domX, domY);
+    if (domWidth >= 10 || domHeight >= 10) {
+      createTextBox(pageNum, domX, domY, domWidth, domHeight);
     }
   } else {
     if (domWidth >= 5 && domHeight >= 5) {
@@ -901,14 +991,19 @@ function deleteWhiteout(whiteout) {
   updateButtons();
 }
 var nextTextBoxZIndex = 100;
-function createTextBox(pageNum, domX, domY) {
+var MIN_TEXTBOX_HEIGHT = 44;
+var MIN_TEXTBOX_WIDTH = 100;
+var DEFAULT_TEXTBOX_WIDTH = 200;
+var DEFAULT_TEXTBOX_HEIGHT = 48;
+function createTextBox(pageNum, domX, domY, width, height) {
   if (!editSession) throw new Error("No edit session");
   const id = nextTextBoxId++;
   const pageEl = document.querySelector(`.edit-page[data-page="${pageNum}"]`);
   const pageWidth = pageEl?.offsetWidth || 800;
   const margin = 10;
-  const maxAvailableWidth = Math.max(100, pageWidth - domX - margin);
-  const initialWidth = Math.min(150, maxAvailableWidth);
+  const maxAvailableWidth = Math.max(MIN_TEXTBOX_WIDTH, pageWidth - domX - margin);
+  const initialWidth = Math.min(maxAvailableWidth, Math.max(MIN_TEXTBOX_WIDTH, width ?? DEFAULT_TEXTBOX_WIDTH));
+  const initialHeight = Math.max(MIN_TEXTBOX_HEIGHT, height ?? DEFAULT_TEXTBOX_HEIGHT);
   const box = document.createElement("div");
   box.className = "text-box transparent";
   box.dataset.textboxId = String(id);
@@ -916,7 +1011,7 @@ function createTextBox(pageNum, domX, domY) {
   box.style.left = domX + "px";
   box.style.top = domY + "px";
   box.style.width = initialWidth + "px";
-  box.style.height = "30px";
+  box.style.height = initialHeight + "px";
   box.style.zIndex = String(nextTextBoxZIndex++);
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "delete-btn";
@@ -1008,6 +1103,55 @@ function deleteSelectedTextBox() {
     deleteTextBox(selectedTextBox);
   }
 }
+function parseStyledSegments(element) {
+  const innerHTML = element.innerHTML;
+  const hasStyledTags = /<(b|strong|i|em)\b/i.test(innerHTML);
+  if (!hasStyledTags) {
+    return null;
+  }
+  const segments = [];
+  function walkNode(node, isBold, isItalic) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || "";
+      if (text) {
+        segments.push({ text, is_bold: isBold, is_italic: isItalic });
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node;
+      const tagName = el.tagName.toLowerCase();
+      const newBold = isBold || tagName === "b" || tagName === "strong";
+      const newItalic = isItalic || tagName === "i" || tagName === "em";
+      for (const child of Array.from(el.childNodes)) {
+        walkNode(child, newBold, newItalic);
+      }
+    }
+  }
+  for (const child of Array.from(element.childNodes)) {
+    walkNode(child, false, false);
+  }
+  const merged = [];
+  for (const seg of segments) {
+    if (merged.length > 0) {
+      const last = merged[merged.length - 1];
+      if (last.is_bold === seg.is_bold && last.is_italic === seg.is_italic) {
+        last.text += seg.text;
+        continue;
+      }
+    }
+    merged.push({ ...seg });
+  }
+  if (merged.length <= 1) {
+    return null;
+  }
+  const firstStyle = { is_bold: merged[0].is_bold, is_italic: merged[0].is_italic };
+  const hasMixedStyles = merged.some(
+    (s) => s.is_bold !== firstStyle.is_bold || s.is_italic !== firstStyle.is_italic
+  );
+  if (!hasMixedStyles) {
+    return null;
+  }
+  return merged;
+}
 function commitTextBox(box) {
   if (!editSession) return;
   const textContent = box.querySelector(".text-content");
@@ -1029,26 +1173,44 @@ function commitTextBox(box) {
   if (existingOpId !== null) {
     editSession.removeOperation(existingOpId);
   }
-  if (text) {
-    const style = textContent ? window.getComputedStyle(textContent) : null;
-    const fontSize = style ? parseFloat(style.fontSize) : 12;
-    const isBold = style?.fontWeight === "bold" || parseInt(style?.fontWeight || "400") >= 700;
-    const isItalic = style?.fontStyle === "italic";
+  if (text && textContent) {
+    const style = window.getComputedStyle(textContent);
+    const fontSize = parseFloat(style.fontSize) || 12;
+    const styledSegments = parseStyledSegments(textContent);
     editSession.beginAction("textbox");
-    const opId = editSession.addText(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      text,
-      fontSize,
-      "#000000",
-      null,
-      // font name
-      isItalic,
-      isBold
-    );
+    let opId;
+    if (styledSegments) {
+      const segmentsJson = JSON.stringify(styledSegments);
+      opId = editSession.addStyledText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        segmentsJson,
+        fontSize,
+        "#000000",
+        null
+        // font name
+      );
+    } else {
+      const isBold = style.fontWeight === "bold" || parseInt(style.fontWeight || "400") >= 700;
+      const isItalic = style.fontStyle === "italic";
+      opId = editSession.addText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        text,
+        fontSize,
+        "#000000",
+        null,
+        // font name
+        isItalic,
+        isBold
+      );
+    }
     editSession.commitAction();
     setOpId(box, opId);
   }
@@ -1435,6 +1597,8 @@ async function openWhiteoutTextEditor(whiteRect, pageNum) {
   input.dataset.fontFamily = coveredStyle.fontFamily;
   input.dataset.isBold = coveredStyle.isBold ? "true" : "false";
   input.dataset.isItalic = coveredStyle.isItalic ? "true" : "false";
+  input.dataset.originalWidth = String(originalWidth);
+  input.dataset.originalHeight = String(originalHeight);
   whiteRect.appendChild(input);
   whiteRect.classList.add("editing");
   whiteRect.style.overflow = "visible";
@@ -1562,7 +1726,24 @@ function saveWhiteoutText(whiteRect, pageNum, input, originalWidth, originalHeig
       setOpId(whiteRect, newWhiteOpId);
     }
   }
-  const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
+  const styledSegments = parseStyledSegments(input);
+  let opId;
+  if (styledSegments) {
+    const segmentsJson = JSON.stringify(styledSegments);
+    opId = editSession.addStyledText(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      segmentsJson,
+      fontSize,
+      "#000000",
+      fontFamily
+    );
+  } else {
+    opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, "#000000", fontFamily, isItalic, isBold);
+  }
   editSession.commitAction();
   const textSpan = document.createElement("span");
   textSpan.className = "whiteout-text-content";
@@ -1863,21 +2044,35 @@ function updateStyleButtons() {
 }
 function toggleBold() {
   if (!activeTextInput) return;
-  const currentBold = activeTextInput.dataset.isBold === "true";
-  const newBold = !currentBold;
-  activeTextInput.dataset.isBold = String(newBold);
-  activeTextInput.style.fontWeight = newBold ? "bold" : "normal";
-  updateStyleButtons();
-  activeTextInput.focus();
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && activeTextInput.contains(selection.anchorNode);
+  if (hasSelection) {
+    document.execCommand("bold", false);
+    activeTextInput.focus();
+  } else {
+    const currentBold = activeTextInput.dataset.isBold === "true";
+    const newBold = !currentBold;
+    activeTextInput.dataset.isBold = String(newBold);
+    activeTextInput.style.fontWeight = newBold ? "bold" : "normal";
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 function toggleItalic() {
   if (!activeTextInput) return;
-  const currentItalic = activeTextInput.dataset.isItalic === "true";
-  const newItalic = !currentItalic;
-  activeTextInput.dataset.isItalic = String(newItalic);
-  activeTextInput.style.fontStyle = newItalic ? "italic" : "normal";
-  updateStyleButtons();
-  activeTextInput.focus();
+  const selection = window.getSelection();
+  const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && activeTextInput.contains(selection.anchorNode);
+  if (hasSelection) {
+    document.execCommand("italic", false);
+    activeTextInput.focus();
+  } else {
+    const currentItalic = activeTextInput.dataset.isItalic === "true";
+    const newItalic = !currentItalic;
+    activeTextInput.dataset.isItalic = String(newItalic);
+    activeTextInput.style.fontStyle = newItalic ? "italic" : "normal";
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 function increaseFontSize() {
   if (!activeTextInput) return;
@@ -1891,12 +2086,30 @@ function decreaseFontSize() {
 }
 function setFontSize(size) {
   if (!activeTextInput) return;
+  const oldSize = parseInt(activeTextInput.dataset.fontSize || "12", 10) || 12;
   const sizeNum = Math.max(6, Math.min(72, parseInt(size, 10) || 12));
   activeTextInput.dataset.fontSize = String(sizeNum);
   activeTextInput.style.fontSize = sizeNum + "px";
   const fontSizeValue = document.getElementById("font-size-value");
   if (fontSizeValue) fontSizeValue.value = String(sizeNum);
   updateStyleButtons();
+  const parentBox = activeTextInput.closest(".text-box");
+  if (parentBox && sizeNum > oldSize) {
+    const scaleFactor = sizeNum / oldSize;
+    const currentWidth = parseFloat(parentBox.style.width) || 200;
+    const currentHeight = parseFloat(parentBox.style.height) || 48;
+    const pageEl = parentBox.closest(".edit-page");
+    const pageWidth = pageEl?.offsetWidth || 800;
+    const boxLeft = parseFloat(parentBox.style.left) || 0;
+    const maxAvailableWidth = Math.max(100, pageWidth - boxLeft - 10);
+    const newWidth = Math.min(maxAvailableWidth, currentWidth * scaleFactor);
+    const newHeight = currentHeight * scaleFactor;
+    parentBox.style.width = newWidth + "px";
+    parentBox.style.height = newHeight + "px";
+  }
+  if (parentBox) {
+    expandTextBoxForContent(parentBox, activeTextInput);
+  }
   activeTextInput.focus();
 }
 function setFontFamily(family) {
@@ -2067,12 +2280,48 @@ function updateButtons() {
   if (undoBtn) undoBtn.disabled = !editSession || !editSession.canUndo();
   if (redoBtn) redoBtn.disabled = !editSession || !editSession.canRedo();
 }
+function commitPendingEdits() {
+  const textBoxes2 = document.querySelectorAll(".text-box");
+  textBoxes2.forEach((box) => {
+    const textContent = box.querySelector(".text-content");
+    const text2 = textContent?.textContent?.trim() || "";
+    if (text2) {
+      const existingOpId = getOpId(box);
+      commitTextBox(box);
+    }
+  });
+  const activeWhiteoutInput = document.querySelector(".whiteout-text-input");
+  if (!activeWhiteoutInput) return;
+  const text = (activeWhiteoutInput.textContent || "").trim();
+  if (!text) return;
+  const whiteRect = activeWhiteoutInput.closest(".edit-whiteout-overlay");
+  if (!whiteRect) return;
+  const overlayContainer = whiteRect.closest(".overlay-container");
+  const pageNum = overlayContainer ? parseInt(overlayContainer.dataset.page || "1", 10) : 1;
+  const originalWidth = parseFloat(activeWhiteoutInput.dataset.originalWidth || "0");
+  const originalHeight = parseFloat(activeWhiteoutInput.dataset.originalHeight || "0");
+  saveWhiteoutText(whiteRect, pageNum, activeWhiteoutInput, originalWidth, originalHeight);
+}
 async function downloadEditedPdf() {
   if (!editSession) return;
+  commitPendingEdits();
   const downloadBtn = document.getElementById("edit-download-btn");
   const btnContent = downloadBtn?.querySelector(".download-btn-content");
   if (!btnContent) return;
   try {
+    const opCount = editSession.getOperationCount();
+    const textBoxCount = document.querySelectorAll(".text-box").length;
+    const whiteoutCount = document.querySelectorAll(".edit-whiteout-overlay").length;
+    const highlightCount = document.querySelectorAll(".edit-highlight-overlay").length;
+    const checkboxCount = document.querySelectorAll(".edit-checkbox-overlay").length;
+    const replaceCount = document.querySelectorAll(".edit-replace-overlay").length;
+    const underlineCount = document.querySelectorAll(".edit-underline-overlay").length;
+    const domAnnotations = textBoxCount + whiteoutCount + highlightCount + checkboxCount + replaceCount + underlineCount;
+    if (opCount > 0 && Math.abs(opCount - domAnnotations) > domAnnotations) {
+      console.warn(
+        `[PDFJoin Parity Warning] Operation count (${opCount}) significantly differs from DOM elements (${domAnnotations}). TextBoxes: ${textBoxCount}, Whiteouts: ${whiteoutCount}, Highlights: ${highlightCount}, Checkboxes: ${checkboxCount}, Replaces: ${replaceCount}, Underlines: ${underlineCount}. This may indicate preview/download mismatch.`
+      );
+    }
     if (downloadBtn) downloadBtn.disabled = true;
     btnContent.innerHTML = `
       <span class="spinner"></span>
@@ -2196,8 +2445,50 @@ function showError(containerId, message) {
 }
 
 // src/ts/app.ts
+window.__sharedState__ = {
+  hasSharedPdf,
+  getSharedPdf,
+  setSharedPdf
+};
 var LARGE_FILE_WARNING_BYTES = 50 * 1024 * 1024;
 var VERY_LARGE_FILE_WARNING_BYTES = 100 * 1024 * 1024;
+var splitState = {
+  pages: [],
+  selectedPageNumbers: /* @__PURE__ */ new Set(),
+  separateFiles: false,
+  lastSelectedIndex: null,
+  pdfDoc: null,
+  pdfBytes: null
+};
+var mergeState = {
+  documents: [],
+  mergeOrder: [],
+  shortCodeMap: /* @__PURE__ */ new Map()
+};
+function generateShortCode(filename) {
+  const baseName = filename.replace(/\.pdf$/i, "");
+  const firstLetter = baseName.charAt(0).toUpperCase() || "D";
+  const count = mergeState.shortCodeMap.get(firstLetter) || 0;
+  mergeState.shortCodeMap.set(firstLetter, count + 1);
+  if (count === 0) {
+    return firstLetter;
+  }
+  return `${firstLetter}${count + 1}`;
+}
+async function renderMergePageThumbnail(pdfDoc, pageNum, scale = 0.3) {
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not get 2d context");
+  await page.render({
+    canvasContext: ctx,
+    viewport
+  }).promise;
+  return canvas.toDataURL("image/png", 0.8);
+}
 function announceToScreenReader(message) {
   const liveRegion = document.getElementById("aria-live-region");
   if (liveRegion) {
@@ -2268,11 +2559,173 @@ function init() {
   mergeSession = new PdfJoinSession(SessionMode.Merge);
   splitSession.setProgressCallback(onSplitProgress);
   mergeSession.setProgressCallback(onMergeProgress);
+  setupToolPicker();
   setupTabs();
+  setupBackToToolsButtons();
   setupSplitView();
   setupMergeView();
   setupEditView();
+  window.pdfjoinInitialized = true;
   console.log("PDFJoin initialized (WASM-first architecture)");
+}
+function setupToolPicker() {
+  const toolCards = document.querySelectorAll(".tool-card");
+  toolCards.forEach((card) => {
+    card.addEventListener("click", async () => {
+      const tool = card.dataset.tool;
+      if (tool) {
+        await navigateToTool(tool);
+      }
+    });
+  });
+}
+function setupBackToToolsButtons() {
+  const backButtons = document.querySelectorAll(".back-to-tools");
+  backButtons.forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const editView = document.getElementById("edit-view");
+      const isEditActive = editView && !editView.classList.contains("hidden");
+      if (isEditActive && editHasChanges()) {
+        const action = await showUnsavedChangesModalForBack();
+        if (action === "cancel") return;
+      }
+      navigateToToolPicker();
+    });
+  });
+}
+async function navigateToTool(toolName) {
+  const toolPicker = document.getElementById("tool-picker");
+  if (toolPicker) toolPicker.classList.add("hidden");
+  document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+  const view = document.getElementById(`${toolName}-view`);
+  if (view) view.classList.remove("hidden");
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach((t) => t.classList.remove("active"));
+  const activeTab = document.querySelector(`.tab[data-tab="${toolName}"]`);
+  if (activeTab) activeTab.classList.add("active");
+  const toolNames = {
+    split: "Split PDF",
+    merge: "Merge PDFs",
+    edit: "Edit PDF"
+  };
+  announceToScreenReader(`Now viewing ${toolNames[toolName] || toolName} tool`);
+  if (hasSharedPdf()) {
+    const shared = getSharedPdf();
+    if (shared.bytes && shared.filename) {
+      if (shared.source !== toolName) {
+        if (toolName === "edit") {
+          const editEditor = document.getElementById("edit-editor");
+          const editAlreadyLoaded = editEditor && !editEditor.classList.contains("hidden");
+          if (!editAlreadyLoaded) {
+            await loadPdfIntoEdit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === "split") {
+          const splitEditor = document.getElementById("split-editor");
+          const splitAlreadyLoaded = splitEditor && !splitEditor.classList.contains("hidden");
+          if (!splitAlreadyLoaded) {
+            await loadPdfIntoSplit(shared.bytes, shared.filename);
+          }
+        } else if (toolName === "merge") {
+          await loadPdfIntoMerge(shared.bytes, shared.filename);
+        }
+      }
+    }
+  }
+}
+function navigateToToolPicker() {
+  document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
+  const toolPicker = document.getElementById("tool-picker");
+  if (toolPicker) toolPicker.classList.remove("hidden");
+  const firstCard = document.querySelector(".tool-card");
+  if (firstCard) firstCard.focus();
+  announceToScreenReader("Returned to tool selection. Choose Split, Merge, or Edit.");
+}
+async function showUnsavedChangesModalForBack() {
+  return new Promise((resolve) => {
+    let modal = document.getElementById("unsaved-changes-modal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "unsaved-changes-modal";
+      modal.className = "unsaved-changes-modal";
+      modal.innerHTML = `
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+          <h2>You Made Edits</h2>
+          <p>Would you like to download your edited PDF before going back?</p>
+          <div class="modal-actions">
+            <button class="primary-btn" data-action="download">Yes, Download My PDF</button>
+            <button class="secondary-btn" data-action="continue">No, Go Back Without Saving</button>
+            <button class="text-btn" data-action="cancel">Stay Here</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      if (!document.getElementById("modal-styles")) {
+        const style = document.createElement("style");
+        style.id = "modal-styles";
+        style.textContent = `
+          .unsaved-changes-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+          .unsaved-changes-modal.hidden { display: none; }
+          .modal-backdrop { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); }
+          .modal-content { position: relative; background: white; padding: 2rem; border-radius: 12px; max-width: 420px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+          .modal-content h2 { margin-bottom: 0.75rem; font-size: 1.5rem; }
+          .modal-content p { margin-bottom: 1.5rem; color: #64748b; font-size: 1.1rem; line-height: 1.5; }
+          .modal-actions { display: flex; flex-direction: column; gap: 0.75rem; }
+          .modal-actions button { padding: 1rem 1.5rem; border-radius: 8px; font-size: 1.1rem; cursor: pointer; border: none; }
+          .modal-actions .primary-btn { background: #2563eb; color: white; font-weight: 600; }
+          .modal-actions .primary-btn:hover { background: #1d4ed8; }
+          .modal-actions .secondary-btn { background: #f1f5f9; color: #334155; }
+          .modal-actions .secondary-btn:hover { background: #e2e8f0; }
+          .modal-actions .text-btn { background: transparent; color: #64748b; font-size: 1rem; }
+          .modal-actions .text-btn:hover { color: #334155; }
+        `;
+        document.head.appendChild(style);
+      }
+    } else {
+      const content = modal.querySelector(".modal-content");
+      if (content) {
+        content.innerHTML = `
+          <h2>You Made Edits</h2>
+          <p>Would you like to download your edited PDF before going back?</p>
+          <div class="modal-actions">
+            <button class="primary-btn" data-action="download">Yes, Download My PDF</button>
+            <button class="secondary-btn" data-action="continue">No, Go Back Without Saving</button>
+            <button class="text-btn" data-action="cancel">Stay Here</button>
+          </div>
+        `;
+      }
+    }
+    modal.classList.remove("hidden");
+    const cleanup = () => {
+      modal?.classList.add("hidden");
+      modal?.querySelectorAll("button").forEach((btn) => {
+        btn.replaceWith(btn.cloneNode(true));
+      });
+    };
+    modal.querySelector('[data-action="download"]')?.addEventListener("click", () => {
+      const editedBytes = exportEditedPdf();
+      if (editedBytes) {
+        const shared = getSharedPdf();
+        const filename = (shared.filename || "document.pdf").replace(/\.pdf$/i, "-edited.pdf");
+        downloadBlob(editedBytes, filename);
+        setSharedPdf(editedBytes, filename, "edit");
+      }
+      cleanup();
+      resolve("download");
+    }, { once: true });
+    modal.querySelector('[data-action="continue"]')?.addEventListener("click", () => {
+      cleanup();
+      resolve("continue");
+    }, { once: true });
+    modal.querySelector('[data-action="cancel"]')?.addEventListener("click", () => {
+      cleanup();
+      resolve("cancel");
+    }, { once: true });
+    modal.querySelector(".modal-backdrop")?.addEventListener("click", () => {
+      cleanup();
+      resolve("cancel");
+    }, { once: true });
+  });
 }
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -2280,6 +2733,12 @@ function setupTabs() {
     tab.addEventListener("click", async () => {
       const tabName = tab.dataset.tab;
       const currentTab = document.querySelector(".tab.active")?.getAttribute("data-tab");
+      const toolPicker = document.getElementById("tool-picker");
+      const isOnToolPicker = toolPicker && !toolPicker.classList.contains("hidden");
+      if (isOnToolPicker && tabName) {
+        await navigateToTool(tabName);
+        return;
+      }
       if (currentTab === "edit" && tabName !== "edit") {
         if (editHasChanges()) {
           const action = await showUnsavedChangesModal();
@@ -2289,9 +2748,9 @@ function setupTabs() {
           const shared = getSharedPdf();
           if (shared.bytes && shared.filename) {
             if (tabName === "split") {
-              loadPdfIntoSplit(shared.bytes, shared.filename);
+              await loadPdfIntoSplit(shared.bytes, shared.filename);
             } else if (tabName === "merge") {
-              loadPdfIntoMerge(shared.bytes, shared.filename);
+              await loadPdfIntoMerge(shared.bytes, shared.filename);
             }
           }
         }
@@ -2300,7 +2759,7 @@ function setupTabs() {
         if (hasSharedPdf()) {
           const shared = getSharedPdf();
           if (shared.bytes && shared.filename) {
-            loadPdfIntoMerge(shared.bytes, shared.filename);
+            await loadPdfIntoMerge(shared.bytes, shared.filename);
           }
         }
       }
@@ -2309,18 +2768,16 @@ function setupTabs() {
           try {
             const bytes = mergeSession.getDocumentBytes(0);
             const name = mergeSession.getDocumentName(0);
-            loadPdfIntoSplit(bytes, name);
+            await loadPdfIntoSplit(bytes, name);
             setSharedPdf(bytes, name, "merge");
           } catch (e) {
             console.error("Failed to load merge document into split:", e);
           }
         }
       }
-      tabs.forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      document.querySelectorAll(".view").forEach((v) => v.classList.add("hidden"));
-      const view = document.getElementById(`${tabName}-view`);
-      if (view) view.classList.remove("hidden");
+      if (tabName) {
+        await navigateToTool(tabName);
+      }
       if (tabName === "edit") {
         const editEditor = document.getElementById("edit-editor");
         const editAlreadyLoaded = editEditor && !editEditor.classList.contains("hidden");
@@ -2345,30 +2802,62 @@ function setupTabs() {
     });
   });
 }
-function loadPdfIntoMerge(bytes, filename) {
+async function loadPdfIntoMerge(bytes, filename) {
   if (!mergeSession) return;
-  const infos = mergeSession.getDocumentInfos();
-  const alreadyExists = infos.some((info) => info.name === filename);
-  if (alreadyExists) {
-    console.log(`Document "${filename}" already in merge list, skipping`);
-    return;
-  }
+  const alreadyExists = mergeState.documents.some((doc) => doc.filename === filename);
+  if (alreadyExists) return;
   try {
-    mergeSession.addDocument(filename, bytes);
-    updateMergeFileList();
-    console.log(`Added "${filename}" to merge list from tab switch`);
+    await ensurePdfJsLoaded();
+    const bytesForWasm = bytes.slice();
+    const bytesForPdfJs = bytes.slice();
+    const bytesForStorage = bytes.slice();
+    const info = mergeSession.addDocument(filename, bytesForWasm);
+    const pdfDoc = await window.pdfjsLib.getDocument(bytesForPdfJs).promise;
+    const docId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const shortCode = generateShortCode(filename);
+    const mergeDoc = {
+      id: docId,
+      filename,
+      pdfBytes: bytesForStorage,
+      pageCount: info.page_count,
+      pages: [],
+      isExpanded: mergeState.documents.length === 0,
+      // First doc expanded by default
+      shortCode,
+      pdfDoc
+    };
+    for (let i = 1; i <= info.page_count; i++) {
+      mergeDoc.pages.push({
+        pageNumber: i,
+        thumbnailDataUrl: "",
+        // Render lazily
+        isSelected: true
+      });
+      mergeState.mergeOrder.push({
+        documentId: docId,
+        pageNumber: i
+      });
+    }
+    mergeState.documents.push(mergeDoc);
+    updateMergePagePicker();
+    preRenderAllMergeThumbnails();
+    console.log(`[loadPdfIntoMerge] Added "${filename}" to merge list from tab switch (${info.page_count} pages)`);
   } catch (e) {
-    console.error("Failed to add document to merge:", e);
+    console.error("[loadPdfIntoMerge] Failed to add document to merge:", e);
   }
 }
-function loadPdfIntoSplit(bytes, filename) {
+async function loadPdfIntoSplit(bytes, filename) {
   if (!splitSession) return;
   const { format_bytes } = window.wasmBindings;
   try {
     if (splitSession.getDocumentCount() > 0) {
       splitSession.removeDocument(0);
     }
-    const info = splitSession.addDocument(filename, bytes);
+    const bytesForWasm = bytes.slice();
+    const bytesForThumbnails = bytes.slice();
+    const bytesForState = bytes.slice();
+    const info = splitSession.addDocument(filename, bytesForWasm);
+    splitState.pdfBytes = bytesForState;
     splitOriginalFilename = filename.replace(/\.pdf$/i, "");
     document.getElementById("split-drop-zone")?.classList.add("hidden");
     document.getElementById("split-editor")?.classList.remove("hidden");
@@ -2376,11 +2865,15 @@ function loadPdfIntoSplit(bytes, filename) {
     const fileDetailsEl = document.getElementById("split-file-details");
     if (fileNameEl) fileNameEl.textContent = filename;
     if (fileDetailsEl) fileDetailsEl.textContent = `${info.page_count} pages - ${format_bytes(info.size_bytes)}`;
-    updateExampleChips(info.page_count);
-    const rangeInput = document.getElementById("page-range");
+    updateQuickSelectButtons(info.page_count);
+    splitState.pages = [];
+    splitState.selectedPageNumbers.clear();
+    splitState.separateFiles = false;
+    splitState.lastSelectedIndex = null;
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
     const splitBtn = document.getElementById("split-btn");
-    if (rangeInput) rangeInput.value = "";
     if (splitBtn) splitBtn.disabled = true;
+    updateSelectionSummary();
   } catch (e) {
     showError2("split-error", String(e));
   }
@@ -2466,7 +2959,7 @@ function setupSplitView() {
   const removeBtn = document.getElementById("split-remove-btn");
   const splitBtn = document.getElementById("split-btn");
   const rangeInput = document.getElementById("page-range");
-  if (!dropZone || !fileInput || !browseBtn || !removeBtn || !splitBtn || !rangeInput) return;
+  if (!dropZone || !fileInput || !browseBtn || !removeBtn || !splitBtn) return;
   browseBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     fileInput.click();
@@ -2501,7 +2994,183 @@ function setupSplitView() {
     }
   });
   splitBtn.addEventListener("click", executeSplit);
-  rangeInput.addEventListener("input", validateRange);
+  if (rangeInput) {
+    rangeInput.addEventListener("input", validateRange);
+  }
+  setupQuickSelectButtons();
+  const separateFilesCheckbox = document.getElementById("split-separate-files");
+  if (separateFilesCheckbox) {
+    separateFilesCheckbox.addEventListener("change", () => {
+      splitState.separateFiles = separateFilesCheckbox.checked;
+    });
+  }
+  const showTextInputBtn = document.getElementById("split-show-text-input");
+  const textInputContainer = document.getElementById("split-text-input-container");
+  if (showTextInputBtn && textInputContainer) {
+    showTextInputBtn.addEventListener("click", () => {
+      const isVisible = textInputContainer.style.display !== "none";
+      textInputContainer.style.display = isVisible ? "none" : "block";
+      showTextInputBtn.textContent = isVisible ? "Or enter page numbers manually" : "Hide manual input";
+    });
+  }
+  const pageGrid = document.getElementById("split-page-grid");
+  if (pageGrid) {
+    pageGrid.addEventListener("keydown", handleThumbnailKeyNavigation);
+  }
+}
+function setupQuickSelectButtons() {
+  const quickSelectRow = document.getElementById("split-quick-select");
+  if (!quickSelectRow) return;
+  quickSelectRow.addEventListener("click", (e) => {
+    const target = e.target;
+    const btn = target.closest(".quick-select-btn");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (!action) return;
+    const totalPages = splitState.pages.length;
+    let newSelection = [];
+    switch (action) {
+      case "all":
+        newSelection = splitState.pages.map((p) => p.pageNumber);
+        break;
+      case "none":
+        newSelection = [];
+        break;
+      case "odd":
+        newSelection = splitState.pages.filter((p) => p.pageNumber % 2 === 1).map((p) => p.pageNumber);
+        break;
+      case "even":
+        newSelection = splitState.pages.filter((p) => p.pageNumber % 2 === 0).map((p) => p.pageNumber);
+        break;
+      case "first5":
+        newSelection = splitState.pages.slice(0, Math.min(5, totalPages)).map((p) => p.pageNumber);
+        break;
+      case "last5":
+        newSelection = splitState.pages.slice(Math.max(0, totalPages - 5)).map((p) => p.pageNumber);
+        break;
+    }
+    splitState.selectedPageNumbers.clear();
+    newSelection.forEach((n) => splitState.selectedPageNumbers.add(n));
+    splitState.pages.forEach((p) => {
+      p.isSelected = splitState.selectedPageNumbers.has(p.pageNumber);
+    });
+    updateThumbnailSelectionUI();
+    updateSelectionSummary();
+    updateSplitButtonState();
+    announceToScreenReader(`${action === "none" ? "Cleared selection" : `Selected ${newSelection.length} pages`}`);
+  });
+}
+function handleThumbnailKeyNavigation(e) {
+  const target = e.target;
+  const thumbnail = target.closest(".page-thumbnail");
+  if (!thumbnail) return;
+  const pageNum = parseInt(thumbnail.dataset.page || "0", 10);
+  const thumbnails = Array.from(document.querySelectorAll(".page-thumbnail"));
+  const currentIndex = thumbnails.indexOf(thumbnail);
+  const gridColumns = Math.floor((document.getElementById("split-page-grid")?.offsetWidth || 600) / 140);
+  let newIndex = currentIndex;
+  switch (e.key) {
+    case "ArrowRight":
+      e.preventDefault();
+      newIndex = Math.min(currentIndex + 1, thumbnails.length - 1);
+      break;
+    case "ArrowLeft":
+      e.preventDefault();
+      newIndex = Math.max(currentIndex - 1, 0);
+      break;
+    case "ArrowDown":
+      e.preventDefault();
+      newIndex = Math.min(currentIndex + gridColumns, thumbnails.length - 1);
+      break;
+    case "ArrowUp":
+      e.preventDefault();
+      newIndex = Math.max(currentIndex - gridColumns, 0);
+      break;
+    case " ":
+    case "Enter":
+      e.preventDefault();
+      togglePageSelection(pageNum, e.shiftKey);
+      return;
+  }
+  if (newIndex !== currentIndex) {
+    thumbnails[newIndex]?.focus();
+  }
+}
+function togglePageSelection(pageNumber, shiftKey) {
+  const pageIndex = pageNumber - 1;
+  if (shiftKey && splitState.lastSelectedIndex !== null) {
+    const start = Math.min(splitState.lastSelectedIndex, pageIndex);
+    const end = Math.max(splitState.lastSelectedIndex, pageIndex);
+    for (let i = start; i <= end; i++) {
+      const page = splitState.pages[i];
+      if (page) {
+        page.isSelected = true;
+        splitState.selectedPageNumbers.add(page.pageNumber);
+      }
+    }
+  } else {
+    const page = splitState.pages[pageIndex];
+    if (page) {
+      page.isSelected = !page.isSelected;
+      if (page.isSelected) {
+        splitState.selectedPageNumbers.add(pageNumber);
+      } else {
+        splitState.selectedPageNumbers.delete(pageNumber);
+      }
+    }
+  }
+  splitState.lastSelectedIndex = pageIndex;
+  updateThumbnailSelectionUI();
+  updateSelectionSummary();
+  updateSplitButtonState();
+}
+function updateThumbnailSelectionUI() {
+  const thumbnails = document.querySelectorAll(".page-thumbnail");
+  thumbnails.forEach((thumb) => {
+    const pageNum = parseInt(thumb.dataset.page || "0", 10);
+    const isSelected = splitState.selectedPageNumbers.has(pageNum);
+    thumb.classList.toggle("selected", isSelected);
+    thumb.setAttribute("aria-pressed", String(isSelected));
+  });
+}
+function updateSelectionSummary() {
+  const countEl = document.getElementById("split-selected-count");
+  const pagesEl = document.getElementById("split-selected-pages");
+  if (!countEl || !pagesEl) return;
+  const count = splitState.selectedPageNumbers.size;
+  countEl.textContent = String(count);
+  const pageList = formatPageRanges(Array.from(splitState.selectedPageNumbers).sort((a, b) => a - b));
+  pagesEl.textContent = count > 0 ? `(${pageList})` : "";
+}
+function formatPageRanges(pages) {
+  if (pages.length === 0) return "";
+  const ranges = [];
+  let rangeStart = pages[0];
+  let rangeEnd = pages[0];
+  for (let i = 1; i <= pages.length; i++) {
+    if (i < pages.length && pages[i] === rangeEnd + 1) {
+      rangeEnd = pages[i];
+    } else {
+      if (rangeStart === rangeEnd) {
+        ranges.push(String(rangeStart));
+      } else if (rangeEnd === rangeStart + 1) {
+        ranges.push(`${rangeStart}, ${rangeEnd}`);
+      } else {
+        ranges.push(`${rangeStart}-${rangeEnd}`);
+      }
+      if (i < pages.length) {
+        rangeStart = pages[i];
+        rangeEnd = pages[i];
+      }
+    }
+  }
+  return ranges.join(", ");
+}
+function updateSplitButtonState() {
+  const splitBtn = document.getElementById("split-btn");
+  if (splitBtn) {
+    splitBtn.disabled = splitState.selectedPageNumbers.size === 0;
+  }
 }
 async function handleSplitFile(file) {
   if (!splitSession) return;
@@ -2517,8 +3186,12 @@ async function handleSplitFile(file) {
       console.warn(`Large file: ${format_bytes(file.size)} - processing may take longer`);
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const info = splitSession.addDocument(file.name, bytes);
-    setSharedPdf(bytes, file.name, "split");
+    const bytesForWasm = bytes.slice();
+    const bytesForShared = bytes.slice();
+    const bytesForThumbnails = bytes.slice();
+    const info = splitSession.addDocument(file.name, bytesForWasm);
+    setSharedPdf(bytesForShared, file.name, "split");
+    splitState.pdfBytes = bytesForThumbnails;
     splitOriginalFilename = file.name.replace(/\.pdf$/i, "");
     document.getElementById("split-drop-zone")?.classList.add("hidden");
     document.getElementById("split-editor")?.classList.remove("hidden");
@@ -2526,29 +3199,136 @@ async function handleSplitFile(file) {
     const fileDetailsEl = document.getElementById("split-file-details");
     if (fileNameEl) fileNameEl.textContent = file.name;
     if (fileDetailsEl) fileDetailsEl.textContent = `${info.page_count} pages - ${format_bytes(info.size_bytes)}`;
-    updateExampleChips(info.page_count);
-    const rangeInput = document.getElementById("page-range");
+    updateQuickSelectButtons(info.page_count);
+    splitState.pages = [];
+    splitState.selectedPageNumbers.clear();
+    splitState.separateFiles = false;
+    splitState.lastSelectedIndex = null;
+    await renderPageThumbnails(bytesForThumbnails, info.page_count);
     const splitBtn = document.getElementById("split-btn");
-    if (rangeInput) rangeInput.value = "";
     if (splitBtn) splitBtn.disabled = true;
-    announceToScreenReader(`${file.name} loaded. ${info.page_count} pages. Enter page range to split.`);
+    updateSelectionSummary();
+    announceToScreenReader(`${file.name} loaded. ${info.page_count} pages. Click pages to select them for extraction.`);
   } catch (e) {
     showError2("split-error", String(e));
     announceToScreenReader(`Error loading file: ${e}`);
   }
 }
+function updateQuickSelectButtons(pageCount) {
+  const first5Btn = document.getElementById("split-first5-btn");
+  const last5Btn = document.getElementById("split-last5-btn");
+  if (first5Btn) first5Btn.style.display = pageCount >= 5 ? "" : "none";
+  if (last5Btn) last5Btn.style.display = pageCount >= 5 ? "" : "none";
+}
+async function renderPageThumbnails(bytes, pageCount) {
+  const pageGrid = document.getElementById("split-page-grid");
+  const progressContainer = document.getElementById("split-thumbnail-progress");
+  const progressFill = document.getElementById("split-thumbnail-progress-fill");
+  const progressText = document.getElementById("split-thumbnail-progress-text");
+  if (!pageGrid) return;
+  if (progressContainer) progressContainer.classList.remove("hidden");
+  pageGrid.innerHTML = "";
+  try {
+    await ensurePdfJsLoaded();
+    if (!window.pdfjsLib) {
+      throw new Error("PDF.js not available");
+    }
+    splitState.pdfDoc = await window.pdfjsLib.getDocument(bytes).promise;
+    for (let i = 1; i <= pageCount; i++) {
+      if (progressFill) progressFill.style.width = `${i / pageCount * 100}%`;
+      if (progressText) progressText.textContent = `${i} of ${pageCount} pages`;
+      const thumbnailDataUrl = await renderSinglePageThumbnail(splitState.pdfDoc, i);
+      const thumbnail = {
+        pageNumber: i,
+        thumbnailDataUrl,
+        isSelected: false
+      };
+      splitState.pages.push(thumbnail);
+      const thumbEl = createThumbnailElement(thumbnail);
+      pageGrid.appendChild(thumbEl);
+    }
+    if (progressContainer) progressContainer.classList.add("hidden");
+  } catch (e) {
+    console.error("Failed to render thumbnails:", e);
+    if (progressContainer) progressContainer.classList.add("hidden");
+    pageGrid.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: var(--text-muted);">
+        <p>Could not load page previews.</p>
+        <p>Use the quick select buttons or manual input below.</p>
+      </div>
+    `;
+    for (let i = 1; i <= pageCount; i++) {
+      splitState.pages.push({
+        pageNumber: i,
+        thumbnailDataUrl: "",
+        isSelected: false
+      });
+    }
+  }
+}
+async function renderSinglePageThumbnail(pdfDoc, pageNum) {
+  const page = await pdfDoc.getPage(pageNum);
+  const scale = 0.3;
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not get canvas context");
+  await page.render({
+    canvasContext: ctx,
+    viewport
+  }).promise;
+  return canvas.toDataURL("image/jpeg", 0.7);
+}
+function createThumbnailElement(thumbnail) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "page-thumbnail";
+  btn.dataset.page = String(thumbnail.pageNumber);
+  btn.setAttribute("role", "button");
+  btn.setAttribute("aria-pressed", "false");
+  btn.setAttribute("aria-label", `Page ${thumbnail.pageNumber}, not selected`);
+  btn.tabIndex = 0;
+  btn.innerHTML = `
+    <div class="page-thumbnail-preview">
+      ${thumbnail.thumbnailDataUrl ? `<img src="${thumbnail.thumbnailDataUrl}" alt="Preview of page ${thumbnail.pageNumber}" loading="lazy" />` : `<span style="color: var(--text-muted);">${thumbnail.pageNumber}</span>`}
+    </div>
+    <span class="page-thumbnail-check" aria-hidden="true">&#10003;</span>
+    <span class="page-thumbnail-number">${thumbnail.pageNumber}</span>
+  `;
+  btn.addEventListener("click", (e) => {
+    togglePageSelection(thumbnail.pageNumber, e.shiftKey);
+    const isSelected = splitState.selectedPageNumbers.has(thumbnail.pageNumber);
+    btn.setAttribute("aria-label", `Page ${thumbnail.pageNumber}, ${isSelected ? "selected" : "not selected"}`);
+  });
+  return btn;
+}
 function resetSplitView() {
   if (!splitSession) return;
   splitSession.removeDocument(0);
   splitOriginalFilename = null;
+  splitState.pages = [];
+  splitState.selectedPageNumbers.clear();
+  splitState.separateFiles = false;
+  splitState.lastSelectedIndex = null;
+  splitState.pdfBytes = null;
+  if (splitState.pdfDoc) {
+    splitState.pdfDoc.destroy();
+    splitState.pdfDoc = null;
+  }
   document.getElementById("split-drop-zone")?.classList.remove("hidden");
   document.getElementById("split-editor")?.classList.add("hidden");
+  const pageGrid = document.getElementById("split-page-grid");
+  if (pageGrid) pageGrid.innerHTML = "";
   const fileInput = document.getElementById("split-file-input");
   const rangeInput = document.getElementById("page-range");
   const splitBtn = document.getElementById("split-btn");
+  const separateFilesCheckbox = document.getElementById("split-separate-files");
   if (fileInput) fileInput.value = "";
   if (rangeInput) rangeInput.value = "";
   if (splitBtn) splitBtn.disabled = true;
+  if (separateFilesCheckbox) separateFilesCheckbox.checked = false;
 }
 function validateRange() {
   if (!splitSession) return;
@@ -2568,37 +3348,59 @@ async function executeSplit() {
   if (!splitSession) return;
   const splitBtn = document.getElementById("split-btn");
   const progress = document.getElementById("split-progress");
-  const rangeInput = document.getElementById("page-range");
-  const multiFileCheckbox = document.getElementById("split-multiple-files");
-  if (!splitBtn || !progress || !rangeInput) return;
+  if (!splitBtn || !progress) return;
   splitBtn.disabled = true;
   progress.classList.remove("hidden");
   try {
-    const isMultiFile = multiFileCheckbox?.checked;
-    const fullRange = rangeInput.value;
-    if (isMultiFile && fullRange.includes(",")) {
-      const ranges = fullRange.split(",").map((r) => r.trim()).filter((r) => r);
-      for (let i = 0; i < ranges.length; i++) {
-        const range = ranges[i];
-        const progressText = document.querySelector("#split-progress .progress-text");
-        if (progressText) {
-          progressText.textContent = `Processing range ${i + 1} of ${ranges.length}...`;
+    const selectedPages = Array.from(splitState.selectedPageNumbers).sort((a, b) => a - b);
+    const separateFiles = splitState.separateFiles;
+    if (selectedPages.length === 0) {
+      const rangeInput = document.getElementById("page-range");
+      const multiFileCheckbox = document.getElementById("split-multiple-files");
+      if (!rangeInput?.value) {
+        showError2("split-error", "No pages selected. Click pages to select them.");
+        return;
+      }
+      const fullRange = rangeInput.value;
+      const isMultiFile = multiFileCheckbox?.checked;
+      if (isMultiFile && fullRange.includes(",")) {
+        const ranges = fullRange.split(",").map((r) => r.trim()).filter((r) => r);
+        for (let i = 0; i < ranges.length; i++) {
+          splitSession.setPageSelection(ranges[i]);
+          const result = splitSession.execute();
+          const rangeLabel = ranges[i].replace(/\s+/g, "");
+          downloadBlob(result, `${splitOriginalFilename || "split"}-pages-${rangeLabel}.pdf`);
+          if (i < ranges.length - 1) await new Promise((r) => setTimeout(r, 100));
         }
-        splitSession.setPageSelection(range);
+        announceToScreenReader(`Split complete. ${ranges.length} files are downloading.`);
+      } else {
+        splitSession.setPageSelection(fullRange);
         const result = splitSession.execute();
-        const rangeLabel = range.replace(/\s+/g, "");
-        const filename = `${splitOriginalFilename || "split"}-pages-${rangeLabel}.pdf`;
-        downloadBlob(result, filename);
-        if (i < ranges.length - 1) {
+        const range = fullRange.replace(/\s+/g, "").replace(/,/g, "_");
+        downloadBlob(result, `${splitOriginalFilename || "split"}-pages-${range}.pdf`);
+        announceToScreenReader(`Split complete. File is downloading.`);
+      }
+    } else if (separateFiles) {
+      const progressText = document.querySelector("#split-progress .progress-text");
+      for (let i = 0; i < selectedPages.length; i++) {
+        const pageNum = selectedPages[i];
+        if (progressText) {
+          progressText.textContent = `Processing page ${i + 1} of ${selectedPages.length}...`;
+        }
+        splitSession.setPageSelection(String(pageNum));
+        const result = splitSession.execute();
+        downloadBlob(result, `${splitOriginalFilename || "split"}-page-${pageNum}.pdf`);
+        if (i < selectedPages.length - 1) {
           await new Promise((r) => setTimeout(r, 100));
         }
       }
-      splitSession.setPageSelection(fullRange);
-      announceToScreenReader(`Split complete. ${ranges.length} files are downloading.`);
+      announceToScreenReader(`Split complete. ${selectedPages.length} files are downloading.`);
     } else {
+      const pageRange = formatPageRanges(selectedPages);
+      splitSession.setPageSelection(pageRange);
       const result = splitSession.execute();
-      const range = fullRange.replace(/\s+/g, "").replace(/,/g, "_");
-      const filename = `${splitOriginalFilename || "split"}-pages-${range}.pdf`;
+      const rangeLabel = pageRange.replace(/\s+/g, "").replace(/,/g, "_");
+      const filename = `${splitOriginalFilename || "split"}-pages-${rangeLabel}.pdf`;
       downloadBlob(result, filename);
       announceToScreenReader(`Split complete. ${filename} is downloading.`);
     }
@@ -2616,48 +3418,14 @@ function onSplitProgress(current, total, message) {
   if (progressFill) progressFill.style.width = `${current / total * 100}%`;
   if (progressText) progressText.textContent = message;
 }
-function updateExampleChips(pageCount) {
-  const container = document.getElementById("range-chips");
-  if (!container) return;
-  container.innerHTML = "";
-  const chips = [];
-  if (pageCount >= 1) {
-    chips.push({ label: "First page", range: "1" });
-  }
-  if (pageCount >= 5) {
-    chips.push({ label: "First 5", range: "1-5" });
-  }
-  if (pageCount >= 3) {
-    const last3Start = pageCount - 2;
-    chips.push({ label: "Last 3", range: `${last3Start}-${pageCount}` });
-  }
-  if (pageCount >= 1) {
-    chips.push({ label: "All pages", range: `1-${pageCount}` });
-  }
-  chips.forEach(({ label, range }) => {
-    const chip = document.createElement("button");
-    chip.className = "chip";
-    chip.type = "button";
-    chip.textContent = label;
-    chip.dataset.range = range;
-    chip.addEventListener("click", () => {
-      const rangeInput = document.getElementById("page-range");
-      if (rangeInput) {
-        rangeInput.value = range;
-        validateRange();
-      }
-    });
-    container.appendChild(chip);
-  });
-}
 function setupMergeView() {
   const dropZone = document.getElementById("merge-drop-zone");
   const fileInput = document.getElementById("merge-file-input");
   const browseBtn = document.getElementById("merge-browse-btn");
   const addBtn = document.getElementById("merge-add-btn");
   const mergeBtn = document.getElementById("merge-btn");
-  const fileList = document.getElementById("merge-file-list");
-  if (!dropZone || !fileInput || !browseBtn || !addBtn || !mergeBtn || !fileList) return;
+  const pagePicker = document.getElementById("merge-page-picker");
+  if (!dropZone || !fileInput || !browseBtn || !mergeBtn) return;
   browseBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     fileInput.click();
@@ -2675,33 +3443,50 @@ function setupMergeView() {
       handleMergeFiles(e.dataTransfer.files);
     }
   });
-  fileList.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    fileList.classList.add("drag-over");
-  });
-  fileList.addEventListener("dragleave", () => fileList.classList.remove("drag-over"));
-  fileList.addEventListener("drop", (e) => {
-    e.preventDefault();
-    fileList.classList.remove("drag-over");
-    if (e.dataTransfer?.files) {
-      handleMergeFiles(e.dataTransfer.files);
-    }
-  });
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files) {
-      handleMergeFiles(fileInput.files);
+  if (pagePicker) {
+    pagePicker.addEventListener("dragover", (e) => {
+      if (e.dataTransfer?.types.includes("Files")) {
+        e.preventDefault();
+        pagePicker.classList.add("drag-over");
+      }
+    });
+    pagePicker.addEventListener("dragleave", () => pagePicker.classList.remove("drag-over"));
+    pagePicker.addEventListener("drop", (e) => {
+      if (e.dataTransfer?.types.includes("Files")) {
+        e.preventDefault();
+        pagePicker.classList.remove("drag-over");
+        if (e.dataTransfer?.files) {
+          handleMergeFiles(e.dataTransfer.files);
+        }
+      }
+    });
+  }
+  fileInput.addEventListener("change", async () => {
+    if (fileInput.files && fileInput.files.length > 0) {
+      const filesArray = [];
+      for (let i = 0; i < fileInput.files.length; i++) {
+        filesArray.push(fileInput.files[i]);
+      }
       fileInput.value = "";
+      await handleMergeFilesArray(filesArray);
     }
   });
-  addBtn.addEventListener("click", () => fileInput.click());
+  if (addBtn) addBtn.addEventListener("click", () => fileInput.click());
   mergeBtn.addEventListener("click", executeMerge);
 }
 async function handleMergeFiles(files) {
+  const filesArray = [];
+  for (let i = 0; i < files.length; i++) {
+    filesArray.push(files[i]);
+  }
+  await handleMergeFilesArray(filesArray);
+}
+async function handleMergeFilesArray(files) {
   if (!mergeSession) return;
   const { format_bytes } = window.wasmBindings;
   const wasEmpty = mergeSession.getDocumentCount() === 0;
-  const fileArray = Array.from(files);
-  for (const file of fileArray) {
+  await ensurePdfJsLoaded();
+  for (const file of files) {
     if (file.type !== "application/pdf") continue;
     if (file.size > VERY_LARGE_FILE_WARNING_BYTES) {
       if (!confirm(
@@ -2712,173 +3497,413 @@ async function handleMergeFiles(files) {
     }
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      mergeSession.addDocument(file.name, bytes);
+      const bytesForWasm = bytes.slice();
+      const bytesForPdfJs = bytes.slice();
+      const bytesForStorage = bytes.slice();
+      const info = mergeSession.addDocument(file.name, bytesForWasm);
+      const pdfDoc = await window.pdfjsLib.getDocument(bytesForPdfJs).promise;
+      const docId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const shortCode = generateShortCode(file.name);
+      const mergeDoc = {
+        id: docId,
+        filename: file.name,
+        pdfBytes: bytesForStorage,
+        pageCount: info.page_count,
+        pages: [],
+        isExpanded: mergeState.documents.length === 0,
+        // First doc expanded by default
+        shortCode,
+        pdfDoc
+      };
+      for (let i = 1; i <= info.page_count; i++) {
+        mergeDoc.pages.push({
+          pageNumber: i,
+          thumbnailDataUrl: "",
+          // Render lazily
+          isSelected: true
+        });
+        mergeState.mergeOrder.push({
+          documentId: docId,
+          pageNumber: i
+        });
+      }
+      mergeState.documents.push(mergeDoc);
       if (wasEmpty && mergeSession.getDocumentCount() === 1) {
-        setSharedPdf(bytes, file.name, "merge");
+        setSharedPdf(bytesForStorage, file.name, "merge");
       }
     } catch (e) {
       showError2("merge-error", `${file.name}: ${e}`);
       announceToScreenReader(`Error loading ${file.name}: ${e}`);
     }
   }
-  updateMergeFileList();
+  updateMergePagePicker();
+  preRenderAllMergeThumbnails();
   if (mergeSession) {
     const count = mergeSession.getDocumentCount();
     const totalPages = mergeSession.getTotalPageCount();
     if (count > 0) {
-      announceToScreenReader(`${count} files loaded with ${totalPages} total pages. Ready to merge.`);
+      announceToScreenReader(`${count} files loaded with ${totalPages} total pages. Select pages and drag to reorder.`);
     }
   }
 }
-function moveFile(fromIndex, toIndex) {
-  if (!mergeSession) return;
-  const count = mergeSession.getDocumentCount();
-  if (fromIndex < 0 || fromIndex >= count || toIndex < 0 || toIndex >= count) return;
-  const order = [...Array(count).keys()];
-  order.splice(fromIndex, 1);
-  order.splice(toIndex, 0, fromIndex);
-  try {
-    mergeSession.reorderDocuments(order);
-    updateMergeFileList();
-  } catch (e) {
-    console.error("Reorder failed:", e);
+async function preRenderAllMergeThumbnails() {
+  for (const doc of mergeState.documents) {
+    if (!doc.pdfDoc) continue;
+    for (const page of doc.pages) {
+      if (!page.thumbnailDataUrl) {
+        page.thumbnailDataUrl = await renderMergePageThumbnail(doc.pdfDoc, page.pageNumber);
+      }
+    }
   }
+  renderMergePreviewStrip();
 }
-function updateMergeFileList() {
-  if (!mergeSession) return;
-  const { format_bytes } = window.wasmBindings;
-  const infos = mergeSession.getDocumentInfos();
-  const count = mergeSession.getDocumentCount();
-  const hasFiles = count > 0;
+function updateMergePagePicker() {
+  const hasFiles = mergeState.documents.length > 0;
   document.getElementById("merge-drop-zone")?.classList.toggle("hidden", hasFiles);
-  document.getElementById("merge-file-list")?.classList.toggle("hidden", !hasFiles);
-  const totalSize = infos.reduce((sum, info) => sum + info.size_bytes, 0);
-  const totalPages = infos.reduce((sum, info) => sum + info.page_count, 0);
-  const countEl = document.getElementById("merge-count");
-  if (countEl) {
-    countEl.textContent = `(${count} files, ${totalPages} pages, ${format_bytes(totalSize)})`;
-  }
-  const ul = document.getElementById("merge-files");
-  if (!ul) return;
-  ul.innerHTML = "";
-  const totalFiles = infos.length;
-  infos.forEach((info, idx) => {
-    const li = document.createElement("li");
-    li.draggable = true;
-    li.dataset.index = String(idx);
-    li.tabIndex = 0;
-    li.setAttribute("role", "listitem");
-    li.setAttribute("aria-label", `${info.name}, ${info.page_count} pages. Use arrow keys or buttons to reorder.`);
-    li.innerHTML = `
-            <span class="drag-handle" aria-hidden="true">\u2630</span>
-            <span class="file-name">${info.name}</span>
-            <span class="file-size">${info.page_count} pages - ${format_bytes(info.size_bytes)}</span>
-            <div class="reorder-btns">
-              <button class="move-btn move-up" title="Move up" aria-label="Move ${info.name} up" ${idx === 0 ? "disabled" : ""}>\u2191</button>
-              <button class="move-btn move-down" title="Move down" aria-label="Move ${info.name} down" ${idx === totalFiles - 1 ? "disabled" : ""}>\u2193</button>
-            </div>
-            <button class="remove-btn" data-index="${idx}" aria-label="Remove ${info.name}">\xD7</button>
-        `;
-    const moveUpBtn = li.querySelector(".move-up");
-    const moveDownBtn = li.querySelector(".move-down");
-    moveUpBtn?.addEventListener("click", (e) => {
+  document.getElementById("merge-page-picker")?.classList.toggle("hidden", !hasFiles);
+  if (!hasFiles) return;
+  renderMergeDocuments();
+  renderMergePreviewStrip();
+  updateMergeButtonState();
+}
+function renderMergeDocuments() {
+  const container = document.getElementById("merge-documents");
+  if (!container) return;
+  container.innerHTML = "";
+  mergeState.documents.forEach((doc, docIdx) => {
+    const docEl = document.createElement("div");
+    docEl.className = `merge-document${doc.isExpanded ? " expanded" : ""}`;
+    docEl.dataset.docId = doc.id;
+    const header = document.createElement("div");
+    header.className = "merge-document-header";
+    header.innerHTML = `
+      <span class="merge-document-icon" aria-hidden="true">&#128196;</span>
+      <span class="merge-document-shortcode">${doc.shortCode}</span>
+      <span class="merge-document-name" title="${doc.filename}">${doc.filename}</span>
+      <span class="merge-document-pages">(${doc.pageCount} pages)</span>
+      <button class="merge-document-toggle" aria-expanded="${doc.isExpanded}" aria-label="${doc.isExpanded ? "Collapse" : "Expand"} ${doc.filename}">
+        &#9660;
+      </button>
+      <button class="merge-document-remove" aria-label="Remove ${doc.filename}">&#10005;</button>
+    `;
+    header.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target.closest(".merge-document-remove")) return;
+      doc.isExpanded = !doc.isExpanded;
+      docEl.classList.toggle("expanded", doc.isExpanded);
+      const toggleBtn = header.querySelector(".merge-document-toggle");
+      if (toggleBtn) {
+        toggleBtn.setAttribute("aria-expanded", String(doc.isExpanded));
+        toggleBtn.setAttribute("aria-label", `${doc.isExpanded ? "Collapse" : "Expand"} ${doc.filename}`);
+      }
+      if (doc.isExpanded) {
+        renderDocumentThumbnails(doc, docEl.querySelector(".merge-document-content"));
+      }
+    });
+    const removeBtn = header.querySelector(".merge-document-remove");
+    removeBtn?.addEventListener("click", async (e) => {
       e.stopPropagation();
-      if (idx > 0) {
-        moveFile(idx, idx - 1);
-      }
-    });
-    moveDownBtn?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (idx < totalFiles - 1) {
-        moveFile(idx, idx + 1);
-      }
-    });
-    li.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowUp" && idx > 0) {
-        e.preventDefault();
-        moveFile(idx, idx - 1);
-        setTimeout(() => {
-          const newItem = ul.querySelector(`li[data-index="${idx - 1}"]`);
-          newItem?.focus();
-        }, 0);
-      } else if (e.key === "ArrowDown" && idx < totalFiles - 1) {
-        e.preventDefault();
-        moveFile(idx, idx + 1);
-        setTimeout(() => {
-          const newItem = ul.querySelector(`li[data-index="${idx + 1}"]`);
-          newItem?.focus();
-        }, 0);
-      }
-    });
-    const removeBtn = li.querySelector(".remove-btn");
-    removeBtn?.addEventListener("click", async () => {
       const confirmed = await showConfirmDialog({
-        title: "Remove File?",
-        message: `Are you sure you want to remove "${info.name}" from the merge list? You can add it again later.`,
+        title: "Remove Document?",
+        message: `Are you sure you want to remove "${doc.filename}" from the merge list?`,
         confirmText: "Remove",
         cancelText: "Keep"
       });
       if (confirmed) {
-        mergeSession?.removeDocument(idx);
-        updateMergeFileList();
+        removeMergeDocument(docIdx);
       }
     });
-    li.addEventListener("dragstart", onDragStart);
-    li.addEventListener("dragover", onDragOver);
-    li.addEventListener("drop", onDrop);
-    li.addEventListener("dragend", onDragEnd);
-    ul.appendChild(li);
-  });
-  const mergeBtn = document.getElementById("merge-btn");
-  if (mergeBtn) mergeBtn.disabled = !mergeSession.canExecute();
-}
-var draggedIndex = null;
-function onDragStart(e) {
-  const target = e.target;
-  draggedIndex = parseInt(target.dataset.index || "0", 10);
-  target.classList.add("dragging");
-}
-function onDragOver(e) {
-  e.preventDefault();
-  const li = e.target.closest("li");
-  if (li) li.classList.add("drag-over");
-}
-function onDrop(e) {
-  e.preventDefault();
-  if (!mergeSession) return;
-  const li = e.target.closest("li");
-  if (!li) return;
-  const dropIndex = parseInt(li.dataset.index || "0", 10);
-  if (draggedIndex !== null && draggedIndex !== dropIndex) {
-    const count = mergeSession.getDocumentCount();
-    const order = [...Array(count).keys()];
-    order.splice(draggedIndex, 1);
-    order.splice(dropIndex, 0, draggedIndex);
-    try {
-      mergeSession.reorderDocuments(order);
-      updateMergeFileList();
-    } catch (e2) {
-      console.error("Reorder failed:", e2);
+    docEl.appendChild(header);
+    const content = document.createElement("div");
+    content.className = "merge-document-content";
+    const pageGrid = document.createElement("div");
+    pageGrid.className = "merge-page-grid";
+    pageGrid.id = `merge-page-grid-${doc.id}`;
+    const actions = document.createElement("div");
+    actions.className = "merge-page-actions";
+    actions.innerHTML = `
+      <button class="merge-quick-select" data-action="all">All</button>
+      <button class="merge-quick-select" data-action="none">None</button>
+    `;
+    actions.querySelector('[data-action="all"]')?.addEventListener("click", () => {
+      selectAllMergePages(doc, true);
+    });
+    actions.querySelector('[data-action="none"]')?.addEventListener("click", () => {
+      selectAllMergePages(doc, false);
+    });
+    content.appendChild(pageGrid);
+    content.appendChild(actions);
+    docEl.appendChild(content);
+    container.appendChild(docEl);
+    if (doc.isExpanded) {
+      renderDocumentThumbnails(doc, content);
     }
+  });
+}
+async function renderDocumentThumbnails(doc, content) {
+  if (!content) return;
+  const grid = content.querySelector(".merge-page-grid");
+  if (!grid) return;
+  if (grid.children.length > 0) return;
+  grid.innerHTML = '<div class="merge-page-loading">Loading thumbnails...</div>';
+  try {
+    for (let i = 0; i < doc.pages.length; i++) {
+      const page = doc.pages[i];
+      if (!page.thumbnailDataUrl && doc.pdfDoc) {
+        page.thumbnailDataUrl = await renderMergePageThumbnail(doc.pdfDoc, page.pageNumber);
+      }
+    }
+    grid.innerHTML = "";
+    doc.pages.forEach((page) => {
+      const thumb = document.createElement("button");
+      thumb.className = `merge-page-thumb${page.isSelected ? " selected" : ""}`;
+      thumb.type = "button";
+      thumb.setAttribute("role", "checkbox");
+      thumb.setAttribute("aria-checked", String(page.isSelected));
+      thumb.setAttribute("aria-label", `Page ${page.pageNumber}${page.isSelected ? ", selected" : ""}`);
+      thumb.innerHTML = `
+        <img class="merge-page-canvas" src="${page.thumbnailDataUrl}" alt="Page ${page.pageNumber}" />
+        <span class="merge-page-num">${page.pageNumber}</span>
+      `;
+      thumb.addEventListener("click", () => {
+        toggleMergePageSelection(doc, page);
+        thumb.classList.toggle("selected", page.isSelected);
+        thumb.setAttribute("aria-checked", String(page.isSelected));
+        thumb.setAttribute("aria-label", `Page ${page.pageNumber}${page.isSelected ? ", selected" : ""}`);
+      });
+      grid.appendChild(thumb);
+    });
+    renderMergePreviewStrip();
+  } catch (e) {
+    grid.innerHTML = '<div class="merge-page-loading" style="color: var(--error)">Failed to load thumbnails</div>';
+    console.error("Failed to render thumbnails:", e);
   }
 }
-function onDragEnd() {
-  draggedIndex = null;
-  document.querySelectorAll(".dragging, .drag-over").forEach((el) => {
-    el.classList.remove("dragging", "drag-over");
+function toggleMergePageSelection(doc, page) {
+  page.isSelected = !page.isSelected;
+  if (page.isSelected) {
+    mergeState.mergeOrder.push({
+      documentId: doc.id,
+      pageNumber: page.pageNumber
+    });
+  } else {
+    mergeState.mergeOrder = mergeState.mergeOrder.filter(
+      (ref) => !(ref.documentId === doc.id && ref.pageNumber === page.pageNumber)
+    );
+  }
+  renderMergePreviewStrip();
+  updateMergeButtonState();
+}
+function selectAllMergePages(doc, select) {
+  doc.pages.forEach((page) => {
+    if (page.isSelected !== select) {
+      page.isSelected = select;
+      if (select) {
+        const exists = mergeState.mergeOrder.some(
+          (ref) => ref.documentId === doc.id && ref.pageNumber === page.pageNumber
+        );
+        if (!exists) {
+          mergeState.mergeOrder.push({
+            documentId: doc.id,
+            pageNumber: page.pageNumber
+          });
+        }
+      } else {
+        mergeState.mergeOrder = mergeState.mergeOrder.filter(
+          (ref) => !(ref.documentId === doc.id && ref.pageNumber === page.pageNumber)
+        );
+      }
+    }
   });
+  const grid = document.getElementById(`merge-page-grid-${doc.id}`);
+  if (grid) {
+    const thumbs = grid.querySelectorAll(".merge-page-thumb");
+    thumbs.forEach((thumb, idx) => {
+      const page = doc.pages[idx];
+      thumb.classList.toggle("selected", page.isSelected);
+      thumb.setAttribute("aria-checked", String(page.isSelected));
+    });
+  }
+  renderMergePreviewStrip();
+  updateMergeButtonState();
+}
+function removeMergeDocument(docIdx) {
+  const doc = mergeState.documents[docIdx];
+  if (!doc) return;
+  mergeState.mergeOrder = mergeState.mergeOrder.filter((ref) => ref.documentId !== doc.id);
+  mergeState.documents.splice(docIdx, 1);
+  mergeSession?.removeDocument(docIdx);
+  if (doc.pdfDoc) {
+    doc.pdfDoc.destroy();
+  }
+  updateMergePagePicker();
+}
+function renderMergePreviewStrip() {
+  const strip = document.getElementById("merge-preview-strip");
+  const summaryText = document.getElementById("merge-summary-text");
+  if (!strip) return;
+  strip.innerHTML = "";
+  if (mergeState.mergeOrder.length === 0) {
+    if (summaryText) summaryText.textContent = "No pages selected";
+    return;
+  }
+  mergeState.mergeOrder.forEach((ref, idx) => {
+    const doc = mergeState.documents.find((d) => d.id === ref.documentId);
+    if (!doc) return;
+    const page = doc.pages.find((p) => p.pageNumber === ref.pageNumber);
+    if (!page) return;
+    const previewPage = document.createElement("div");
+    previewPage.className = "merge-preview-page";
+    previewPage.draggable = true;
+    previewPage.dataset.orderIdx = String(idx);
+    previewPage.setAttribute("role", "listitem");
+    previewPage.tabIndex = 0;
+    const label = `${doc.shortCode}${ref.pageNumber}`;
+    previewPage.setAttribute("aria-label", `${doc.filename} page ${ref.pageNumber}. Drag to reorder.`);
+    const thumbContent = page.thumbnailDataUrl ? `<img class="merge-preview-page-img" src="${page.thumbnailDataUrl}" alt="${label}" />` : `<div class="merge-preview-page-placeholder">${label}</div>`;
+    previewPage.innerHTML = `
+      ${thumbContent}
+      <span class="merge-preview-label">${label}</span>
+      <button class="merge-preview-remove" aria-label="Remove ${label}">&times;</button>
+    `;
+    previewPage.querySelector(".merge-preview-remove")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeFromMergeOrder(idx);
+    });
+    previewPage.addEventListener("dragstart", onPreviewDragStart);
+    previewPage.addEventListener("dragover", onPreviewDragOver);
+    previewPage.addEventListener("drop", onPreviewDrop);
+    previewPage.addEventListener("dragend", onPreviewDragEnd);
+    strip.appendChild(previewPage);
+  });
+  const uniqueDocs = new Set(mergeState.mergeOrder.map((ref) => ref.documentId));
+  if (summaryText) {
+    summaryText.textContent = `Total: ${mergeState.mergeOrder.length} pages from ${uniqueDocs.size} document${uniqueDocs.size !== 1 ? "s" : ""}`;
+  }
+}
+function removeFromMergeOrder(orderIdx) {
+  const ref = mergeState.mergeOrder[orderIdx];
+  if (!ref) return;
+  const doc = mergeState.documents.find((d) => d.id === ref.documentId);
+  if (doc) {
+    const page = doc.pages.find((p) => p.pageNumber === ref.pageNumber);
+    if (page) {
+      page.isSelected = false;
+      const grid = document.getElementById(`merge-page-grid-${doc.id}`);
+      if (grid) {
+        const thumbs = grid.querySelectorAll(".merge-page-thumb");
+        thumbs.forEach((thumb, idx) => {
+          if (doc.pages[idx]?.pageNumber === ref.pageNumber) {
+            thumb.classList.remove("selected");
+            thumb.setAttribute("aria-checked", "false");
+          }
+        });
+      }
+    }
+  }
+  mergeState.mergeOrder.splice(orderIdx, 1);
+  renderMergePreviewStrip();
+  updateMergeButtonState();
+}
+var previewDraggedIdx = null;
+function onPreviewDragStart(e) {
+  const target = e.target;
+  previewDraggedIdx = parseInt(target.dataset.orderIdx || "0", 10);
+  target.classList.add("dragging");
+  e.dataTransfer?.setData("text/plain", String(previewDraggedIdx));
+}
+function onPreviewDragOver(e) {
+  e.preventDefault();
+  const page = e.target.closest(".merge-preview-page");
+  document.querySelectorAll(".merge-preview-page.drop-target").forEach((el) => {
+    el.classList.remove("drop-target");
+  });
+  if (page) page.classList.add("drop-target");
+}
+function onPreviewDrop(e) {
+  e.preventDefault();
+  const page = e.target.closest(".merge-preview-page");
+  if (!page) return;
+  const dropIdx = parseInt(page.dataset.orderIdx || "0", 10);
+  if (previewDraggedIdx !== null && previewDraggedIdx !== dropIdx) {
+    const [moved] = mergeState.mergeOrder.splice(previewDraggedIdx, 1);
+    mergeState.mergeOrder.splice(dropIdx, 0, moved);
+    renderMergePreviewStrip();
+  }
+}
+function onPreviewDragEnd() {
+  previewDraggedIdx = null;
+  document.querySelectorAll(".merge-preview-page.dragging, .merge-preview-page.drop-target").forEach((el) => {
+    el.classList.remove("dragging", "drop-target");
+  });
+}
+function updateMergeButtonState() {
+  const mergeBtn = document.getElementById("merge-btn");
+  if (mergeBtn) {
+    mergeBtn.disabled = mergeState.mergeOrder.length === 0;
+  }
 }
 async function executeMerge() {
   if (!mergeSession) return;
+  const { PdfJoinSession, SessionMode } = window.wasmBindings;
   const mergeBtn = document.getElementById("merge-btn");
   const progress = document.getElementById("merge-progress");
   if (!mergeBtn || !progress) return;
   mergeBtn.disabled = true;
   progress.classList.remove("hidden");
   try {
-    const result = mergeSession.execute();
-    const count = mergeSession.getDocumentCount();
-    const filename = `merged-${count}-files.pdf`;
+    const docPages = /* @__PURE__ */ new Map();
+    mergeState.mergeOrder.forEach((ref) => {
+      if (!docPages.has(ref.documentId)) {
+        docPages.set(ref.documentId, []);
+      }
+      docPages.get(ref.documentId).push(ref.pageNumber);
+    });
+    const finalMerge = new PdfJoinSession(SessionMode.Merge);
+    const processedDocs = /* @__PURE__ */ new Set();
+    for (const ref of mergeState.mergeOrder) {
+      if (processedDocs.has(ref.documentId)) continue;
+      processedDocs.add(ref.documentId);
+      const doc = mergeState.documents.find((d) => d.id === ref.documentId);
+      if (!doc) continue;
+      const pages = docPages.get(ref.documentId);
+      const allPages = pages.length === doc.pageCount && pages.every((p, i) => p === i + 1);
+      if (allPages) {
+        finalMerge.addDocument(doc.filename, doc.pdfBytes.slice());
+      } else {
+        const splitSession2 = new PdfJoinSession(SessionMode.Split);
+        splitSession2.addDocument(doc.filename, doc.pdfBytes.slice());
+        const pageRange = pages.join(",");
+        splitSession2.setPageSelection(pageRange);
+        const extractedBytes = splitSession2.execute();
+        finalMerge.addDocument(`${doc.filename}-pages`, extractedBytes);
+      }
+    }
+    let result;
+    let filename;
+    const totalPages = mergeState.mergeOrder.length;
+    if (finalMerge.getDocumentCount() === 1) {
+      const ref = mergeState.mergeOrder[0];
+      const doc = mergeState.documents.find((d) => d.id === ref.documentId);
+      if (doc) {
+        const pages = docPages.get(ref.documentId);
+        const allPages = pages.length === doc.pageCount && pages.every((p, i) => p === i + 1);
+        if (allPages) {
+          result = doc.pdfBytes.slice();
+        } else {
+          const splitSession2 = new PdfJoinSession(SessionMode.Split);
+          splitSession2.addDocument(doc.filename, doc.pdfBytes.slice());
+          splitSession2.setPageSelection(pages.join(","));
+          result = splitSession2.execute();
+        }
+        filename = `${doc.filename.replace(/\.pdf$/i, "")}-${totalPages}-pages.pdf`;
+      } else {
+        throw new Error("Document not found");
+      }
+    } else {
+      result = finalMerge.execute();
+      filename = `merged-${totalPages}-pages.pdf`;
+    }
     downloadBlob(result, filename);
     announceToScreenReader(`Merge complete. ${filename} is downloading.`);
   } catch (e) {

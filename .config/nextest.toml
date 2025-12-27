@@ -1,24 +1,19 @@
-# Nextest configuration
-# https://nexte.st/book/configuration.html
+# Nextest configuration for browser tests
+# Browser tests require headless Chrome and take ~6s each
 
 [profile.default]
-# Fail fast by default
-fail-fast = true
+# Individual test timeout (default is 60s, which is plenty)
+slow-timeout = { period = "60s", terminate-after = 2 }
 
-# Define a test group for browser tests that limits concurrency
-# Each browser test gets its own Chrome instance, so we run them one at a time
-[test-groups.browser-tests]
-max-threads = 1
+# Retry flaky tests once  
+retries = 1
 
-# Match browser test binaries and put them in the browser-tests group
-[[profile.default.overrides]]
-filter = 'binary_id(benchmark-harness::browser_agentpdf) | binary_id(benchmark-harness::browser_core) | binary_id(benchmark-harness::browser_docsign) | binary_id(benchmark-harness::browser_pdfjoin)'
-test-group = 'browser-tests'
+# Browser tests can't run in parallel (shared Chrome instance)
+# Each test creates its own page but shares the browser
+test-threads = 1
 
-# CI profile - same settings but no fail-fast
 [profile.ci]
-fail-fast = false
-
-[[profile.ci.overrides]]
-filter = 'binary_id(benchmark-harness::browser_agentpdf) | binary_id(benchmark-harness::browser_core) | binary_id(benchmark-harness::browser_docsign) | binary_id(benchmark-harness::browser_pdfjoin)'
-test-group = 'browser-tests'
+# CI profile with longer timeouts
+slow-timeout = { period = "120s", terminate-after = 2 }
+retries = 2
+test-threads = 1

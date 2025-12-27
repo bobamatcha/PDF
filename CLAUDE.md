@@ -201,3 +201,33 @@ Good example (DO THIS):
 ```
 
 **Today's date context**: When searching for documentation or solutions online, use the current year (2025) to find up-to-date information. Avoid outdated solutions from 2023 or earlier.
+
+## Documentation Conventions
+
+### Plan File Splitting
+
+**Keep plan/research documents under 1000 lines for readability.**
+
+When a plan file exceeds 1000 lines, split it into numbered parts:
+- `PLAN0.md` - Overview, table of contents, and first section
+- `PLAN1.md` - Subsequent sections
+- `PLAN2.md` - And so on...
+
+For app-specific plans, use the pattern:
+- `PDFJOIN_PLAN0.md`, `PDFJOIN_PLAN1.md`, etc.
+- `DOCSIGN_PLAN0.md`, `DOCSIGN_PLAN1.md`, etc.
+
+Each split file should:
+1. Start with a header indicating it's part of a series (e.g., "# PDFJoin Plan - Part 2 of 3")
+2. Include a link back to PLAN0.md which serves as the index
+3. Be self-contained enough to understand without reading other parts
+
+### Documentation Location
+
+| Doc Type | Location |
+|----------|----------|
+| Project-wide plans | `/PLAN*.md` |
+| App-specific plans | `/[APP]_PLAN*.md` (e.g., `PDFJOIN_PLAN0.md`) |
+| Technical docs | `/docs/*.md` |
+| Known issues | `/KNOWN_ISSUES.md` |
+| Claude guidelines | `/CLAUDE.md` (this file)

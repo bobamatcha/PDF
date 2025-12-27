@@ -42,6 +42,21 @@ impl Default for TextStyle {
     }
 }
 
+/// A segment of styled text for mixed-style text blocks.
+/// Each segment has its own text content and style flags (bold/italic).
+/// Font size and color are inherited from the parent TextStyle.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StyledTextSegment {
+    /// The text content for this segment
+    pub text: String,
+    /// Whether this segment is bold
+    #[serde(default)]
+    pub is_bold: bool,
+    /// Whether this segment is italic
+    #[serde(default)]
+    pub is_italic: bool,
+}
+
 impl TextStyle {
     /// Map a PDF.js font name to a PDF standard font name.
     /// PDF.js returns names like "g_d0_f1", "Times-Roman", "BCDEEE+ArialMT", etc.
@@ -208,6 +223,17 @@ pub enum EditOperation {
         text: String,
         style: TextStyle,
     },
+    /// Add text with mixed styling (bold/italic segments within one text block).
+    /// Each segment can have its own bold/italic flags while sharing font_size and color.
+    AddStyledText {
+        id: OpId,
+        page: u32,
+        rect: PdfRect,
+        /// Individual styled segments that make up the text
+        segments: Vec<StyledTextSegment>,
+        /// Base style (font_size, color, font_name) shared by all segments
+        style: TextStyle,
+    },
     AddHighlight {
         id: OpId,
         page: u32,
@@ -301,6 +327,7 @@ impl EditOperation {
     pub fn id(&self) -> OpId {
         match self {
             EditOperation::AddText { id, .. } => *id,
+            EditOperation::AddStyledText { id, .. } => *id,
             EditOperation::AddHighlight { id, .. } => *id,
             EditOperation::AddUnderline { id, .. } => *id,
             EditOperation::AddCheckbox { id, .. } => *id,
@@ -312,6 +339,7 @@ impl EditOperation {
     pub fn page(&self) -> u32 {
         match self {
             EditOperation::AddText { page, .. } => *page,
+            EditOperation::AddStyledText { page, .. } => *page,
             EditOperation::AddHighlight { page, .. } => *page,
             EditOperation::AddUnderline { page, .. } => *page,
             EditOperation::AddCheckbox { page, .. } => *page,
@@ -348,6 +376,7 @@ impl OperationLog {
         // Update the operation's id
         match &mut op {
             EditOperation::AddText { id: op_id, .. } => *op_id = id,
+            EditOperation::AddStyledText { id: op_id, .. } => *op_id = id,
             EditOperation::AddHighlight { id: op_id, .. } => *op_id = id,
             EditOperation::AddUnderline { id: op_id, .. } => *op_id = id,
             EditOperation::AddCheckbox { id: op_id, .. } => *op_id = id,
@@ -418,6 +447,10 @@ impl OperationLog {
         if let Some(op) = self.get_operation_mut(id) {
             match op {
                 EditOperation::AddText { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddStyledText { ref mut rect, .. } => {
                     *rect = new_rect;
                     true
                 }

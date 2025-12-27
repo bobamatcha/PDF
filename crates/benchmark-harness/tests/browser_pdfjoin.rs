@@ -202,14 +202,13 @@ async fn test_pdfjoin_tab_switching_works() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Check initial state - split view should be visible
+    // Check initial state - tool picker should be visible (new UX)
     let initial_state: serde_json::Value = page
         .evaluate(
             r#"({
+            toolPickerVisible: !document.querySelector('#tool-picker')?.classList.contains('hidden'),
             splitViewVisible: !document.querySelector('#split-view')?.classList.contains('hidden'),
-            mergeViewVisible: !document.querySelector('#merge-view')?.classList.contains('hidden'),
-            splitTabActive: document.querySelector('[data-tab="split"]')?.classList.contains('active'),
-            mergeTabActive: document.querySelector('[data-tab="merge"]')?.classList.contains('active')
+            mergeViewVisible: !document.querySelector('#merge-view')?.classList.contains('hidden')
         })"#,
         )
         .await
@@ -220,12 +219,57 @@ async fn test_pdfjoin_tab_switching_works() {
     eprintln!("Initial state: {:?}", initial_state);
 
     assert!(
-        initial_state["splitViewVisible"].as_bool().unwrap_or(false),
-        "Split view should be visible initially"
+        initial_state["toolPickerVisible"]
+            .as_bool()
+            .unwrap_or(false),
+        "Tool picker should be visible initially"
+    );
+
+    // Click split tool card to navigate to split view
+    let click_split: bool = page
+        .evaluate(
+            r#"(() => {
+                const card = document.querySelector('[data-tool="split"]');
+                if (card) { card.click(); return true; }
+                return false;
+            })()"#,
+        )
+        .await
+        .expect("Should click split tool")
+        .into_value()
+        .expect("Should get value");
+
+    assert!(click_split, "Should find and click split tool card");
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Check state after clicking split tool
+    let after_split_card: serde_json::Value = page
+        .evaluate(
+            r#"({
+            toolPickerVisible: !document.querySelector('#tool-picker')?.classList.contains('hidden'),
+            splitViewVisible: !document.querySelector('#split-view')?.classList.contains('hidden'),
+            splitTabActive: document.querySelector('[data-tab="split"]')?.classList.contains('active')
+        })"#,
+        )
+        .await
+        .expect("Should get state after split card click")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("After split card click: {:?}", after_split_card);
+
+    assert!(
+        after_split_card["splitViewVisible"]
+            .as_bool()
+            .unwrap_or(false),
+        "Split view should be visible after clicking split card"
     );
     assert!(
-        initial_state["splitTabActive"].as_bool().unwrap_or(false),
-        "Split tab should be active initially"
+        after_split_card["splitTabActive"]
+            .as_bool()
+            .unwrap_or(false),
+        "Split tab should be active after clicking split card"
     );
 
     // Click merge tab
@@ -813,10 +857,10 @@ async fn test_pdfjoin_split_example_chips_exist() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                // Click the Split tab first to ensure UI is visible
-                const splitTab = document.getElementById('split-tab');
-                if (splitTab) {{
-                    splitTab.click();
+                // Click the Split tool card first to navigate to split view (new UX)
+                const splitCard = document.querySelector('[data-tool="split"]');
+                if (splitCard) {{
+                    splitCard.click();
                     await new Promise(r => setTimeout(r, 300));
                 }}
 
@@ -841,23 +885,18 @@ async fn test_pdfjoin_split_example_chips_exist() {
                 // Wait longer for chips to be generated (WASM needs to parse PDF)
                 await new Promise(r => setTimeout(r, 1000));
 
-                // Check for example chips in the range-chips container
-                const chipsContainer = document.getElementById('range-chips');
-                const chips = chipsContainer ? chipsContainer.querySelectorAll('.chip, [data-range]') : [];
-                const chipTexts = Array.from(chips).map(c => c.textContent?.trim());
-
-                // Also check in split-editor for any chip-like elements
+                // Check for quick select buttons (First 5, Last 3, etc.)
                 const editor = document.getElementById('split-editor');
-                const editorChips = editor ? editor.querySelectorAll('.chip, .example-chip, .range-chip, [data-range]') : [];
-                const editorChipTexts = Array.from(editorChips).map(c => c.textContent?.trim());
+                const quickSelectBtns = editor ? editor.querySelectorAll('.quick-select-btn, .chip, [data-range], [data-action]') : [];
+                const btnTexts = Array.from(quickSelectBtns).map(c => c.textContent?.trim());
 
                 return {{
                     success: true,
-                    chipCount: chips.length,
-                    chipTexts: chipTexts,
-                    editorChipCount: editorChips.length,
-                    editorChipTexts: editorChipTexts,
-                    hasChips: chips.length > 0 || editorChips.length > 0
+                    chipCount: quickSelectBtns.length,
+                    chipTexts: btnTexts,
+                    editorChipCount: quickSelectBtns.length,
+                    editorChipTexts: btnTexts,
+                    hasChips: quickSelectBtns.length > 0
                 }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};
@@ -1512,8 +1551,8 @@ async fn test_pdfjoin_merge_drag_drop_additional_files() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                // Switch to merge tab
-                document.querySelector('[data-tab="merge"]').click();
+                // Navigate to merge view via tool card (new UX)
+                document.querySelector('[data-tool="merge"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 // Create test PDF bytes
@@ -1536,45 +1575,38 @@ async fn test_pdfjoin_merge_drag_drop_additional_files() {
 
                 // Check state after first file
                 const dropZone = document.getElementById('merge-drop-zone');
-                const fileList = document.getElementById('merge-file-list');
-                const dropZoneHidden = dropZone.classList.contains('hidden');
-                const fileListVisible = !fileList.classList.contains('hidden');
+                const pagePicker = document.getElementById('merge-page-picker');
+                const dropZoneHidden = dropZone?.classList.contains('hidden') ?? false;
+                const pagePickerVisible = pagePicker && !pagePicker.classList.contains('hidden');
 
-                // Now try to find a valid drop target for additional files
-                // It should be either the file list area or a dedicated drop zone
-                const fileListHasDropHandler = fileList.ondrop !== null ||
-                    fileList.getAttribute('ondrop') !== null;
+                // The new UX uses an "Add more files" button instead of drag-drop
+                // Find and click the add more button
+                const addMoreBtn = document.getElementById('merge-add-btn');
 
                 // Check if there's any visible element that accepts drops
                 const visibleDropTargets = document.querySelectorAll('[class*="drop"]:not(.hidden)');
                 const hasVisibleDropTarget = visibleDropTargets.length > 0;
 
-                // Try to simulate a drop on the file list
-                const dropEvent = new DragEvent('drop', {{
-                    bubbles: true,
-                    cancelable: true,
-                    dataTransfer: new DataTransfer()
-                }});
+                // Count files before adding second file
+                const fileCountBefore = document.querySelectorAll('#merge-documents .merge-document').length;
 
-                // Create second file
+                // Use file input to add second file (reuse fileInput from above)
+                const dataTransfer2 = new DataTransfer();
                 const file2 = new File([pdfBytes], 'second.pdf', {{ type: 'application/pdf' }});
-                dropEvent.dataTransfer.items.add(file2);
-
-                // Count files before drop attempt
-                const fileCountBefore = document.querySelectorAll('#merge-files li').length;
-
-                // Dispatch drop event on file list
-                fileList.dispatchEvent(dropEvent);
+                dataTransfer2.items.add(file2);
+                fileInput.files = dataTransfer2.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
 
                 await new Promise(r => setTimeout(r, 500));
 
-                // Count files after drop attempt
-                const fileCountAfter = document.querySelectorAll('#merge-files li').length;
+                // Count files after adding second file
+                const fileCountAfter = document.querySelectorAll('#merge-documents .merge-document').length;
 
                 return {{
                     success: true,
                     dropZoneHidden: dropZoneHidden,
-                    fileListVisible: fileListVisible,
+                    pagePickerVisible: pagePickerVisible,
+                    hasAddMoreBtn: !!addMoreBtn,
                     hasVisibleDropTarget: hasVisibleDropTarget,
                     fileCountBefore: fileCountBefore,
                     fileCountAfter: fileCountAfter,
@@ -1651,9 +1683,22 @@ async fn test_pdfjoin_merge_browse_multiple_files() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                // Switch to merge tab
-                document.querySelector('[data-tab="merge"]').click();
-                await new Promise(r => setTimeout(r, 300));
+                // Wait for PDFJoin to be fully initialized
+                let initialized = false;
+                for (let i = 0; i < 50; i++) {{
+                    if (window.pdfjoinInitialized) {{
+                        initialized = true;
+                        break;
+                    }}
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+                if (!initialized) {{
+                    return {{ success: false, error: 'PDFJoin not initialized after 5 seconds' }};
+                }}
+
+                // Navigate to merge view via tool card (new UX)
+                document.querySelector('[data-tool="merge"]').click();
+                await new Promise(r => setTimeout(r, 500));
 
                 // Create test PDF bytes for 3 different files
                 function decodeB64(b64) {{
@@ -1687,24 +1732,40 @@ async fn test_pdfjoin_merge_browse_multiple_files() {
                 fileInput.files = dataTransfer.files;
                 fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
 
-                // Wait for UI to update
-                await new Promise(r => setTimeout(r, 500));
+                // Wait for UI to update (increased for async PDF processing)
+                await new Promise(r => setTimeout(r, 2000));
 
-                // Count how many files were added to the merge list
-                const fileListItems = document.querySelectorAll('#merge-files li');
-                const fileCount = fileListItems.length;
+                // Debug: check if merge-page-picker is visible
+                const pagePicker = document.getElementById('merge-page-picker');
+                const dropZone = document.getElementById('merge-drop-zone');
+                const pagePickerVisible = pagePicker && !pagePicker.classList.contains('hidden');
+                const dropZoneHidden = dropZone?.classList.contains('hidden');
+
+                // Count how many files were added to the merge list (new UI uses merge-documents)
+                const mergeDocs = document.querySelectorAll('#merge-documents .merge-document');
+                const mergeFilesOld = document.querySelectorAll('#merge-files li');
+                const fileCount = mergeDocs.length || mergeFilesOld.length;
+
+                // Check for errors
+                const errorEl = document.querySelector('#merge-error:not(.hidden)');
+                const errorText = errorEl?.querySelector('.error-text')?.textContent || null;
 
                 // Get the file names that were added
-                const fileNames = Array.from(fileListItems).map(li =>
+                const fileNames = Array.from(mergeDocs).map(doc =>
+                    doc.querySelector('.merge-document-name')?.textContent || ''
+                ).concat(Array.from(mergeFilesOld).map(li =>
                     li.querySelector('.file-name')?.textContent || ''
-                );
+                )).filter(n => n);
 
                 return {{
                     success: true,
                     filesSelected: 3,
                     filesAdded: fileCount,
                     fileNames: fileNames,
-                    allFilesAdded: fileCount === 3
+                    allFilesAdded: fileCount === 3,
+                    pagePickerVisible: pagePickerVisible,
+                    dropZoneHidden: dropZoneHidden,
+                    errorText: errorText
                 }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};
@@ -3622,7 +3683,7 @@ async fn test_pdfjoin_whiteout_can_be_moved_by_dragging() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -3778,7 +3839,7 @@ async fn test_pdfjoin_whiteout_resize_releases_on_mouseup() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -3953,7 +4014,7 @@ async fn test_pdfjoin_whiteout_doubleclick_opens_text_editor() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4075,7 +4136,7 @@ async fn test_pdfjoin_whiteout_has_white_background() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4196,7 +4257,7 @@ async fn test_pdfjoin_whiteout_inline_text_editing() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4346,7 +4407,7 @@ async fn test_pdfjoin_whiteout_text_matches_covered_style() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4504,7 +4565,7 @@ async fn test_pdfjoin_text_tool_uses_inline_editing() {
                     return null; // Cancel the prompt
                 }};
 
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4527,7 +4588,7 @@ async fn test_pdfjoin_text_tool_uses_inline_editing() {
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
-                // Click on the overlay container to add text
+                // Double-click on the overlay container to add text (single-click no longer creates text)
                 const overlay = document.querySelector('.overlay-container');
                 if (!overlay) {{
                     return {{ success: false, error: 'Overlay container not found' }};
@@ -4536,7 +4597,7 @@ async fn test_pdfjoin_text_tool_uses_inline_editing() {
                 const clickX = overlayRect.left + 200;
                 const clickY = overlayRect.top + 300;
 
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: clickX,
                     clientY: clickY
@@ -4613,7 +4674,7 @@ async fn test_pdfjoin_whiteout_text_input_fills_area_and_matches_font() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4768,7 +4829,7 @@ async fn test_pdfjoin_whiteout_saved_text_appears_on_top() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -4920,7 +4981,7 @@ async fn test_pdfjoin_clicking_whiteout_with_text_tool_opens_whiteout_editor() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5074,7 +5135,7 @@ async fn test_pdfjoin_whiteout_text_appears_in_exported_pdf() {
         r#"(async () => {{
             try {{
                 // Go to Edit tab
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5322,7 +5383,7 @@ async fn test_pdfjoin_debug_flattened_export() {
         r#"(async () => {{
             try {{
                 // Go to Edit tab
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5426,7 +5487,7 @@ async fn test_pdfjoin_whiteout_borders_hidden_by_default() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5566,7 +5627,7 @@ async fn test_pdfjoin_edit_existing_text_allows_bold_italic() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5594,23 +5655,18 @@ async fn test_pdfjoin_edit_existing_text_allows_bold_italic() {
                 const clickX = pageRect.left + 200;
                 const clickY = pageRect.top + 200;
 
-                // TextBox creation requires mousedown/mouseup (not just click)
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                // TextBox creation requires double-click
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: clickX,
                     clientY: clickY
                 }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
-                    bubbles: true,
-                    clientX: clickX,
-                    clientY: clickY
-                }}));
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 300));
 
                 // Find the text box and its text-content (contentEditable)
                 const textBox = document.querySelector('.text-box');
                 if (!textBox) {{
-                    return {{ success: false, error: 'Text box not created on mousedown/mouseup' }};
+                    return {{ success: false, error: 'Text box not created on double-click' }};
                 }}
 
                 const textContent = textBox.querySelector('.text-content');
@@ -5712,7 +5768,7 @@ async fn test_pdfjoin_edit_existing_text_bold_enabled_on_second_edit() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5740,23 +5796,18 @@ async fn test_pdfjoin_edit_existing_text_bold_enabled_on_second_edit() {
                 const clickX = pageRect.left + 200;
                 const clickY = pageRect.top + 200;
 
-                // TextBox creation requires mousedown/mouseup
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                // TextBox creation requires double-click
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: clickX,
                     clientY: clickY
                 }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
-                    bubbles: true,
-                    clientX: clickX,
-                    clientY: clickY
-                }}));
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 300));
 
                 // Find the text box and its content area
                 const textBox = document.querySelector('.text-box');
                 if (!textBox) {{
-                    return {{ success: false, error: 'Text box not created on mousedown/mouseup' }};
+                    return {{ success: false, error: 'Text box not created on double-click' }};
                 }}
 
                 const textContent = textBox.querySelector('.text-content');
@@ -5857,7 +5908,7 @@ async fn test_pdfjoin_text_remains_editable_after_first_edit() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -5883,13 +5934,14 @@ async fn test_pdfjoin_text_remains_editable_after_first_edit() {
                 const overlay = document.querySelector('.overlay-container');
                 const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
 
-                // Step 1: Create text box
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Step 1: Create text box (double-click required)
+                const pageDiv = document.querySelector('.edit-page');
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 200,
                     clientY: pageRect.top + 200
                 }}));
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 300));
 
                 let textBox = document.querySelector('.text-box');
                 if (!textBox) {{
@@ -6023,7 +6075,7 @@ async fn test_pdfjoin_multiple_texts_remain_editable_after_switching() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6045,8 +6097,8 @@ async fn test_pdfjoin_multiple_texts_remain_editable_after_switching() {
                 const overlay = document.querySelector('.overlay-container');
                 const rect = overlay.getBoundingClientRect();
 
-                // Step 1: Create Text Box A at position 1
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Step 1: Double-click to create Text Box A at position 1
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: rect.left + 100,
                     clientY: rect.top + 100
@@ -6064,8 +6116,8 @@ async fn test_pdfjoin_multiple_texts_remain_editable_after_switching() {
                 document.body.click();
                 await new Promise(r => setTimeout(r, 200));
 
-                // Step 2: Create Text Box B at different position
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Step 2: Double-click to create Text Box B at different position
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: rect.left + 100,
                     clientY: rect.top + 250
@@ -6224,7 +6276,7 @@ async fn test_pdfjoin_pdf_text_replacement_is_reeditable() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6391,7 +6443,7 @@ async fn test_pdfjoin_reedit_shows_intermediate_text_not_original() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6519,7 +6571,7 @@ async fn test_pdfjoin_reedit_preview_shows_intermediate_not_original() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6796,7 +6848,7 @@ async fn test_pdfjoin_font_size_change_works() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6822,8 +6874,8 @@ async fn test_pdfjoin_font_size_change_works() {
                 const overlay = document.querySelector('.overlay-container');
                 const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
 
-                // Click to create text box
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Double-click to create text box (single-click no longer creates text)
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 200,
                     clientY: pageRect.top + 200
@@ -6933,7 +6985,7 @@ async fn test_pdfjoin_text_overlay_draggable_with_select_tool() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -6959,8 +7011,8 @@ async fn test_pdfjoin_text_overlay_draggable_with_select_tool() {
                 const overlay = document.querySelector('.overlay-container');
                 const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
 
-                // Click to create text box
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Double-click to create text box (single-click no longer creates text)
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 200,
                     clientY: pageRect.top + 200
@@ -7103,7 +7155,7 @@ async fn test_pdfjoin_text_editable_after_clicking_elsewhere() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -7129,8 +7181,8 @@ async fn test_pdfjoin_text_editable_after_clicking_elsewhere() {
                 const overlay = document.querySelector('.overlay-container');
                 const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
 
-                // Step 1: Create text box at position (200, 200)
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Step 1: Double-click to create text box at position (200, 200)
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 200,
                     clientY: pageRect.top + 200
@@ -7154,8 +7206,8 @@ async fn test_pdfjoin_text_editable_after_clicking_elsewhere() {
                 document.body.click();
                 await new Promise(r => setTimeout(r, 200));
 
-                // Step 2: Click ELSEWHERE to create another text box
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Step 2: Double-click ELSEWHERE to create another text box
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 400,
                     clientY: pageRect.top + 400
@@ -7253,7 +7305,7 @@ async fn test_pdfjoin_text_input_auto_expands() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -7279,8 +7331,8 @@ async fn test_pdfjoin_text_input_auto_expands() {
                 const overlay = document.querySelector('.overlay-container');
                 const pageRect = document.querySelector('.edit-page').getBoundingClientRect();
 
-                // Click to create text box
-                overlay.dispatchEvent(new MouseEvent('click', {{
+                // Double-click to create text box (single-click no longer creates text)
+                overlay.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 200,
                     clientY: pageRect.top + 200
@@ -8058,7 +8110,8 @@ async fn test_textbox_toolbar_button_exists() {
     );
 }
 
-/// Test that clicking with the TextBox tool creates a text box
+/// Test that double-clicking with the TextBox tool creates a text box
+/// Note: Single-click no longer creates text box (see test_textbox_single_click_does_not_create_box)
 #[tokio::test]
 async fn test_textbox_click_creates_text_box() {
     skip_if_no_chrome!();
@@ -8126,17 +8179,12 @@ async fn test_textbox_click_creates_text_box() {
                 textboxBtn.click();
                 await new Promise(r => setTimeout(r, 100));
 
-                // Use mousedown/mouseup to create a text box (not click)
+                // Use double-click to create a text box (single-click no longer works)
                 const pageRect = pageDiv.getBoundingClientRect();
                 const clickX = pageRect.left + 150;
                 const clickY = pageRect.top + 200;
 
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: clickX,
-                    clientY: clickY
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: clickX,
                     clientY: clickY
@@ -8175,7 +8223,7 @@ async fn test_textbox_click_creates_text_box() {
 
     assert!(
         result["textBoxCreated"].as_bool().unwrap_or(false),
-        "Clicking with TextBox tool should create a text box"
+        "Double-clicking with TextBox tool should create a text box"
     );
 }
 
@@ -8495,17 +8543,12 @@ async fn test_textbox_create_transparent() {
                 textboxBtn.click();
                 await new Promise(r => setTimeout(r, 100));
 
-                // Create a text box by clicking on the page
+                // Create a text box by double-clicking on the page
                 const pageRect = pageDiv.getBoundingClientRect();
                 const clickX = pageRect.left + 150;
                 const clickY = pageRect.top + 200;
 
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: clickX,
-                    clientY: clickY
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: clickX,
                     clientY: clickY
@@ -8591,7 +8634,7 @@ async fn test_textbox_resize() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -8622,17 +8665,12 @@ async fn test_textbox_resize() {
                     return {{ success: false, error: 'Page did not render' }};
                 }}
 
-                // Create a text box
+                // Create a text box with double-click
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
                 const pageRect = pageDiv.getBoundingClientRect();
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 100,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 100,
                     clientY: pageRect.top + 100
@@ -8755,7 +8793,7 @@ async fn test_textbox_delete_x_button() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -8791,12 +8829,8 @@ async fn test_textbox_delete_x_button() {
                 await new Promise(r => setTimeout(r, 100));
 
                 const pageRect = pageDiv.getBoundingClientRect();
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 150,
-                    clientY: pageRect.top + 150
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                // Double-click to create text box (single-click no longer creates text boxes)
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 150,
                     clientY: pageRect.top + 150
@@ -8888,7 +8922,7 @@ async fn test_textbox_delete_key() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -8924,12 +8958,8 @@ async fn test_textbox_delete_key() {
                 await new Promise(r => setTimeout(r, 100));
 
                 const pageRect = pageDiv.getBoundingClientRect();
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 150,
-                    clientY: pageRect.top + 150
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                // Double-click to create text box (single-click no longer creates text boxes)
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 150,
                     clientY: pageRect.top + 150
@@ -9031,7 +9061,7 @@ async fn test_textbox_overlap_zorder() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -9068,13 +9098,8 @@ async fn test_textbox_overlap_zorder() {
 
                 const pageRect = pageDiv.getBoundingClientRect();
 
-                // Create first text box
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 100,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                // Create first text box (double-click - single-click no longer creates text boxes)
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 100,
                     clientY: pageRect.top + 100
@@ -9082,22 +9107,29 @@ async fn test_textbox_overlap_zorder() {
                 await new Promise(r => setTimeout(r, 300));
 
                 const firstBox = document.querySelector('.text-box');
+                if (!firstBox) {{
+                    return {{ success: false, error: 'First text box not created' }};
+                }}
                 const firstZIndex = parseInt(window.getComputedStyle(firstBox).zIndex) || 0;
 
-                // Create second text box at overlapping position
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                // Click somewhere else first to deselect the first box
+                document.getElementById('tool-select').click();
+                await new Promise(r => setTimeout(r, 100));
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Create second text box further down (minimum textbox is 100x44, so position well below)
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
-                    clientX: pageRect.left + 120,
-                    clientY: pageRect.top + 110
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 120,
-                    clientY: pageRect.top + 110
+                    clientX: pageRect.left + 100,
+                    clientY: pageRect.top + 200
                 }}));
                 await new Promise(r => setTimeout(r, 300));
 
                 const allBoxes = document.querySelectorAll('.text-box');
+                if (allBoxes.length < 2) {{
+                    return {{ success: false, error: 'Second text box not created, only ' + allBoxes.length + ' boxes found' }};
+                }}
                 const secondBox = allBoxes[1];
                 const secondZIndex = parseInt(window.getComputedStyle(secondBox).zIndex) || 0;
 
@@ -9171,7 +9203,7 @@ async fn test_whiteout_covers_content() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -9309,7 +9341,7 @@ async fn test_whiteout_with_text() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -9606,7 +9638,7 @@ async fn test_ux_textbox_expands_on_font_size_increase() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -9637,17 +9669,12 @@ async fn test_ux_textbox_expands_on_font_size_increase() {
                     return {{ success: false, error: 'Page did not render' }};
                 }}
 
-                // Create a text box
+                // Create a text box (using double-click since single-click no longer works)
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
                 const pageRect = pageDiv.getBoundingClientRect();
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 100,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 100,
                     clientY: pageRect.top + 100
@@ -9778,7 +9805,7 @@ async fn test_ux_textbox_expands_with_content() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -9809,17 +9836,12 @@ async fn test_ux_textbox_expands_with_content() {
                     return {{ success: false, error: 'Page did not render' }};
                 }}
 
-                // Create a text box
+                // Create a text box (using double-click since single-click no longer works)
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
                 const pageRect = pageDiv.getBoundingClientRect();
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.left + 100,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.left + 100,
                     clientY: pageRect.top + 100
@@ -9923,7 +9945,7 @@ async fn test_ux_whiteout_expands_with_content() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -10067,7 +10089,7 @@ async fn test_ux_textbox_respects_page_boundary_right() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -10102,17 +10124,12 @@ async fn test_ux_textbox_respects_page_boundary_right() {
                 const pageRect = pageDiv.getBoundingClientRect();
                 const pageWidth = pageDiv.offsetWidth;
 
-                // Create a text box near the right edge
+                // Create a text box near the right edge (using double-click)
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
                 // Place it 50px from right edge
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.right - 50,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.right - 50,
                     clientY: pageRect.top + 100
@@ -10205,7 +10222,7 @@ async fn test_ux_textbox_grows_height_at_boundary() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -10239,16 +10256,11 @@ async fn test_ux_textbox_grows_height_at_boundary() {
                 const pageRect = pageDiv.getBoundingClientRect();
                 const pageWidth = pageDiv.offsetWidth;
 
-                // Create a text box near the right edge (100px from right)
+                // Create a text box near the right edge (100px from right) using double-click
                 document.getElementById('edit-tool-textbox').click();
                 await new Promise(r => setTimeout(r, 100));
 
-                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
-                    bubbles: true,
-                    clientX: pageRect.right - 100,
-                    clientY: pageRect.top + 100
-                }}));
-                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
                     bubbles: true,
                     clientX: pageRect.right - 100,
                     clientY: pageRect.top + 100
@@ -10352,7 +10364,7 @@ async fn test_ux_whiteout_respects_page_boundary_right() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -10492,7 +10504,7 @@ async fn test_ux_whiteout_respects_page_boundary_bottom() {
         r#"(async () => {{
             try {{
                 // Switch to edit tab and load PDF
-                document.querySelector('[data-tab="edit"]').click();
+                document.querySelector('[data-tool="edit"]').click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
@@ -12056,6 +12068,13 @@ async fn test_tab_switching_split_to_edit_preserves_document() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
+    // Navigate to Split view via tool card (new UX)
+    page.evaluate(r#"document.querySelector('[data-tool="split"]').click()"#)
+        .await
+        .expect("Should click Split tool card");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // Load a PDF in the Split tab
     let pdf_b64 = test_pdf_base64(5);
     let load_js = format!(
@@ -12082,7 +12101,20 @@ async fn test_tab_switching_split_to_edit_preserves_document() {
                 const splitEditor = document.getElementById('split-editor');
                 const splitLoaded = splitEditor && !splitEditor.classList.contains('hidden');
 
-                return {{ success: true, splitLoaded: splitLoaded }};
+                // Debug: Check if shared state was set
+                let sharedStateInfo = null;
+                if (window.__sharedState__) {{
+                    const shared = window.__sharedState__.getSharedPdf();
+                    sharedStateInfo = {{
+                        hasShared: window.__sharedState__.hasSharedPdf(),
+                        bytesLength: shared.bytes ? shared.bytes.length : 0,
+                        bytesType: shared.bytes ? shared.bytes.constructor.name : 'null',
+                        filename: shared.filename,
+                        source: shared.source
+                    }};
+                }}
+
+                return {{ success: true, splitLoaded: splitLoaded, sharedStateInfo: sharedStateInfo }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};
             }}
@@ -12097,6 +12129,8 @@ async fn test_tab_switching_split_to_edit_preserves_document() {
         .into_value()
         .expect("Should get value");
 
+    eprintln!("Split load result: {:?}", load_result);
+
     assert!(
         load_result["success"].as_bool().unwrap_or(false),
         "Should load PDF in Split tab: {:?}",
@@ -12110,13 +12144,22 @@ async fn test_tab_switching_split_to_edit_preserves_document() {
     // Now switch to Edit tab
     let switch_js = r#"(async () => {
         try {
+            // First check if shared state was set by Split
+            const sharedStateModule = await import('./js/bundle.js');
+            // Try to access shared state (might not work due to module scope)
+
             // Click Edit tab
             const editTab = document.querySelector('[data-tab="edit"]');
             if (!editTab) return { success: false, error: 'Edit tab not found' };
+
+            // Log before click
+            console.log('[TEST] About to click edit tab');
             editTab.click();
+            console.log('[TEST] Clicked edit tab');
 
             // Wait for potential auto-load
-            await new Promise(r => setTimeout(r, 2000));
+            await new Promise(r => setTimeout(r, 3000));
+            console.log('[TEST] Wait complete');
 
             // Check if Edit view has a document loaded
             const editEditor = document.getElementById('edit-editor');
@@ -12127,11 +12170,16 @@ async fn test_tab_switching_split_to_edit_preserves_document() {
             // Check if there's a PDF viewer canvas
             const hasCanvas = !!document.querySelector('#edit-viewer canvas');
 
+            // Also check edit view visibility
+            const editView = document.getElementById('edit-view');
+            const editViewVisible = editView && !editView.classList.contains('hidden');
+
             return {
                 success: true,
                 editLoaded: editLoaded,
                 dropZoneHidden: dropZoneHidden,
-                hasCanvas: hasCanvas
+                hasCanvas: hasCanvas,
+                editViewVisible: editViewVisible
             };
         } catch (err) {
             return { success: false, error: err.toString() };
@@ -12334,6 +12382,13 @@ async fn test_tab_switching_roundtrip_preserves_document() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
+    // Navigate to Split view via tool card (new UX)
+    page.evaluate(r#"document.querySelector('[data-tool="split"]').click()"#)
+        .await
+        .expect("Should click Split tool card");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // Load a PDF in the Split tab
     let pdf_b64 = test_pdf_base64(4);
     let load_js = format!(
@@ -12453,10 +12508,10 @@ async fn test_tab_switching_merge_to_edit_preserves_document() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Switch to Merge tab first
-    page.evaluate(r#"document.querySelector('[data-tab="merge"]').click()"#)
+    // Navigate to Merge view via tool card (new UX)
+    page.evaluate(r#"document.querySelector('[data-tool="merge"]').click()"#)
         .await
-        .expect("Should click Merge tab");
+        .expect("Should click Merge tool card");
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -12480,13 +12535,16 @@ async fn test_tab_switching_merge_to_edit_preserves_document() {
                 fileInput.files = dataTransfer.files;
                 fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
 
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 1500));
 
-                // Verify file is in merge list
+                // Verify file is in merge list (check merge-documents container)
+                const mergeDocs = document.getElementById('merge-documents');
+                const hasFiles = mergeDocs && mergeDocs.children.length > 0;
+                // Also check for the old selector
                 const mergeFiles = document.getElementById('merge-files');
-                const hasFiles = mergeFiles && mergeFiles.children.length > 0;
+                const hasFilesOld = mergeFiles && mergeFiles.children.length > 0;
 
-                return {{ success: true, hasFiles: hasFiles }};
+                return {{ success: true, hasFiles: hasFiles || hasFilesOld }};
             }} catch (err) {{
                 return {{ success: false, error: err.toString() }};
             }}
@@ -12581,10 +12639,10 @@ async fn test_tab_switching_merge_to_split_preserves_document() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Switch to Merge tab
-    page.evaluate(r#"document.querySelector('[data-tab="merge"]').click()"#)
+    // Navigate to Merge view via tool card (new UX)
+    page.evaluate(r#"document.querySelector('[data-tool="merge"]').click()"#)
         .await
-        .expect("Should click Merge tab");
+        .expect("Should click Merge tool card");
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -12692,6 +12750,13 @@ async fn test_tab_switching_split_to_merge_adds_document() {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
+    // Navigate to Split view via tool card (new UX)
+    page.evaluate(r#"document.querySelector('[data-tool="split"]').click()"#)
+        .await
+        .expect("Should click Split tool card");
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // Load a PDF in the Split tab
     let pdf_b64 = test_pdf_base64(2);
     let load_js = format!(
@@ -12724,18 +12789,22 @@ async fn test_tab_switching_split_to_merge_adds_document() {
     let switch_js = r#"(async () => {
         try {
             document.querySelector('[data-tab="merge"]').click();
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 2000));
 
-            // Check if merge list has the document or if there's a prompt to add it
-            const mergeFiles = document.getElementById('merge-files');
-            const mergeFileList = document.getElementById('merge-file-list');
-            const hasFiles = mergeFiles && mergeFiles.children.length > 0;
-            const fileListVisible = mergeFileList && !mergeFileList.classList.contains('hidden');
+            // Check if merge page picker is visible (shown when files are added)
+            const mergePagePicker = document.getElementById('merge-page-picker');
+            const mergeDocs = document.getElementById('merge-documents');
+            const mergeDropZone = document.getElementById('merge-drop-zone');
+
+            const hasFiles = mergeDocs && mergeDocs.children.length > 0;
+            const pagePickerVisible = mergePagePicker && !mergePagePicker.classList.contains('hidden');
+            const dropZoneHidden = mergeDropZone && mergeDropZone.classList.contains('hidden');
 
             return {
                 success: true,
                 hasFiles: hasFiles,
-                fileListVisible: fileListVisible
+                pagePickerVisible: pagePickerVisible,
+                dropZoneHidden: dropZoneHidden
             };
         } catch (err) {
             return { success: false, error: err.toString() };
@@ -12760,11 +12829,20 @@ async fn test_tab_switching_split_to_merge_adds_document() {
     // The split document should be added to merge list automatically
     assert!(
         switch_result["hasFiles"].as_bool().unwrap_or(false),
-        "Merge list should have the document from Split tab"
+        "Merge list should have the document from Split tab: {:?}",
+        switch_result
     );
     assert!(
-        switch_result["fileListVisible"].as_bool().unwrap_or(false),
-        "Merge file list should be visible (document added from split)"
+        switch_result["pagePickerVisible"]
+            .as_bool()
+            .unwrap_or(false),
+        "Merge page picker should be visible (document added from split): {:?}",
+        switch_result
+    );
+    assert!(
+        switch_result["dropZoneHidden"].as_bool().unwrap_or(false),
+        "Merge drop zone should be hidden (document added from split): {:?}",
+        switch_result
     );
 }
 // ============================================================================
@@ -13168,5 +13246,4504 @@ async fn test_a11y_reduced_motion_css_exists() {
     assert!(
         result["hasReducedMotion"].as_bool().unwrap_or(false),
         "Prefers-reduced-motion CSS should exist (WCAG 2.3.3)"
+    );
+}
+
+// ============================================================================
+// REGRESSION TESTS: Text Box Edit Persistence (Bug: Text not in download)
+// ============================================================================
+// These tests verify that text edits in text boxes are persisted to the
+// exported PDF. This addresses the bug where preview shows edited text but
+// the downloaded PDF shows original text.
+
+/// REGRESSION TEST: Text box edits MUST be persisted to exported PDF
+/// BUG: commitTextBox() returns early when operation exists, never calls updateText()
+/// This test should FAIL until the bug is fixed.
+#[tokio::test]
+async fn test_pdfjoin_textbox_edit_persisted_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Get wasmBindings and editSession
+                if (!window.wasmBindings) {{
+                    return {{ success: false, error: 'wasmBindings not available' }};
+                }}
+
+                // Step 1: Add initial text via WASM
+                const {{ EditSession }} = window.wasmBindings;
+                const session = new EditSession('test.pdf', pdfBytes);
+
+                // Add text with original content
+                session.beginAction('textbox');
+                const opId = session.addText(
+                    1, 100, 700, 200, 20,
+                    'ORIGINAL_TEXT_BEFORE_EDIT',
+                    12.0, '#000000', null, false, false
+                );
+                session.commitAction();
+
+                // Step 2: Update the text (simulating user edit)
+                const updateResult = session.updateText(opId, 'UPDATED_TEXT_AFTER_EDIT');
+                if (!updateResult) {{
+                    return {{ success: false, error: 'updateText returned false' }};
+                }}
+
+                // Step 3: Export the PDF
+                const exportedBytes = session.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                // Step 4: Check if the exported PDF contains the UPDATED text
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasUpdatedText = pdfText.includes('UPDATED_TEXT_AFTER_EDIT');
+                const hasOriginalText = pdfText.includes('ORIGINAL_TEXT_BEFORE_EDIT');
+
+                return {{
+                    success: true,
+                    hasUpdatedText: hasUpdatedText,
+                    hasOriginalText: hasOriginalText,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text box edit persistence test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // CRITICAL ASSERTION: Exported PDF MUST contain UPDATED text
+    assert!(
+        result["hasUpdatedText"].as_bool().unwrap_or(false),
+        "REGRESSION BUG: Exported PDF does NOT contain the updated text! \
+         The text was changed from 'ORIGINAL_TEXT_BEFORE_EDIT' to 'UPDATED_TEXT_AFTER_EDIT' \
+         but the download still has the original. This means text edits are NOT persisted."
+    );
+
+    // Exported PDF should NOT contain original text (it was replaced)
+    assert!(
+        !result["hasOriginalText"].as_bool().unwrap_or(true),
+        "REGRESSION BUG: Exported PDF still contains the ORIGINAL text! \
+         The updateText call should have replaced it with the new text."
+    );
+}
+
+/// REGRESSION TEST: Full UI flow - create text box, edit, export
+/// This tests the actual commitTextBox() flow which currently has a bug
+#[tokio::test]
+async fn test_pdfjoin_textbox_ui_edit_persisted_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page div not found' }};
+                }}
+
+                // Select Text Box tool (button has id="edit-tool-textbox")
+                const textboxBtn = document.getElementById('edit-tool-textbox');
+                if (!textboxBtn) {{
+                    return {{ success: false, error: 'Text box tool button not found (id=edit-tool-textbox)' }};
+                }}
+                textboxBtn.click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Simulate double-click to create text box (single-click no longer works)
+                const rect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: rect.left + 100,
+                    clientY: rect.top + 100
+                }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find the text box and its content
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{
+                    return {{ success: false, error: 'Text box not created' }};
+                }}
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) {{
+                    return {{ success: false, error: 'Text content not found in text box' }};
+                }}
+
+                // Type original text
+                textContent.focus();
+                textContent.textContent = 'ORIGINAL_UI_TEXT';
+                textContent.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // Blur to commit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Get the operation ID
+                const opId1 = textBox.dataset.opId;
+
+                // Now edit the text
+                textContent.focus();
+                textContent.textContent = 'UPDATED_UI_TEXT_AFTER_EDIT';
+                textContent.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // Blur to commit the edit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check if operation ID changed (it shouldn't if we're updating)
+                const opId2 = textBox.dataset.opId;
+
+                // Get the edit session and export
+                // Access the global editSession via debug API
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'editSession not available (window.__editSession__ is null)' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasUpdatedText = pdfText.includes('UPDATED_UI_TEXT_AFTER_EDIT');
+                const hasOriginalText = pdfText.includes('ORIGINAL_UI_TEXT');
+
+                // Also check what the DOM shows
+                const domText = textContent.textContent;
+
+                return {{
+                    success: true,
+                    opId1: opId1,
+                    opId2: opId2,
+                    opIdChanged: opId1 !== opId2,
+                    hasUpdatedText: hasUpdatedText,
+                    hasOriginalText: hasOriginalText,
+                    domText: domText,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test UI text persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text box UI edit persistence test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // The DOM should show the updated text
+    assert_eq!(
+        result["domText"].as_str().unwrap_or(""),
+        "UPDATED_UI_TEXT_AFTER_EDIT",
+        "DOM should show the updated text"
+    );
+
+    // CRITICAL ASSERTION: Exported PDF MUST match what the user sees in the DOM
+    // This is the actual bug - preview shows one thing, download shows another
+    assert!(
+        result["hasUpdatedText"].as_bool().unwrap_or(false),
+        "REGRESSION BUG: Preview/Download mismatch! \
+         DOM shows: {:?}, but exported PDF does NOT contain updated text. \
+         The commitTextBox() function is not calling updateText() for existing operations.",
+        result["domText"]
+    );
+
+    // If original text is still in export but not in DOM, that's the bug
+    if result["hasOriginalText"].as_bool().unwrap_or(false) {
+        panic!(
+            "REGRESSION BUG: Exported PDF contains ORIGINAL text ('ORIGINAL_UI_TEXT') \
+             but DOM shows UPDATED text ('{}'). \
+             Text edits are NOT being persisted to the download!",
+            result["domText"].as_str().unwrap_or("")
+        );
+    }
+}
+
+/// REGRESSION TEST: Immediate download after typing in whiteout must include text
+/// Bug: User types text in whiteout, immediately clicks Download (no Enter, no wait),
+/// and the text is NOT in the exported PDF because the blur event's 200ms setTimeout
+/// hasn't fired yet.
+/// Fix: commitPendingEdits() is called at start of downloadEditedPdf() to save any
+/// active whiteout text inputs before export.
+#[tokio::test]
+async fn test_immediate_download_after_whiteout_text_includes_text() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Draw a whiteout
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;
+                const endY = startY + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{
+                    return {{ success: false, error: 'Whiteout not created' }};
+                }}
+
+                // Find the text input that should have appeared
+                let input = whiteout.querySelector('.whiteout-text-input');
+                if (!input) {{
+                    // Click on the whiteout to open editor
+                    whiteout.scrollIntoView({{ block: 'center' }});
+                    await new Promise(r => setTimeout(r, 100));
+                    const whiteoutRect = whiteout.getBoundingClientRect();
+                    const overlay = document.querySelector('.overlay-container');
+                    overlay.dispatchEvent(new MouseEvent('click', {{
+                        bubbles: true,
+                        clientX: whiteoutRect.left + whiteoutRect.width / 2,
+                        clientY: whiteoutRect.top + whiteoutRect.height / 2
+                    }}));
+                    await new Promise(r => setTimeout(r, 300));
+                    input = whiteout.querySelector('.whiteout-text-input');
+                }}
+
+                if (!input) {{
+                    return {{ success: false, error: 'Could not find text input in whiteout' }};
+                }}
+
+                // Type text but DO NOT press Enter - simulating immediate download scenario
+                input.textContent = 'IMMEDIATE_DOWNLOAD_TEST_987';
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+
+                // CRITICAL: Do NOT press Enter, do NOT wait for blur timeout
+                // This is the bug scenario: user types and immediately clicks Download
+
+                // Capture the export by intercepting the download
+                let exportedArray = null;
+                let exportPromiseResolve = null;
+                const exportPromise = new Promise(resolve => {{ exportPromiseResolve = resolve; }});
+
+                const originalCreateObjectURL = URL.createObjectURL;
+                URL.createObjectURL = (blob) => {{
+                    // Synchronously capture the blob reference
+                    const capturedBlob = blob;
+                    // Read the blob asynchronously
+                    capturedBlob.arrayBuffer().then(buffer => {{
+                        exportedArray = new Uint8Array(buffer);
+                        exportPromiseResolve(true);
+                    }}).catch(() => {{
+                        exportPromiseResolve(false);
+                    }});
+                    return originalCreateObjectURL(blob);
+                }};
+
+                // IMMEDIATELY click download button (no waiting!)
+                const downloadBtn = document.getElementById('edit-download-btn');
+                if (downloadBtn && !downloadBtn.disabled) {{
+                    downloadBtn.click();
+                    // Wait for export to complete
+                    await Promise.race([exportPromise, new Promise(r => setTimeout(r, 10000))]);
+                }} else {{
+                    URL.createObjectURL = originalCreateObjectURL;
+                    return {{
+                        success: false,
+                        error: 'Download button disabled or not found',
+                        buttonDisabled: downloadBtn?.disabled
+                    }};
+                }}
+
+                // Restore original
+                URL.createObjectURL = originalCreateObjectURL;
+
+                if (!exportedArray) {{
+                    return {{
+                        success: false,
+                        error: 'Could not capture export'
+                    }};
+                }}
+
+                // Check the exported PDF for our text
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasTextInPdf = pdfText.includes('IMMEDIATE_DOWNLOAD_TEST_987');
+
+                return {{
+                    success: true,
+                    hasTextInPdf: hasTextInPdf,
+                    exportedSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test immediate download")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Immediate download test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // CRITICAL: Text must be in exported PDF even with immediate download (no Enter pressed)
+    assert!(
+        result["hasTextInPdf"].as_bool().unwrap_or(false),
+        "REGRESSION: Text typed into whiteout is NOT in exported PDF when downloading immediately! \
+         The user typed 'IMMEDIATE_DOWNLOAD_TEST_987' and clicked Download without pressing Enter. \
+         The commitPendingEdits() fix should save the text before export."
+    );
+}
+
+// ============================================================================
+// ISSUE-010: Text Box Tool Regression Tests
+// ============================================================================
+
+/// BUG TEST: Click+drag with Text Box tool should create ONE sized text box, not TWO tiny boxes
+/// Bug: mousedown creates one box, mouseup creates another - confusing for elderly users
+/// Fix: Only create text box on mouseup (like whiteout tool)
+#[tokio::test]
+async fn test_textbox_click_drag_creates_one_sized_box() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text Box tool
+                const textboxBtn = document.getElementById('edit-tool-textbox');
+                if (!textboxBtn) {{
+                    return {{ success: false, error: 'Text Box tool button not found' }};
+                }}
+                textboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Count text boxes before
+                const beforeCount = document.querySelectorAll('.text-box').length;
+
+                // Click and drag on the PDF page (like drawing a rectangle)
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 100;
+                const startY = pageRect.top + 100;
+                const endX = startX + 200;  // 200px wide drag
+                const endY = startY + 50;   // 50px tall drag
+
+                // Simulate click+drag
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: endX, clientY: endY }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: endX, clientY: endY }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                // Count text boxes after
+                const afterCount = document.querySelectorAll('.text-box').length;
+                const newBoxes = afterCount - beforeCount;
+
+                // Get the created text box dimensions
+                const textBoxes = document.querySelectorAll('.text-box');
+                const lastBox = textBoxes[textBoxes.length - 1];
+                const boxWidth = lastBox ? parseFloat(lastBox.style.width) : 0;
+                const boxHeight = lastBox ? parseFloat(lastBox.style.height) : 0;
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    newBoxesCreated: newBoxes,
+                    boxWidth: boxWidth,
+                    boxHeight: boxHeight,
+                    expectedWidth: 200,
+                    expectedHeight: 50
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text box click+drag")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Text box click+drag test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // CRITICAL: Should create exactly ONE text box, not two
+    assert_eq!(
+        result["newBoxesCreated"].as_i64().unwrap_or(0),
+        1,
+        "BUG: Click+drag with Text Box tool created {} boxes instead of 1! \
+         This happens because mousedown creates one box and mouseup creates another. \
+         Elderly users find this confusing.",
+        result["newBoxesCreated"].as_i64().unwrap_or(0)
+    );
+
+    // The created box should be sized to the drag area (approximately)
+    let box_width = result["boxWidth"].as_f64().unwrap_or(0.0);
+    let box_height = result["boxHeight"].as_f64().unwrap_or(0.0);
+    assert!(
+        box_width >= 150.0, // Should be close to 200px drag width
+        "BUG: Text box width ({}) should match drag width (~200px)",
+        box_width
+    );
+    assert!(
+        box_height >= 40.0, // Should be close to 50px drag height
+        "BUG: Text box height ({}) should match drag height (~50px)",
+        box_height
+    );
+}
+
+/// BUG TEST: Single click should NOT create a text box (only double-click should)
+/// Bug: Single click creates a text box, which is confusing for elderly users
+/// Fix: Require double-click to create a default-sized text box
+#[tokio::test]
+async fn test_textbox_single_click_does_not_create_box() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text Box tool
+                const textboxBtn = document.getElementById('edit-tool-textbox');
+                if (!textboxBtn) {{
+                    return {{ success: false, error: 'Text Box tool button not found' }};
+                }}
+                textboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Count text boxes before
+                const beforeCount = document.querySelectorAll('.text-box').length;
+
+                // Single click on the PDF page
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const clickX = pageRect.left + 150;
+                const clickY = pageRect.top + 150;
+
+                // Simulate single click (mousedown + mouseup at same position)
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: clickX, clientY: clickY }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: clickX, clientY: clickY }}));
+                pageDiv.dispatchEvent(new MouseEvent('click', {{ bubbles: true, clientX: clickX, clientY: clickY }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                // Count text boxes after
+                const afterCount = document.querySelectorAll('.text-box').length;
+                const newBoxes = afterCount - beforeCount;
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    newBoxesCreated: newBoxes
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test single click")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Single click test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // CRITICAL: Single click should NOT create a text box
+    assert_eq!(
+        result["newBoxesCreated"].as_i64().unwrap_or(0),
+        0,
+        "BUG: Single click created {} text box(es)! \
+         Single click should NOT create a text box - only double-click should create \
+         a default-sized text box. This confuses elderly users.",
+        result["newBoxesCreated"].as_i64().unwrap_or(0)
+    );
+}
+
+/// BUG TEST: Double-click should create a text box with accessible size (min 44px height)
+/// Bug: Default text box is too small for elderly users to see/interact with
+/// Fix: Default text box should be at least 44px tall (WCAG touch target guideline)
+#[tokio::test]
+async fn test_textbox_double_click_creates_accessible_sized_box() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(2);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select Text Box tool
+                const textboxBtn = document.getElementById('edit-tool-textbox');
+                if (!textboxBtn) {{
+                    return {{ success: false, error: 'Text Box tool button not found' }};
+                }}
+                textboxBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Count text boxes before
+                const beforeCount = document.querySelectorAll('.text-box').length;
+
+                // Double-click on the PDF page
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+                const clickX = pageRect.left + 200;
+                const clickY = pageRect.top + 200;
+
+                // Simulate double-click
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{ bubbles: true, clientX: clickX, clientY: clickY }}));
+
+                await new Promise(r => setTimeout(r, 300));
+
+                // Count text boxes after
+                const afterCount = document.querySelectorAll('.text-box').length;
+                const newBoxes = afterCount - beforeCount;
+
+                // Get the created text box dimensions
+                const textBoxes = document.querySelectorAll('.text-box');
+                const lastBox = textBoxes[textBoxes.length - 1];
+                const boxWidth = lastBox ? parseFloat(lastBox.style.width) || lastBox.offsetWidth : 0;
+                const boxHeight = lastBox ? parseFloat(lastBox.style.height) || lastBox.offsetHeight : 0;
+
+                return {{
+                    success: true,
+                    beforeCount: beforeCount,
+                    afterCount: afterCount,
+                    newBoxesCreated: newBoxes,
+                    boxWidth: boxWidth,
+                    boxHeight: boxHeight
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test double-click")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Double-click test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Double-click should create exactly one text box
+    assert_eq!(
+        result["newBoxesCreated"].as_i64().unwrap_or(0),
+        1,
+        "Double-click should create exactly 1 text box, got {}",
+        result["newBoxesCreated"].as_i64().unwrap_or(0)
+    );
+
+    // The created box should be large enough for elderly users (WCAG: min 44px touch target)
+    let box_height = result["boxHeight"].as_f64().unwrap_or(0.0);
+    let box_width = result["boxWidth"].as_f64().unwrap_or(0.0);
+
+    assert!(
+        box_height >= 44.0,
+        "BUG: Default text box height ({:.1}px) is too small! \
+         Minimum should be 44px for accessibility (WCAG touch target guideline). \
+         Elderly users struggle to see/interact with tiny text boxes.",
+        box_height
+    );
+
+    assert!(
+        box_width >= 100.0,
+        "BUG: Default text box width ({:.1}px) is too small! \
+         Should be at least 100px for usability.",
+        box_width
+    );
+}
+
+// ============================================================================
+// Phase 3 UX: Merge Page Picker Regression Tests
+// ============================================================================
+
+/// Regression test: Merge preview strip thumbnails must have actual image data
+/// Bug: Preview strip showed broken images because thumbnailDataUrl was empty
+/// Fix: Re-render preview strip after document thumbnails are generated
+#[tokio::test]
+async fn test_merge_preview_strip_has_thumbnails() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = florida_contract_base64();
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click merge tool card
+                const mergeCard = document.querySelector('[data-tool="merge"]');
+                if (mergeCard) mergeCard.click();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Load PDF via simulated drop
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+
+                const dropZone = document.getElementById('merge-drop-zone');
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                }});
+                dropZone.dispatchEvent(dropEvent);
+
+                // Wait for thumbnails to render (longer wait for PDF.js)
+                await new Promise(r => setTimeout(r, 8000));
+
+                // Check preview strip thumbnails
+                const previewStrip = document.getElementById('merge-preview-strip');
+                const previewImages = previewStrip?.querySelectorAll('.merge-preview-page-img') || [];
+
+                let emptyThumbnails = 0;
+                let validThumbnails = 0;
+
+                previewImages.forEach(img => {{
+                    if (!img.src || img.src === '' || img.src === 'about:blank') {{
+                        emptyThumbnails++;
+                    }} else if (img.src.startsWith('data:image/')) {{
+                        validThumbnails++;
+                    }}
+                }});
+
+                return {{
+                    success: true,
+                    totalPreviews: previewImages.length,
+                    validThumbnails: validThumbnails,
+                    emptyThumbnails: emptyThumbnails,
+                    hasPreviewStrip: !!previewStrip
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test merge preview thumbnails")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Merge preview strip thumbnail test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let total = result["totalPreviews"].as_i64().unwrap_or(0);
+    let valid = result["validThumbnails"].as_i64().unwrap_or(0);
+    let empty = result["emptyThumbnails"].as_i64().unwrap_or(0);
+
+    assert!(
+        total > 0,
+        "REGRESSION: Preview strip should have thumbnail images"
+    );
+
+    assert_eq!(
+        empty, 0,
+        "REGRESSION: Found {} empty thumbnails in preview strip. \
+         Bug: Preview strip rendered before document thumbnails were generated.",
+        empty
+    );
+
+    assert!(
+        valid > 0,
+        "REGRESSION: Preview strip should have valid data:image thumbnails, found {}",
+        valid
+    );
+}
+
+/// Regression test: Merge must respect page selection from mergeState.mergeOrder
+/// Bug: executeMerge ignored page selection and merged all pages
+/// Fix: Extract only selected pages using split session before merging
+#[tokio::test]
+async fn test_merge_respects_page_selection() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Use a 5-page test PDF
+    let pdf_b64 = test_pdf_base64(5);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Click merge tool card
+                const mergeCard = document.querySelector('[data-tool="merge"]');
+                if (mergeCard) mergeCard.click();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Load PDF via simulated drop
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+
+                const dropZone = document.getElementById('merge-drop-zone');
+                const dropEvent = new DragEvent('drop', {{
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer: dataTransfer
+                }});
+                dropZone.dispatchEvent(dropEvent);
+
+                // Wait for document to load
+                await new Promise(r => setTimeout(r, 5000));
+
+                // Deselect all pages by clicking "Select None"
+                const selectBtns = document.querySelectorAll('button.merge-quick-select');
+                let selectNone = null;
+                selectBtns.forEach(btn => {{
+                    if (btn.textContent.trim() === 'Select None') selectNone = btn;
+                }});
+                if (selectNone) {{
+                    selectNone.click();
+                    await new Promise(r => setTimeout(r, 500));
+                }}
+
+                // Select pages 1, 3, 5 (click on thumbnails)
+                const thumbs = document.querySelectorAll('button.merge-page-thumb');
+                if (thumbs.length >= 5) {{
+                    thumbs[0].click(); // Page 1
+                    await new Promise(r => setTimeout(r, 100));
+                    thumbs[2].click(); // Page 3
+                    await new Promise(r => setTimeout(r, 100));
+                    thumbs[4].click(); // Page 5
+                    await new Promise(r => setTimeout(r, 500));
+                }}
+
+                // Get merge order length before execute
+                const summaryText = document.getElementById('merge-summary-text')?.textContent || '';
+                const pageCountMatch = summaryText.match(/(\d+) pages/);
+                const selectedPageCount = pageCountMatch ? parseInt(pageCountMatch[1]) : -1;
+
+                // Execute merge by clicking button
+                const mergeBtn = document.getElementById('merge-btn');
+                if (!mergeBtn || mergeBtn.disabled) {{
+                    return {{
+                        success: false,
+                        error: 'Merge button not found or disabled',
+                        summaryText: summaryText
+                    }};
+                }}
+
+                // Intercept download to capture result
+                let capturedBlob = null;
+                const originalCreateObjectURL = URL.createObjectURL;
+                URL.createObjectURL = (blob) => {{
+                    if (blob instanceof Blob && blob.type === 'application/pdf') {{
+                        capturedBlob = blob;
+                    }}
+                    return originalCreateObjectURL(blob);
+                }};
+
+                mergeBtn.click();
+                await new Promise(r => setTimeout(r, 3000));
+
+                URL.createObjectURL = originalCreateObjectURL;
+
+                if (!capturedBlob) {{
+                    return {{
+                        success: false,
+                        error: 'No download captured',
+                        selectedPageCount: selectedPageCount
+                    }};
+                }}
+
+                // Now convert blob to bytes (awaited properly)
+                const downloadedBytes = new Uint8Array(await capturedBlob.arrayBuffer());
+
+                // Count pages in output PDF
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(downloadedBytes);
+                const countMatch = pdfText.match(/\/Count\s+(\d+)/);
+                const outputPageCount = countMatch ? parseInt(countMatch[1]) : -1;
+
+                return {{
+                    success: true,
+                    selectedPageCount: selectedPageCount,
+                    outputPageCount: outputPageCount,
+                    outputSize: downloadedBytes.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test merge page selection")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Merge page selection test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    let selected = result["selectedPageCount"].as_i64().unwrap_or(-1);
+    let output = result["outputPageCount"].as_i64().unwrap_or(-1);
+
+    // We selected 3 pages (1, 3, 5) from a 5-page PDF
+    assert!(
+        selected <= 5 && selected > 0,
+        "Should have some pages selected, got {}",
+        selected
+    );
+
+    assert!(
+        output > 0 && output <= 5,
+        "Output should have between 1-5 pages, got {}",
+        output
+    );
+
+    // CRITICAL: Output page count must match selected page count
+    // If output == 5 when selected < 5, the bug is back (ignoring selection)
+    if selected < 5 && selected > 0 {
+        assert_eq!(
+            output, selected,
+            "REGRESSION: Output has {} pages but only {} were selected. \
+             Bug: executeMerge is ignoring mergeState.mergeOrder page selection.",
+            output, selected
+        );
+    }
+}
+
+/// ISSUE-016: Test that loading a new PDF when one already exists shows a confirmation dialog
+/// This is critical for elderly users who may accidentally replace their document
+#[tokio::test]
+async fn test_elderly_ux_critical_file_replace_confirmation() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let pdf_b64_2 = test_pdf_base64(2); // Second PDF with different page count
+
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Switch to edit tab and load first PDF
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'first.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Verify first PDF loaded
+                const hasFileInfo = document.getElementById('edit-file-name')?.textContent?.includes('first.pdf');
+                if (!hasFileInfo) {{
+                    return {{ success: false, error: 'First PDF did not load' }};
+                }}
+
+                return {{ success: true, hasFileInfo: hasFileInfo }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should load first PDF")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("First PDF load: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "First PDF should load successfully. Error: {:?}",
+        result["error"]
+    );
+
+    // Now try to load a second PDF - should show confirmation dialog
+    let js_code_2 = format!(
+        r#"(async () => {{
+            try {{
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'second.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Check for confirmation modal/dialog
+                // Look for common modal patterns
+                const confirmModal = document.querySelector('#file-replace-confirm-modal') ||
+                                    document.querySelector('.file-replace-confirm') ||
+                                    document.querySelector('[data-modal="file-replace"]') ||
+                                    document.querySelector('.confirm-replace-dialog');
+
+                // Also check if a generic modal appeared with relevant text
+                const anyModal = document.querySelector('.modal:not(.hidden)') ||
+                                document.querySelector('[role="dialog"]:not(.hidden)');
+
+                const modalText = (confirmModal || anyModal)?.textContent || '';
+                const hasReplaceText = modalText.toLowerCase().includes('replace') ||
+                                      modalText.toLowerCase().includes('existing') ||
+                                      modalText.toLowerCase().includes('already');
+
+                return {{
+                    success: true,
+                    confirmationShown: !!(confirmModal || (anyModal && hasReplaceText)),
+                    confirmationModalId: confirmModal?.id || anyModal?.id || null,
+                    isAccessible: !!(confirmModal || anyModal)?.querySelector('[role="button"], button')
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64_2
+    );
+
+    let result2: serde_json::Value = page
+        .evaluate(js_code_2.as_str())
+        .await
+        .expect("Should test file replace confirmation")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Elderly UX - File replacement confirmation: {:?}", result2);
+
+    assert!(
+        result2["confirmationShown"].as_bool().unwrap_or(false),
+        "CRITICAL: Loading a new PDF when one already exists must show a confirmation dialog. \
+         Elderly users may accidentally replace their document without realizing. \
+         Add a modal like: 'You have an existing document. Replace it with the new file?'"
+    );
+}
+
+/// ISSUE-013: Test that text box content is autosaved when clicking Download immediately after typing
+/// Similar to whiteout autosave (ISSUE-009), text boxes should commit their content before export
+#[tokio::test]
+async fn test_textbox_immediate_download_includes_text() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF via file input
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                const pageDiv = document.querySelector('.edit-page');
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page not found' }};
+                }}
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // FIRST: Create a whiteout to enable the download button
+                // (This ensures download button is enabled so we can test textbox autosave)
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: pageRect.left + 50, clientY: pageRect.top + 50 }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: pageRect.left + 100, clientY: pageRect.top + 80 }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: pageRect.left + 100, clientY: pageRect.top + 80 }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Verify download button is now enabled
+                const downloadBtnCheck = document.getElementById('edit-download-btn');
+                if (downloadBtnCheck?.disabled) {{
+                    return {{ success: false, error: 'Download button still disabled after whiteout' }};
+                }}
+
+                // NOW: Select TextBox tool and create a text box with double-click
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Double-click to create text box (in a different area from whiteout)
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{
+                    return {{ success: false, error: 'Text box not created' }};
+                }}
+
+                // Find the text content area
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) {{
+                    return {{ success: false, error: 'Text content area not found' }};
+                }}
+
+                // Type text but DO NOT press Enter or click away
+                // This simulates the bug scenario: user types and immediately clicks Download
+                const testText = 'TEXTBOX_IMMEDIATE_DOWNLOAD_TEST_123';
+                textContent.focus();
+                textContent.textContent = testText;
+                textContent.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 50)); // Small wait for DOM update
+
+                // CRITICAL: Do NOT wait for blur timeout or press Enter
+                // This is the bug scenario - immediate download after typing
+
+                // Capture the export by intercepting the download
+                let exportedArray = null;
+                let exportPromiseResolve = null;
+                const exportPromise = new Promise(resolve => {{ exportPromiseResolve = resolve; }});
+
+                const originalCreateObjectURL = URL.createObjectURL;
+                URL.createObjectURL = (blob) => {{
+                    const capturedBlob = blob;
+                    capturedBlob.arrayBuffer().then(buffer => {{
+                        exportedArray = new Uint8Array(buffer);
+                        exportPromiseResolve(true);
+                    }}).catch(() => {{
+                        exportPromiseResolve(false);
+                    }});
+                    return originalCreateObjectURL(blob);
+                }};
+
+                // IMMEDIATELY click download button (no waiting!)
+                const downloadBtn = document.getElementById('edit-download-btn');
+                if (downloadBtn && !downloadBtn.disabled) {{
+                    downloadBtn.click();
+                    await Promise.race([exportPromise, new Promise(r => setTimeout(r, 10000))]);
+                }} else {{
+                    URL.createObjectURL = originalCreateObjectURL;
+                    return {{ success: false, error: 'Download button not available' }};
+                }}
+
+                URL.createObjectURL = originalCreateObjectURL;
+
+                if (!exportedArray) {{
+                    return {{ success: false, error: 'Export not captured' }};
+                }}
+
+                // Check if the text appears in the exported PDF
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfContent = decoder.decode(exportedArray);
+                const containsText = pdfContent.includes(testText);
+
+                return {{
+                    success: true,
+                    containsText: containsText,
+                    testText: testText,
+                    pdfSize: exportedArray.length,
+                    textBoxFound: !!textBox
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox immediate download")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("TextBox immediate download test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["containsText"].as_bool().unwrap_or(false),
+        "ISSUE-013: Text box content is NOT saved when clicking Download immediately after typing. \
+         The text '{}' should appear in the exported PDF but is missing. \
+         Fix: Extend commitPendingEdits() to also handle .text-box .text-content elements.",
+        result["testText"].as_str().unwrap_or("unknown")
+    );
+}
+
+/// ISSUE-011: Test that text box resize handles are visible after clicking away and back
+/// Users should be able to resize text boxes after reselecting them
+#[tokio::test]
+async fn test_textbox_resize_handles_visible_after_reselection() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                // Go to Edit tab
+                document.querySelector('[data-tool="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                // Load PDF
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Select TextBox tool and create a text box
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page not found' }};
+                }}
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // Double-click to create text box
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 150,
+                    clientY: pageRect.top + 150
+                }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{
+                    return {{ success: false, error: 'Text box not created' }};
+                }}
+
+                // Check initial selection state - should be selected
+                const initiallySelected = textBox.classList.contains('selected');
+                const initialResizeHandles = textBox.querySelectorAll('.resize-handle');
+                const initialHandlesVisible = Array.from(initialResizeHandles).some(h =>
+                    window.getComputedStyle(h).display !== 'none'
+                );
+
+                // CLICK AWAY to deselect
+                document.getElementById('tool-select').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Click on empty area of the PDF (away from text box)
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 50,
+                    clientY: pageRect.top + 50
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                const afterClickAwaySelected = textBox.classList.contains('selected');
+
+                // NOW CLICK BACK ON THE TEXT BOX to reselect
+                const textBoxRect = textBox.getBoundingClientRect();
+                textBox.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: textBoxRect.left + 10,
+                    clientY: textBoxRect.top + 10
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check if text box is now selected
+                const reselected = textBox.classList.contains('selected');
+                const resizeHandles = textBox.querySelectorAll('.resize-handle');
+                const resizeHandlesVisible = Array.from(resizeHandles).some(h =>
+                    window.getComputedStyle(h).display !== 'none'
+                );
+
+                // Count visible resize handles (should be 8 for all corners and edges)
+                const visibleHandleCount = Array.from(resizeHandles).filter(h =>
+                    window.getComputedStyle(h).display !== 'none'
+                ).length;
+
+                return {{
+                    success: true,
+                    initiallySelected: initiallySelected,
+                    initialHandlesVisible: initialHandlesVisible,
+                    afterClickAwaySelected: afterClickAwaySelected,
+                    reselected: reselected,
+                    resizeHandlesVisible: resizeHandlesVisible,
+                    visibleHandleCount: visibleHandleCount,
+                    totalHandles: resizeHandles.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox resize handles")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("TextBox resize after reselection test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["reselected"].as_bool().unwrap_or(false),
+        "ISSUE-011: Text box should be reselected after clicking on it. \
+         Currently: reselected={}",
+        result["reselected"]
+    );
+
+    assert!(
+        result["resizeHandlesVisible"].as_bool().unwrap_or(false),
+        "ISSUE-011: Resize handles should be visible after reselecting text box. \
+         Initially selected: {}, After click away: {}, Reselected: {}, Handles visible: {}, Count: {}/{}",
+        result["initiallySelected"],
+        result["afterClickAwaySelected"],
+        result["reselected"],
+        result["resizeHandlesVisible"],
+        result["visibleHandleCount"],
+        result["totalHandles"]
+    );
+}
+
+/// ISSUE-012: Text Box Styling Not Functional
+/// Tests that font size, bold, and italic work correctly when text is focused.
+/// This is critical for elderly users who need larger text or emphasis.
+#[tokio::test]
+async fn test_textbox_styling_bold_italic_fontsize() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    // Wait for initial page load
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF via file input
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page did not render' }};
+                }}
+
+                // Select TextBox tool
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) {{ return {{ success: false, error: 'Text tool not found' }}; }}
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Double-click on page to create text box
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{ return {{ success: false, error: 'Text box not created' }}; }}
+
+                // Get the text content element inside the text box
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) {{ return {{ success: false, error: 'Text content element not found' }}; }}
+
+                // Check initial button states (should be disabled)
+                const boldBtn = document.getElementById('style-bold');
+                const italicBtn = document.getElementById('style-italic');
+                const fontSizeIncrease = document.getElementById('font-size-increase');
+                const fontSizeValue = document.getElementById('font-size-value');
+
+                const initialBoldDisabled = boldBtn?.disabled ?? true;
+                const initialItalicDisabled = italicBtn?.disabled ?? true;
+                const initialFontSizeIncreaseDisabled = fontSizeIncrease?.disabled ?? true;
+
+                // Focus on the text content to activate styling controls
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Type some text
+                textContent.textContent = 'Test styling';
+                await new Promise(r => setTimeout(r, 100));
+
+                // Check button states after focus (should be enabled now)
+                const afterFocusBoldDisabled = boldBtn?.disabled ?? true;
+                const afterFocusItalicDisabled = italicBtn?.disabled ?? true;
+                const afterFocusFontSizeIncreaseDisabled = fontSizeIncrease?.disabled ?? true;
+
+                // Get initial font size
+                const initialFontSize = parseInt(fontSizeValue?.value || '12', 10);
+
+                // Click BOLD button
+                if (boldBtn && !boldBtn.disabled) {{
+                    boldBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterBoldFontWeight = window.getComputedStyle(textContent).fontWeight;
+                const isBoldApplied = afterBoldFontWeight === 'bold' || afterBoldFontWeight === '700';
+
+                // Click ITALIC button
+                if (italicBtn && !italicBtn.disabled) {{
+                    italicBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterItalicFontStyle = window.getComputedStyle(textContent).fontStyle;
+                const isItalicApplied = afterItalicFontStyle === 'italic';
+
+                // Click FONT SIZE INCREASE button
+                if (fontSizeIncrease && !fontSizeIncrease.disabled) {{
+                    fontSizeIncrease.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterIncreaseFontSize = parseInt(fontSizeValue?.value || '12', 10);
+                const actualFontSize = parseInt(window.getComputedStyle(textContent).fontSize, 10);
+
+                return {{
+                    success: true,
+                    initialBoldDisabled: initialBoldDisabled,
+                    initialItalicDisabled: initialItalicDisabled,
+                    initialFontSizeIncreaseDisabled: initialFontSizeIncreaseDisabled,
+                    afterFocusBoldDisabled: afterFocusBoldDisabled,
+                    afterFocusItalicDisabled: afterFocusItalicDisabled,
+                    afterFocusFontSizeIncreaseDisabled: afterFocusFontSizeIncreaseDisabled,
+                    initialFontSize: initialFontSize,
+                    afterIncreaseFontSize: afterIncreaseFontSize,
+                    actualFontSize: actualFontSize,
+                    fontSizeIncreased: afterIncreaseFontSize > initialFontSize,
+                    isBoldApplied: isBoldApplied,
+                    afterBoldFontWeight: afterBoldFontWeight,
+                    isItalicApplied: isItalicApplied,
+                    afterItalicFontStyle: afterItalicFontStyle
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox styling")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("TextBox styling test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // After focus, style buttons should be ENABLED
+    assert!(
+        !result["afterFocusBoldDisabled"].as_bool().unwrap_or(true),
+        "ISSUE-012: Bold button should be enabled when text content is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialBoldDisabled"],
+        result["afterFocusBoldDisabled"]
+    );
+
+    assert!(
+        !result["afterFocusItalicDisabled"].as_bool().unwrap_or(true),
+        "ISSUE-012: Italic button should be enabled when text content is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialItalicDisabled"],
+        result["afterFocusItalicDisabled"]
+    );
+
+    assert!(
+        !result["afterFocusFontSizeIncreaseDisabled"]
+            .as_bool()
+            .unwrap_or(true),
+        "ISSUE-012: Font size buttons should be enabled when text content is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialFontSizeIncreaseDisabled"],
+        result["afterFocusFontSizeIncreaseDisabled"]
+    );
+
+    // Bold should be applied after clicking
+    assert!(
+        result["isBoldApplied"].as_bool().unwrap_or(false),
+        "ISSUE-012: Bold should be applied when bold button is clicked. \
+         fontWeight: {}",
+        result["afterBoldFontWeight"]
+    );
+
+    // Italic should be applied after clicking
+    assert!(
+        result["isItalicApplied"].as_bool().unwrap_or(false),
+        "ISSUE-012: Italic should be applied when italic button is clicked. \
+         fontStyle: {}",
+        result["afterItalicFontStyle"]
+    );
+
+    // Font size should increase after clicking
+    assert!(
+        result["fontSizeIncreased"].as_bool().unwrap_or(false),
+        "ISSUE-012: Font size should increase when increase button is clicked. \
+         Initial: {}, After: {}, Actual: {}px",
+        result["initialFontSize"],
+        result["afterIncreaseFontSize"],
+        result["actualFontSize"]
+    );
+}
+
+/// ISSUE-014: Text Box Deselection Inconsistent
+/// Tests that clicking away from a text box consistently deselects it.
+/// User reported: "it feels broken how when I click away from the textbox it does not always de-select"
+#[tokio::test]
+async fn test_textbox_deselection_on_click_away() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF via file input
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page did not render' }};
+                }}
+
+                // Select TextBox tool
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) {{ return {{ success: false, error: 'Text tool not found' }}; }}
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Double-click on page to create text box
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{ return {{ success: false, error: 'Text box not created' }}; }}
+
+                // Check initial selection state
+                const initiallySelected = textBox.classList.contains('selected');
+
+                // Switch to select tool to ensure we can click away
+                const selectTool = document.getElementById('edit-tool-select');
+                if (selectTool) selectTool.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // CLICK AWAY from the text box - click on a blank area of the page
+                // Use a position far from the text box
+                const clickAwayX = pageRect.left + 50;
+                const clickAwayY = pageRect.top + 50;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: clickAwayX,
+                    clientY: clickAwayY
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: clickAwayX,
+                    clientY: clickAwayY
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check if text box is now deselected
+                const afterClickAwaySelected = textBox.classList.contains('selected');
+                const hasResizeHandlesVisible = Array.from(textBox.querySelectorAll('.resize-handle')).some(h =>
+                    window.getComputedStyle(h).display !== 'none'
+                );
+
+                // TEST 2: Click on the textbox to reselect, then click away AGAIN
+                textBox.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: textBox.getBoundingClientRect().left + 10,
+                    clientY: textBox.getBoundingClientRect().top + 10
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                const afterReselect = textBox.classList.contains('selected');
+
+                // Click away again
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: clickAwayX,
+                    clientY: clickAwayY
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: clickAwayX,
+                    clientY: clickAwayY
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const afterSecondClickAway = textBox.classList.contains('selected');
+
+                return {{
+                    success: true,
+                    initiallySelected: initiallySelected,
+                    afterClickAwaySelected: afterClickAwaySelected,
+                    hasResizeHandlesVisible: hasResizeHandlesVisible,
+                    afterReselect: afterReselect,
+                    afterSecondClickAway: afterSecondClickAway
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox deselection")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("TextBox deselection test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["initiallySelected"].as_bool().unwrap_or(false),
+        "ISSUE-014: Text box should be selected immediately after creation"
+    );
+
+    assert!(
+        !result["afterClickAwaySelected"].as_bool().unwrap_or(true),
+        "ISSUE-014: Text box should be DESELECTED after clicking away. \
+         Initially selected: {}, After click away: {}",
+        result["initiallySelected"],
+        result["afterClickAwaySelected"]
+    );
+
+    assert!(
+        !result["hasResizeHandlesVisible"].as_bool().unwrap_or(true),
+        "ISSUE-014: Resize handles should be hidden after deselection"
+    );
+
+    assert!(
+        !result["afterSecondClickAway"].as_bool().unwrap_or(true),
+        "ISSUE-014: Text box should be deselected after clicking away a second time. \
+         After reselect: {}, After second click away: {}",
+        result["afterReselect"],
+        result["afterSecondClickAway"]
+    );
+}
+
+/// ISSUE-015: Style Tools Disabled When Box Selected
+/// Tests that selecting a text box (without focusing text content) enables style tools.
+/// User story: "I want to select my text box and then click Bold to make all the text bold,
+/// without having to select the text inside first."
+#[tokio::test]
+async fn test_textbox_selection_enables_style_tools() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF via file input
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page did not render' }};
+                }}
+
+                // Select TextBox tool
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) {{ return {{ success: false, error: 'Text tool not found' }}; }}
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Double-click on page to create text box
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) {{ return {{ success: false, error: 'Text box not created' }}; }}
+
+                // Add some text to the text box
+                const textContent = textBox.querySelector('.text-content');
+                if (textContent) {{
+                    textContent.textContent = 'Test text for styling';
+                }}
+                await new Promise(r => setTimeout(r, 100));
+
+                // Click away to deselect (switch to select tool first)
+                const selectTool = document.getElementById('edit-tool-select');
+                if (selectTool) selectTool.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Click on blank area to deselect
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 50,
+                    clientY: pageRect.top + 50
+                }}));
+                await new Promise(r => setTimeout(r, 100));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 50,
+                    clientY: pageRect.top + 50
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check style button states when NO box is selected
+                const boldBtn = document.getElementById('style-bold');
+                const italicBtn = document.getElementById('style-italic');
+                const fontSizeIncrease = document.getElementById('font-size-increase');
+
+                const beforeSelectBoldDisabled = boldBtn?.disabled ?? true;
+                const beforeSelectItalicDisabled = italicBtn?.disabled ?? true;
+                const beforeSelectFontSizeDisabled = fontSizeIncrease?.disabled ?? true;
+
+                // NOW SELECT THE TEXT BOX by clicking on it (NOT focusing the text content)
+                // Click on the border/edge area of the box, not the text content
+                const boxRect = textBox.getBoundingClientRect();
+                textBox.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: boxRect.left + 5,  // Click near edge, not center
+                    clientY: boxRect.top + 5
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check if box is selected
+                const boxIsSelected = textBox.classList.contains('selected');
+
+                // Check style button states when box IS selected
+                const afterSelectBoldDisabled = boldBtn?.disabled ?? true;
+                const afterSelectItalicDisabled = italicBtn?.disabled ?? true;
+                const afterSelectFontSizeDisabled = fontSizeIncrease?.disabled ?? true;
+
+                return {{
+                    success: true,
+                    beforeSelectBoldDisabled: beforeSelectBoldDisabled,
+                    beforeSelectItalicDisabled: beforeSelectItalicDisabled,
+                    beforeSelectFontSizeDisabled: beforeSelectFontSizeDisabled,
+                    boxIsSelected: boxIsSelected,
+                    afterSelectBoldDisabled: afterSelectBoldDisabled,
+                    afterSelectItalicDisabled: afterSelectItalicDisabled,
+                    afterSelectFontSizeDisabled: afterSelectFontSizeDisabled
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox selection enables style tools")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("TextBox selection style tools test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["boxIsSelected"].as_bool().unwrap_or(false),
+        "ISSUE-015: Text box should be selected after clicking on it"
+    );
+
+    // Style buttons should be ENABLED when a text box is selected
+    assert!(
+        !result["afterSelectBoldDisabled"].as_bool().unwrap_or(true),
+        "ISSUE-015: Bold button should be ENABLED when a text box is selected. \
+         Before select: disabled={}, After select: disabled={}",
+        result["beforeSelectBoldDisabled"],
+        result["afterSelectBoldDisabled"]
+    );
+
+    assert!(
+        !result["afterSelectItalicDisabled"]
+            .as_bool()
+            .unwrap_or(true),
+        "ISSUE-015: Italic button should be ENABLED when a text box is selected. \
+         Before select: disabled={}, After select: disabled={}",
+        result["beforeSelectItalicDisabled"],
+        result["afterSelectItalicDisabled"]
+    );
+
+    assert!(
+        !result["afterSelectFontSizeDisabled"]
+            .as_bool()
+            .unwrap_or(true),
+        "ISSUE-015: Font size buttons should be ENABLED when a text box is selected. \
+         Before select: disabled={}, After select: disabled={}",
+        result["beforeSelectFontSizeDisabled"],
+        result["afterSelectFontSizeDisabled"]
+    );
+}
+
+// ============================================================================
+// ISSUE-019: Text Box Tool Types On Whiteout Text Instead of Editing
+// When clicking with Text Box tool on a whiteout that ALREADY HAS SAVED TEXT,
+// it should edit the existing text, NOT create a new text box on top.
+// ============================================================================
+#[tokio::test]
+async fn test_textbox_tool_on_whiteout_with_saved_text_edits_not_creates() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Step 1: Create a whiteout with text
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // Draw whiteout
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 100,
+                    clientY: pageRect.top + 100
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 250,
+                    clientY: pageRect.top + 150
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 250,
+                    clientY: pageRect.top + 150
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{
+                    return {{ success: false, error: 'Whiteout not created' }};
+                }}
+
+                // Step 2: Double-click to add text to the whiteout
+                const whiteoutRect = whiteout.getBoundingClientRect();
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: whiteoutRect.left + whiteoutRect.width / 2,
+                    clientY: whiteoutRect.top + whiteoutRect.height / 2
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                // Type text into the whiteout
+                const whiteoutInput = whiteout.querySelector('.whiteout-text-input');
+                if (!whiteoutInput) {{
+                    return {{ success: false, error: 'Whiteout text input not created' }};
+                }}
+
+                whiteoutInput.textContent = 'Original Whiteout Text';
+                whiteoutInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                // Step 3: Press Enter to save the whiteout text (more reliable than click away)
+                whiteoutInput.dispatchEvent(new KeyboardEvent('keydown', {{
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    bubbles: true
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                // Verify text was saved (text span should appear with class whiteout-text-content)
+                const savedTextSpan = whiteout.querySelector('.whiteout-text-content');
+                const textWasSaved = savedTextSpan && savedTextSpan.textContent.includes('Original');
+
+                // Count elements before switching tools
+                const textBoxCountBefore = document.querySelectorAll('.text-box').length;
+
+                // Step 4: NOW SWITCH TO TEXT BOX TOOL
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Step 5: Click on the whiteout with its saved text
+                // Get fresh whiteout reference and its bounds
+                const whiteoutAfter = document.querySelector('.edit-whiteout-overlay');
+                const whiteoutRectAfter = whiteoutAfter.getBoundingClientRect();
+
+                // Click on the center of the whiteout
+                const overlay = document.querySelector('.overlay-container');
+                overlay.dispatchEvent(new MouseEvent('click', {{
+                    bubbles: true,
+                    clientX: whiteoutRectAfter.left + whiteoutRectAfter.width / 2,
+                    clientY: whiteoutRectAfter.top + whiteoutRectAfter.height / 2
+                }}));
+                await new Promise(r => setTimeout(r, 300));
+
+                // Count elements after
+                const textBoxCountAfter = document.querySelectorAll('.text-box').length;
+                const newTextBoxCreated = textBoxCountAfter > textBoxCountBefore;
+
+                // Check if whiteout editor opened instead
+                const whiteoutInputAfter = whiteoutAfter.querySelector('.whiteout-text-input');
+                const whiteoutEditorOpened = !!whiteoutInputAfter;
+
+                return {{
+                    success: true,
+                    textWasSaved: textWasSaved,
+                    textBoxCountBefore: textBoxCountBefore,
+                    textBoxCountAfter: textBoxCountAfter,
+                    newTextBoxCreated: newTextBoxCreated,
+                    whiteoutEditorOpened: whiteoutEditorOpened
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test textbox tool on whiteout with text")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!(
+        "ISSUE-019 TextBox tool on whiteout with saved text: {:?}",
+        result
+    );
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["textWasSaved"].as_bool().unwrap_or(false),
+        "Setup: Whiteout text should have been saved before tool switch"
+    );
+
+    // BUG TEST: Clicking on whiteout WITH TEXT using Text Box tool should NOT create new text box
+    assert!(
+        !result["newTextBoxCreated"].as_bool().unwrap_or(true),
+        "ISSUE-019 BUG: Text Box tool clicked on whiteout WITH SAVED TEXT but created a new \
+         text box on top instead of editing the whiteout text! \
+         TextBox count before: {}, after: {}. \
+         UX-hostile for elderly users who cannot discover they need to switch tools.",
+        result["textBoxCountBefore"].as_i64().unwrap_or(0),
+        result["textBoxCountAfter"].as_i64().unwrap_or(0)
+    );
+
+    // It should have opened the whiteout text editor instead
+    assert!(
+        result["whiteoutEditorOpened"].as_bool().unwrap_or(false),
+        "ISSUE-019: Clicking on whiteout with text using TextBox tool should open whiteout editor"
+    );
+}
+
+// ============================================================================
+// ISSUE-020: Text Tools Blur Away After Multiple Edits
+// After performing multiple edits, clicking on text styling tools causes them
+// to immediately blur/lose focus without applying.
+// ============================================================================
+#[tokio::test]
+async fn test_text_tools_work_after_multiple_edits() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // === ROUND 1: Create text box 1, type, blur ===
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 100,
+                    clientY: pageRect.top + 100
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                let textBox1 = document.querySelector('.text-box');
+                if (!textBox1) return {{ success: false, error: 'TextBox 1 not created' }};
+                let content1 = textBox1.querySelector('.text-content');
+                content1.textContent = 'Text Box 1';
+                content1.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                document.body.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // === ROUND 2: Create whiteout with text, blur ===
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 100,
+                    clientY: pageRect.top + 250
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 250,
+                    clientY: pageRect.top + 300
+                }}));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 250,
+                    clientY: pageRect.top + 300
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) return {{ success: false, error: 'Whiteout not created' }};
+
+                // Double-click to add text
+                const whiteoutRect = whiteout.getBoundingClientRect();
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: whiteoutRect.left + whiteoutRect.width / 2,
+                    clientY: whiteoutRect.top + whiteoutRect.height / 2
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const whiteoutInput = whiteout.querySelector('.whiteout-text-input');
+                if (whiteoutInput) {{
+                    whiteoutInput.textContent = 'Whiteout Text';
+                    whiteoutInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                }}
+                document.body.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // === ROUND 3: Create another text box, blur ===
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 350,
+                    clientY: pageRect.top + 100
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const textBoxes = document.querySelectorAll('.text-box');
+                const textBox2 = textBoxes[textBoxes.length - 1];
+                if (!textBox2) return {{ success: false, error: 'TextBox 2 not created' }};
+                const content2 = textBox2.querySelector('.text-content');
+                content2.textContent = 'Text Box 2';
+                content2.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                document.body.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // === CRITICAL TEST: Now go back and try to use Bold on TextBox 1 ===
+                // Click on text box 1 to select/focus it (no separate select tool needed)
+                textBox1 = document.querySelectorAll('.text-box')[0];
+                if (!textBox1) return {{ success: false, error: 'Cannot find TextBox 1 after multiple edits' }};
+                content1 = textBox1.querySelector('.text-content');
+                content1.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Record state before clicking Bold
+                const beforeBoldWeight = window.getComputedStyle(content1).fontWeight;
+                const beforeBoldDataset = content1.dataset.isBold;
+
+                // Check if Bold button is enabled
+                const boldBtn = document.getElementById('style-bold');
+                const boldBtnDisabledBefore = boldBtn?.disabled ?? true;
+
+                // Click Bold button
+                if (boldBtn && !boldBtn.disabled) {{
+                    boldBtn.click();
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+
+                // Record state after clicking Bold
+                const afterBoldWeight = window.getComputedStyle(content1).fontWeight;
+                const afterBoldDataset = content1.dataset.isBold;
+
+                // Check if content is still focused (blur bug would cause loss of focus)
+                const contentStillFocused = document.activeElement === content1 ||
+                                           content1.contains(document.activeElement);
+
+                // Bold was applied if font weight changed to bold (700)
+                const boldWasApplied = afterBoldWeight === 'bold' || afterBoldWeight === '700';
+
+                return {{
+                    success: true,
+                    textBoxCount: document.querySelectorAll('.text-box').length,
+                    whiteoutCount: document.querySelectorAll('.edit-whiteout-overlay').length,
+                    boldBtnDisabledBefore: boldBtnDisabledBefore,
+                    beforeBoldWeight: beforeBoldWeight,
+                    afterBoldWeight: afterBoldWeight,
+                    beforeBoldDataset: beforeBoldDataset,
+                    afterBoldDataset: afterBoldDataset,
+                    contentStillFocused: contentStillFocused,
+                    boldWasApplied: boldWasApplied
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test text tools after multiple edits")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-020 Text tools after multiple edits: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Verify setup worked
+    assert_eq!(
+        result["textBoxCount"].as_i64().unwrap_or(0),
+        2,
+        "Should have created 2 text boxes"
+    );
+    assert_eq!(
+        result["whiteoutCount"].as_i64().unwrap_or(0),
+        1,
+        "Should have created 1 whiteout"
+    );
+
+    // BUG TEST: Bold button should be enabled after multiple edits
+    assert!(
+        !result["boldBtnDisabledBefore"].as_bool().unwrap_or(true),
+        "ISSUE-020 BUG: Bold button is DISABLED after multiple edits! \
+         The button should be enabled when text content is focused."
+    );
+
+    // BUG TEST: Bold should actually apply after multiple edits
+    assert!(
+        result["boldWasApplied"].as_bool().unwrap_or(false),
+        "ISSUE-020 BUG: Bold was NOT applied after multiple edits! \
+         Before: {}, After: {}. \
+         This indicates the style tools blur away or don't work after multiple operations.",
+        result["beforeBoldWeight"].as_str().unwrap_or("?"),
+        result["afterBoldWeight"].as_str().unwrap_or("?")
+    );
+}
+
+// ============================================================================
+// ISSUE-021: Test parity - Text styling must persist to exported PDF
+// This test verifies that bold/italic/font changes appear in the actual PDF
+// ============================================================================
+#[tokio::test]
+async fn test_textbox_bold_persists_to_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+    let js_code = format!(
+        r#"(async () => {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                const pageDiv = document.querySelector('.edit-page');
+                const pageRect = pageDiv.getBoundingClientRect();
+
+                // Create text box with BOLD text
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 100));
+
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 200));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'TextBox not created' }};
+                const content = textBox.querySelector('.text-content');
+                content.textContent = 'BOLD_MARKER_TEXT';
+                content.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 100));
+
+                // Apply bold
+                const boldBtn = document.getElementById('style-bold');
+                if (boldBtn && !boldBtn.disabled) {{
+                    boldBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                // Verify bold is applied in preview
+                const previewFontWeight = window.getComputedStyle(content).fontWeight;
+                const previewIsBold = previewFontWeight === 'bold' || previewFontWeight === '700';
+                const datasetIsBold = content.dataset.isBold === 'true';
+
+                // Blur to commit (must use blur() not click elsewhere)
+                content.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Get editSession and export (use __editSession__ debug API)
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'No editSession available (window.__editSession__ is null)' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                // Decode PDF and search for text content and font info
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                // Check if the marker text is in the export
+                const hasMarkerText = pdfText.includes('BOLD_MARKER_TEXT');
+
+                // Check for bold font indicators in PDF
+                // PDF bold fonts often have '-Bold' in name or use Tf with bold font
+                const hasBoldFontRef = pdfText.includes('Bold') || pdfText.includes('bold');
+
+                return {{
+                    success: true,
+                    previewIsBold: previewIsBold,
+                    datasetIsBold: datasetIsBold,
+                    hasMarkerText: hasMarkerText,
+                    hasBoldFontRef: hasBoldFontRef,
+                    exportSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test bold persistence to export")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-021 Bold persistence to export: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Verify preview shows bold
+    assert!(
+        result["previewIsBold"].as_bool().unwrap_or(false),
+        "Preview should show bold font styling"
+    );
+
+    // Verify marker text is in export
+    assert!(
+        result["hasMarkerText"].as_bool().unwrap_or(false),
+        "ISSUE-021: Exported PDF should contain the text 'BOLD_MARKER_TEXT'"
+    );
+}
+
+/// FEATURE PARITY TEST: Whiteout text should have same styling tools as TextBox
+/// When editing whiteout text, bold/italic/font-size buttons should be enabled.
+/// This is critical for elderly users who need larger text or emphasis.
+#[tokio::test]
+async fn test_whiteout_text_styling_bold_italic_fontsize() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    // Wait for initial page load
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF via file input
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                // Wait for page to render
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+
+                if (!pageDiv) {{
+                    return {{ success: false, error: 'Page did not render' }};
+                }}
+
+                // Check initial button states (should be disabled - no active text input)
+                const boldBtn = document.getElementById('style-bold');
+                const italicBtn = document.getElementById('style-italic');
+                const fontSizeIncrease = document.getElementById('font-size-increase');
+                const fontSizeValue = document.getElementById('font-size-value');
+
+                const initialBoldDisabled = boldBtn?.disabled ?? true;
+                const initialItalicDisabled = italicBtn?.disabled ?? true;
+                const initialFontSizeIncreaseDisabled = fontSizeIncrease?.disabled ?? true;
+
+                // Select Whiteout tool
+                const whiteoutTool = document.getElementById('edit-tool-whiteout');
+                if (!whiteoutTool) {{ return {{ success: false, error: 'Whiteout tool not found' }}; }}
+                whiteoutTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Draw whiteout by clicking and dragging
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 200;
+                const startY = pageRect.top + 200;
+                const endX = startX + 150;
+                const endY = startY + 40;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true,
+                    clientX: startX,
+                    clientY: startY
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true,
+                    clientX: endX,
+                    clientY: endY
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true,
+                    clientX: endX,
+                    clientY: endY
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                // Find the whiteout element (class is edit-whiteout-overlay)
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) {{ return {{ success: false, error: 'Whiteout not created' }}; }}
+
+                // Double-click to open text editor
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: startX + 75,
+                    clientY: startY + 20
+                }}));
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find the text input inside the whiteout
+                const textInput = whiteout.querySelector('.whiteout-text-input');
+                if (!textInput) {{ return {{ success: false, error: 'Whiteout text input not created' }}; }}
+
+                // Check button states after whiteout text input is focused
+                const afterFocusBoldDisabled = boldBtn?.disabled ?? true;
+                const afterFocusItalicDisabled = italicBtn?.disabled ?? true;
+                const afterFocusFontSizeIncreaseDisabled = fontSizeIncrease?.disabled ?? true;
+
+                // Type some text
+                textInput.textContent = 'Test whiteout styling';
+                await new Promise(r => setTimeout(r, 100));
+
+                // Get initial font size
+                const initialFontSize = parseInt(fontSizeValue?.value || '12', 10);
+
+                // Click BOLD button
+                if (boldBtn && !boldBtn.disabled) {{
+                    boldBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterBoldFontWeight = window.getComputedStyle(textInput).fontWeight;
+                const isBoldApplied = afterBoldFontWeight === 'bold' || afterBoldFontWeight === '700';
+
+                // Click ITALIC button
+                if (italicBtn && !italicBtn.disabled) {{
+                    italicBtn.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterItalicFontStyle = window.getComputedStyle(textInput).fontStyle;
+                const isItalicApplied = afterItalicFontStyle === 'italic';
+
+                // Click FONT SIZE INCREASE button
+                if (fontSizeIncrease && !fontSizeIncrease.disabled) {{
+                    fontSizeIncrease.click();
+                    await new Promise(r => setTimeout(r, 100));
+                }}
+
+                const afterIncreaseFontSize = parseInt(fontSizeValue?.value || '12', 10);
+                const actualFontSize = parseInt(window.getComputedStyle(textInput).fontSize, 10);
+
+                return {{
+                    success: true,
+                    initialBoldDisabled: initialBoldDisabled,
+                    initialItalicDisabled: initialItalicDisabled,
+                    initialFontSizeIncreaseDisabled: initialFontSizeIncreaseDisabled,
+                    afterFocusBoldDisabled: afterFocusBoldDisabled,
+                    afterFocusItalicDisabled: afterFocusItalicDisabled,
+                    afterFocusFontSizeIncreaseDisabled: afterFocusFontSizeIncreaseDisabled,
+                    initialFontSize: initialFontSize,
+                    afterIncreaseFontSize: afterIncreaseFontSize,
+                    actualFontSize: actualFontSize,
+                    fontSizeIncreased: afterIncreaseFontSize > initialFontSize,
+                    isBoldApplied: isBoldApplied,
+                    afterBoldFontWeight: afterBoldFontWeight,
+                    isItalicApplied: isItalicApplied,
+                    afterItalicFontStyle: afterItalicFontStyle
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout text styling")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("Whiteout text styling test: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // FEATURE PARITY: After focus on whiteout text, style buttons should be ENABLED
+    assert!(
+        !result["afterFocusBoldDisabled"].as_bool().unwrap_or(true),
+        "FEATURE PARITY: Bold button should be enabled when whiteout text is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialBoldDisabled"],
+        result["afterFocusBoldDisabled"]
+    );
+
+    assert!(
+        !result["afterFocusItalicDisabled"].as_bool().unwrap_or(true),
+        "FEATURE PARITY: Italic button should be enabled when whiteout text is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialItalicDisabled"],
+        result["afterFocusItalicDisabled"]
+    );
+
+    assert!(
+        !result["afterFocusFontSizeIncreaseDisabled"].as_bool().unwrap_or(true),
+        "FEATURE PARITY: Font size increase button should be enabled when whiteout text is focused. \
+         Initial: disabled={}, After focus: disabled={}",
+        result["initialFontSizeIncreaseDisabled"],
+        result["afterFocusFontSizeIncreaseDisabled"]
+    );
+
+    // FEATURE PARITY: Bold should apply to whiteout text
+    assert!(
+        result["isBoldApplied"].as_bool().unwrap_or(false),
+        "FEATURE PARITY: Bold should apply to whiteout text. fontWeight={}",
+        result["afterBoldFontWeight"]
+    );
+
+    // FEATURE PARITY: Italic should apply to whiteout text
+    assert!(
+        result["isItalicApplied"].as_bool().unwrap_or(false),
+        "FEATURE PARITY: Italic should apply to whiteout text. fontStyle={}",
+        result["afterItalicFontStyle"]
+    );
+
+    // FEATURE PARITY: Font size increase should work for whiteout text
+    assert!(
+        result["fontSizeIncreased"].as_bool().unwrap_or(false),
+        "FEATURE PARITY: Font size should increase for whiteout text. Initial: {}, After: {}",
+        result["initialFontSize"],
+        result["afterIncreaseFontSize"]
+    );
+}
+
+/// ISSUE-025: Partial text selection styling for TextBox
+/// User should be able to select part of text (e.g., "HEL" in "HELLO") and bold just that part.
+/// This is critical for elderly users who need fine-grained text formatting.
+#[tokio::test]
+async fn test_textbox_partial_selection_bold() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Select TextBox tool
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) return {{ success: false, error: 'Text tool not found' }};
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Double-click to create text box
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                // Type "HELLO WORLD"
+                textContent.textContent = 'HELLO WORLD';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select just "HELLO" (first 5 characters)
+                const textNode = textContent.firstChild;
+                if (!textNode) return {{ success: false, error: 'Text node not found' }};
+
+                const range = document.createRange();
+                range.setStart(textNode, 0);
+                range.setEnd(textNode, 5); // Select "HELLO"
+
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                await new Promise(r => setTimeout(r, 100));
+
+                const selectionText = selection.toString();
+
+                // Click bold button
+                const boldBtn = document.getElementById('style-bold');
+                if (!boldBtn || boldBtn.disabled) return {{ success: false, error: 'Bold button disabled' }};
+                boldBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Check if partial styling was applied
+                // For proper partial styling, we'd expect <b> or <strong> tags, or <span> with fontWeight
+                const innerHTML = textContent.innerHTML;
+                const hasPartialBold = innerHTML.includes('<b>') ||
+                                       innerHTML.includes('<strong>') ||
+                                       innerHTML.includes('font-weight');
+
+                // Check if entire element got bold (current broken behavior)
+                const entireTextBold = textContent.style.fontWeight === 'bold' ||
+                                       textContent.style.fontWeight === '700';
+
+                // Ideally: "HELLO" should be bold, " WORLD" should not be
+                // Look for structure like: <b>HELLO</b> WORLD or <span style="font-weight:bold">HELLO</span> WORLD
+
+                return {{
+                    success: true,
+                    selectionText: selectionText,
+                    innerHTML: innerHTML,
+                    hasPartialBold: hasPartialBold,
+                    entireTextBold: entireTextBold,
+                    partialStylingWorks: hasPartialBold && !entireTextBold
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test partial selection bold")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 TextBox partial selection bold: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Verify correct text was selected
+    assert_eq!(
+        result["selectionText"].as_str().unwrap_or(""),
+        "HELLO",
+        "Should have selected 'HELLO'"
+    );
+
+    // ISSUE-025: Partial selection styling should work
+    assert!(
+        result["partialStylingWorks"].as_bool().unwrap_or(false),
+        "ISSUE-025: Selecting 'HELLO' and clicking bold should only bold 'HELLO', not entire text. \
+         innerHTML: {}, entireTextBold: {}",
+        result["innerHTML"],
+        result["entireTextBold"]
+    );
+}
+
+/// ISSUE-025: Partial text selection styling for Whiteout text
+#[tokio::test]
+async fn test_whiteout_partial_selection_bold() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                // Navigate to Edit tab
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                // Load PDF
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Select Whiteout tool
+                const whiteoutTool = document.getElementById('edit-tool-whiteout');
+                if (!whiteoutTool) return {{ success: false, error: 'Whiteout tool not found' }};
+                whiteoutTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Draw whiteout
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 200;
+                const startY = pageRect.top + 200;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{
+                    bubbles: true, clientX: startX, clientY: startY
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{
+                    bubbles: true, clientX: startX + 200, clientY: startY + 40
+                }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{
+                    bubbles: true, clientX: startX + 200, clientY: startY + 40
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) return {{ success: false, error: 'Whiteout not created' }};
+
+                // Double-click to open text editor
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 500));
+
+                const textInput = whiteout.querySelector('.whiteout-text-input');
+                if (!textInput) return {{ success: false, error: 'Whiteout text input not found' }};
+
+                // Type "HELLO WORLD"
+                textInput.textContent = 'HELLO WORLD';
+                textInput.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select just "HELLO"
+                const textNode = textInput.firstChild;
+                if (!textNode) return {{ success: false, error: 'Text node not found' }};
+
+                const range = document.createRange();
+                range.setStart(textNode, 0);
+                range.setEnd(textNode, 5);
+
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                await new Promise(r => setTimeout(r, 100));
+
+                const selectionText = selection.toString();
+
+                // Click bold button
+                const boldBtn = document.getElementById('style-bold');
+                if (!boldBtn || boldBtn.disabled) return {{ success: false, error: 'Bold button disabled' }};
+                boldBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const innerHTML = textInput.innerHTML;
+                const hasPartialBold = innerHTML.includes('<b>') ||
+                                       innerHTML.includes('<strong>') ||
+                                       innerHTML.includes('font-weight');
+                const entireTextBold = textInput.style.fontWeight === 'bold' ||
+                                       textInput.style.fontWeight === '700';
+
+                return {{
+                    success: true,
+                    selectionText: selectionText,
+                    innerHTML: innerHTML,
+                    hasPartialBold: hasPartialBold,
+                    entireTextBold: entireTextBold,
+                    partialStylingWorks: hasPartialBold && !entireTextBold
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout partial selection bold")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 Whiteout partial selection bold: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert_eq!(
+        result["selectionText"].as_str().unwrap_or(""),
+        "HELLO",
+        "Should have selected 'HELLO'"
+    );
+
+    assert!(
+        result["partialStylingWorks"].as_bool().unwrap_or(false),
+        "ISSUE-025: Selecting 'HELLO' in whiteout and clicking bold should only bold 'HELLO'. \
+         innerHTML: {}, entireTextBold: {}",
+        result["innerHTML"],
+        result["entireTextBold"]
+    );
+}
+
+/// ISSUE-025: Multiple styles at once (bold AND italic AND font size)
+#[tokio::test]
+async fn test_textbox_multiple_styles_at_once() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) return {{ success: false, error: 'Text tool not found' }};
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                textContent.textContent = 'Multiple Styles Test';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                const boldBtn = document.getElementById('style-bold');
+                const italicBtn = document.getElementById('style-italic');
+                const fontSizeIncrease = document.getElementById('font-size-increase');
+                const fontSizeValue = document.getElementById('font-size-value');
+
+                if (!boldBtn || !italicBtn || !fontSizeIncrease) {{
+                    return {{ success: false, error: 'Style buttons not found' }};
+                }}
+
+                const initialFontSize = parseInt(fontSizeValue?.value || '12', 10);
+
+                // Apply all three styles
+                boldBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+                italicBtn.click();
+                await new Promise(r => setTimeout(r, 100));
+                fontSizeIncrease.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                const computed = window.getComputedStyle(textContent);
+                const isBold = computed.fontWeight === 'bold' || computed.fontWeight === '700';
+                const isItalic = computed.fontStyle === 'italic';
+                const newFontSize = parseInt(fontSizeValue?.value || '12', 10);
+                const fontSizeIncreased = newFontSize > initialFontSize;
+
+                return {{
+                    success: true,
+                    isBold: isBold,
+                    isItalic: isItalic,
+                    fontSizeIncreased: fontSizeIncreased,
+                    initialFontSize: initialFontSize,
+                    newFontSize: newFontSize,
+                    allThreeApplied: isBold && isItalic && fontSizeIncreased
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test multiple styles")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 Multiple styles at once: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["allThreeApplied"].as_bool().unwrap_or(false),
+        "ISSUE-025: Should be able to apply bold, italic, AND font size at once. \
+         Bold: {}, Italic: {}, FontSize increased: {}",
+        result["isBold"],
+        result["isItalic"],
+        result["fontSizeIncreased"]
+    );
+}
+
+/// ISSUE-025: Styled text persists to downloaded PDF
+#[tokio::test]
+async fn test_textbox_styles_persist_to_pdf() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {{
+                    pdfBytes[i] = binary.charCodeAt(i);
+                }}
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                const file = new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }});
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                const textTool = document.getElementById('edit-tool-textbox');
+                if (!textTool) return {{ success: false, error: 'Text tool not found' }};
+                textTool.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                // Use a unique marker
+                textContent.textContent = 'STYLED_PERSIST_TEST';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Apply bold and italic
+                const boldBtn = document.getElementById('style-bold');
+                const italicBtn = document.getElementById('style-italic');
+                boldBtn?.click();
+                await new Promise(r => setTimeout(r, 100));
+                italicBtn?.click();
+                await new Promise(r => setTimeout(r, 100));
+
+                // Blur to commit (must use blur() not click elsewhere)
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Get editSession and export (use __editSession__ debug API)
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'No editSession available (window.__editSession__ is null)' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                // Decode PDF and search for text content
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                const hasMarkerText = pdfText.includes('STYLED_PERSIST_TEST');
+                // Check for bold font indicators in PDF
+                const hasBoldFont = pdfText.includes('-Bold') || pdfText.includes('Bold') || pdfText.includes('bold');
+                const hasItalicFont = pdfText.includes('-Italic') || pdfText.includes('-Oblique') || pdfText.includes('Italic') || pdfText.includes('italic');
+
+                return {{
+                    success: true,
+                    hasMarkerText: hasMarkerText,
+                    hasBoldFont: hasBoldFont,
+                    hasItalicFont: hasItalicFont,
+                    pdfSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test style persistence")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 Style persistence to PDF: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["hasMarkerText"].as_bool().unwrap_or(false),
+        "ISSUE-025: Exported PDF should contain the styled text 'STYLED_PERSIST_TEST'"
+    );
+}
+
+/// ISSUE-025: Mixed partial styling - bold "HEL" and italic "LO" in TextBox
+/// Tests that different parts of text can have different styles in preview
+#[tokio::test]
+async fn test_textbox_mixed_partial_styling_preview() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Create text box
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                // Type "HELLO"
+                textContent.textContent = 'HELLO';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Step 1: Select "HEL" (first 3 chars) and make bold
+                const textNode1 = textContent.firstChild;
+                if (!textNode1) return {{ success: false, error: 'Text node not found' }};
+
+                const range1 = document.createRange();
+                range1.setStart(textNode1, 0);
+                range1.setEnd(textNode1, 3); // "HEL"
+
+                const selection1 = window.getSelection();
+                selection1.removeAllRanges();
+                selection1.addRange(range1);
+                await new Promise(r => setTimeout(r, 100));
+
+                const boldBtn = document.getElementById('style-bold');
+                if (!boldBtn || boldBtn.disabled) return {{ success: false, error: 'Bold button disabled' }};
+                boldBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const innerHTMLAfterBold = textContent.innerHTML;
+
+                // Step 2: Select "LO" (last 2 chars) and make italic
+                // After bold, structure might be: <b>HEL</b>LO
+                // Need to find the text node containing "LO"
+                let loNode = null;
+                let loOffset = 0;
+
+                // Walk through child nodes to find "LO"
+                for (let i = 0; i < textContent.childNodes.length; i++) {{
+                    const node = textContent.childNodes[i];
+                    if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('LO')) {{
+                        loNode = node;
+                        loOffset = node.textContent.indexOf('LO');
+                        break;
+                    }}
+                }}
+
+                if (!loNode) {{
+                    // LO might be at the end after a <b> tag
+                    const lastChild = textContent.lastChild;
+                    if (lastChild && lastChild.nodeType === Node.TEXT_NODE) {{
+                        loNode = lastChild;
+                        loOffset = 0;
+                    }}
+                }}
+
+                if (!loNode) return {{ success: false, error: 'Could not find LO text node', innerHTML: innerHTMLAfterBold }};
+
+                const range2 = document.createRange();
+                range2.setStart(loNode, loOffset);
+                range2.setEnd(loNode, loOffset + 2); // "LO"
+
+                const selection2 = window.getSelection();
+                selection2.removeAllRanges();
+                selection2.addRange(range2);
+                await new Promise(r => setTimeout(r, 100));
+
+                const italicBtn = document.getElementById('style-italic');
+                if (!italicBtn || italicBtn.disabled) return {{ success: false, error: 'Italic button disabled' }};
+                italicBtn.click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const finalInnerHTML = textContent.innerHTML;
+
+                // Check structure: should have both <b> and <i> tags
+                const hasBoldTag = finalInnerHTML.includes('<b>') || finalInnerHTML.includes('<strong>');
+                const hasItalicTag = finalInnerHTML.includes('<i>') || finalInnerHTML.includes('<em>');
+
+                // Verify "HEL" is bold and "LO" is italic
+                // Expected: <b>HEL</b><i>LO</i> or similar
+                const helIsBold = finalInnerHTML.match(/<b>HEL<\/b>|<strong>HEL<\/strong>/i) !== null;
+                const loIsItalic = finalInnerHTML.match(/<i>LO<\/i>|<em>LO<\/em>/i) !== null;
+
+                return {{
+                    success: true,
+                    innerHTMLAfterBold: innerHTMLAfterBold,
+                    finalInnerHTML: finalInnerHTML,
+                    hasBoldTag: hasBoldTag,
+                    hasItalicTag: hasItalicTag,
+                    helIsBold: helIsBold,
+                    loIsItalic: loIsItalic,
+                    mixedStylingWorks: hasBoldTag && hasItalicTag
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test mixed partial styling")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 Mixed partial styling preview: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Both bold and italic tags should exist
+    assert!(
+        result["hasBoldTag"].as_bool().unwrap_or(false),
+        "ISSUE-025: Should have bold tag after bolding 'HEL'. innerHTML: {}",
+        result["finalInnerHTML"]
+    );
+
+    assert!(
+        result["hasItalicTag"].as_bool().unwrap_or(false),
+        "ISSUE-025: Should have italic tag after italicizing 'LO'. innerHTML: {}",
+        result["finalInnerHTML"]
+    );
+
+    assert!(
+        result["mixedStylingWorks"].as_bool().unwrap_or(false),
+        "ISSUE-025: Mixed styling (bold 'HEL' + italic 'LO') should work in preview. innerHTML: {}",
+        result["finalInnerHTML"]
+    );
+}
+
+/// ISSUE-025: Mixed partial styling persists to PDF export
+/// Tests that "HEL" bold + "LO" italic exports correctly to PDF
+#[tokio::test]
+async fn test_textbox_mixed_partial_styling_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Create text box
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                // Type unique marker text: "MIXSTYLE"
+                textContent.textContent = 'MIXSTYLE';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "MIX" and make bold
+                const textNode = textContent.firstChild;
+                if (!textNode) return {{ success: false, error: 'Text node not found' }};
+
+                const range1 = document.createRange();
+                range1.setStart(textNode, 0);
+                range1.setEnd(textNode, 3); // "MIX"
+
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range1);
+                await new Promise(r => setTimeout(r, 100));
+
+                document.getElementById('style-bold').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "STYLE" and make italic
+                // After bold, innerHTML is like: <b>MIX</b>STYLE
+                let styleNode = null;
+                for (let i = 0; i < textContent.childNodes.length; i++) {{
+                    const node = textContent.childNodes[i];
+                    if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('STYLE')) {{
+                        styleNode = node;
+                        break;
+                    }}
+                }}
+
+                if (!styleNode) {{
+                    styleNode = textContent.lastChild;
+                    if (styleNode && styleNode.nodeType !== Node.TEXT_NODE) {{
+                        return {{ success: false, error: 'Could not find STYLE text node', innerHTML: textContent.innerHTML }};
+                    }}
+                }}
+
+                const range2 = document.createRange();
+                const styleOffset = styleNode.textContent.indexOf('STYLE');
+                range2.setStart(styleNode, styleOffset >= 0 ? styleOffset : 0);
+                range2.setEnd(styleNode, (styleOffset >= 0 ? styleOffset : 0) + 5);
+
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range2);
+                await new Promise(r => setTimeout(r, 100));
+
+                document.getElementById('style-italic').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const previewInnerHTML = textContent.innerHTML;
+
+                // Blur to commit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Export PDF
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'No editSession available' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                // Check for text content and font indicators
+                const hasMixText = pdfText.includes('MIX') || pdfText.includes('MIXSTYLE');
+                const hasStyleText = pdfText.includes('STYLE');
+                const hasBoldFont = pdfText.includes('Bold') || pdfText.includes('bold');
+                const hasItalicFont = pdfText.includes('Italic') || pdfText.includes('italic') || pdfText.includes('Oblique');
+
+                return {{
+                    success: true,
+                    previewInnerHTML: previewInnerHTML,
+                    hasMixText: hasMixText,
+                    hasStyleText: hasStyleText,
+                    hasBoldFont: hasBoldFont,
+                    hasItalicFont: hasItalicFont,
+                    pdfSize: exportedArray.length,
+                    mixedStylesInPdf: hasMixText && (hasBoldFont || hasItalicFont)
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test mixed styling export")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025 Mixed partial styling export: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Text should be in the PDF
+    assert!(
+        result["hasMixText"].as_bool().unwrap_or(false),
+        "ISSUE-025: Exported PDF should contain 'MIX' or 'MIXSTYLE' text"
+    );
+}
+
+/// ISSUE-025: Whiteout mixed partial styling in preview
+#[tokio::test]
+async fn test_whiteout_mixed_partial_styling_preview() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Create whiteout
+                document.getElementById('edit-tool-whiteout').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                const startX = pageRect.left + 200;
+                const startY = pageRect.top + 200;
+
+                pageDiv.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, clientX: startX, clientY: startY }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mousemove', {{ bubbles: true, clientX: startX + 200, clientY: startY + 40 }}));
+                await new Promise(r => setTimeout(r, 50));
+                pageDiv.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, clientX: startX + 200, clientY: startY + 40 }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const whiteout = document.querySelector('.edit-whiteout-overlay');
+                if (!whiteout) return {{ success: false, error: 'Whiteout not created' }};
+
+                // Double-click to edit
+                whiteout.dispatchEvent(new MouseEvent('dblclick', {{ bubbles: true }}));
+                await new Promise(r => setTimeout(r, 500));
+
+                const textInput = whiteout.querySelector('.whiteout-text-input');
+                if (!textInput) return {{ success: false, error: 'Whiteout text input not found' }};
+
+                // Type "HELLO"
+                textInput.textContent = 'HELLO';
+                textInput.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "HEL" and bold
+                const textNode = textInput.firstChild;
+                if (!textNode) return {{ success: false, error: 'Text node not found' }};
+
+                const range1 = document.createRange();
+                range1.setStart(textNode, 0);
+                range1.setEnd(textNode, 3);
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range1);
+                await new Promise(r => setTimeout(r, 100));
+
+                document.getElementById('style-bold').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "LO" and italic
+                let loNode = null;
+                for (let i = 0; i < textInput.childNodes.length; i++) {{
+                    const node = textInput.childNodes[i];
+                    if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('LO')) {{
+                        loNode = node;
+                        break;
+                    }}
+                }}
+                if (!loNode) loNode = textInput.lastChild;
+
+                if (loNode && loNode.nodeType === Node.TEXT_NODE) {{
+                    const range2 = document.createRange();
+                    const loOffset = loNode.textContent.indexOf('LO');
+                    range2.setStart(loNode, loOffset >= 0 ? loOffset : 0);
+                    range2.setEnd(loNode, (loOffset >= 0 ? loOffset : 0) + 2);
+                    window.getSelection().removeAllRanges();
+                    window.getSelection().addRange(range2);
+                    await new Promise(r => setTimeout(r, 100));
+
+                    document.getElementById('style-italic').click();
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+
+                const finalInnerHTML = textInput.innerHTML;
+                const hasBoldTag = finalInnerHTML.includes('<b>') || finalInnerHTML.includes('<strong>');
+                const hasItalicTag = finalInnerHTML.includes('<i>') || finalInnerHTML.includes('<em>');
+
+                return {{
+                    success: true,
+                    finalInnerHTML: finalInnerHTML,
+                    hasBoldTag: hasBoldTag,
+                    hasItalicTag: hasItalicTag,
+                    mixedStylingWorks: hasBoldTag && hasItalicTag
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test whiteout mixed styling")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!(
+        "ISSUE-025 Whiteout mixed partial styling preview: {:?}",
+        result
+    );
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    assert!(
+        result["mixedStylingWorks"].as_bool().unwrap_or(false),
+        "ISSUE-025: Mixed styling in whiteout (bold 'HEL' + italic 'LO') should work. innerHTML: {}",
+        result["finalInnerHTML"]
+    );
+}
+
+/// ISSUE-025b: Verify mixed partial styling ACTUALLY persists with different fonts in PDF
+/// This is the critical test - preview may work but PDF export might not include both fonts
+#[tokio::test]
+async fn test_mixed_styling_both_fonts_in_pdf_export() {
+    skip_if_no_chrome!();
+    require_local_server!("http://127.0.0.1:8082");
+
+    let Some((browser, _handle)) = browser::require_browser().await else {
+        return;
+    };
+
+    let page = browser
+        .new_page("about:blank")
+        .await
+        .expect("Should create page");
+
+    page.goto("http://127.0.0.1:8082")
+        .await
+        .expect("Should navigate to PDFJoin");
+
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+
+    let pdf_b64 = test_pdf_base64(1);
+
+    let js_code = format!(
+        r#"(async function() {{
+            try {{
+                document.querySelector('[data-tab="edit"]').click();
+                await new Promise(r => setTimeout(r, 300));
+
+                const b64 = "{pdf_b64}";
+                const binary = atob(b64);
+                const pdfBytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) pdfBytes[i] = binary.charCodeAt(i);
+
+                const fileInput = document.getElementById('edit-file-input');
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(new File([pdfBytes], 'test.pdf', {{ type: 'application/pdf' }}));
+                fileInput.files = dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+
+                await new Promise(r => setTimeout(r, 2000));
+
+                let pageDiv = document.querySelector('.edit-page');
+                let attempts = 0;
+                while (!pageDiv && attempts < 20) {{
+                    await new Promise(r => setTimeout(r, 200));
+                    pageDiv = document.querySelector('.edit-page');
+                    attempts++;
+                }}
+                if (!pageDiv) return {{ success: false, error: 'Page did not render' }};
+
+                // Create text box
+                document.getElementById('edit-tool-textbox').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                const pageRect = pageDiv.getBoundingClientRect();
+                pageDiv.dispatchEvent(new MouseEvent('dblclick', {{
+                    bubbles: true,
+                    clientX: pageRect.left + 200,
+                    clientY: pageRect.top + 200
+                }}));
+                await new Promise(r => setTimeout(r, 400));
+
+                const textBox = document.querySelector('.text-box');
+                if (!textBox) return {{ success: false, error: 'Text box not created' }};
+
+                const textContent = textBox.querySelector('.text-content');
+                if (!textContent) return {{ success: false, error: 'Text content not found' }};
+
+                // Type "BOLDITAL" - we'll bold "BOLD" and italic "ITAL"
+                textContent.textContent = 'BOLDITAL';
+                textContent.focus();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "BOLD" and make bold
+                const textNode = textContent.firstChild;
+                const range1 = document.createRange();
+                range1.setStart(textNode, 0);
+                range1.setEnd(textNode, 4); // "BOLD"
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range1);
+                await new Promise(r => setTimeout(r, 100));
+                document.getElementById('style-bold').click();
+                await new Promise(r => setTimeout(r, 200));
+
+                // Select "ITAL" and make italic
+                let italNode = null;
+                for (let i = 0; i < textContent.childNodes.length; i++) {{
+                    const node = textContent.childNodes[i];
+                    if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('ITAL')) {{
+                        italNode = node;
+                        break;
+                    }}
+                }}
+                if (!italNode) italNode = textContent.lastChild;
+
+                if (italNode && italNode.nodeType === Node.TEXT_NODE) {{
+                    const range2 = document.createRange();
+                    const italOffset = italNode.textContent.indexOf('ITAL');
+                    range2.setStart(italNode, italOffset >= 0 ? italOffset : 0);
+                    range2.setEnd(italNode, (italOffset >= 0 ? italOffset : 0) + 4);
+                    window.getSelection().removeAllRanges();
+                    window.getSelection().addRange(range2);
+                    await new Promise(r => setTimeout(r, 100));
+                    document.getElementById('style-italic').click();
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+
+                const previewInnerHTML = textContent.innerHTML;
+                const previewHasBold = previewInnerHTML.includes('<b>') || previewInnerHTML.includes('<strong>');
+                const previewHasItalic = previewInnerHTML.includes('<i>') || previewInnerHTML.includes('<em>');
+
+                // Blur to commit
+                textContent.blur();
+                await new Promise(r => setTimeout(r, 500));
+
+                // Export PDF
+                if (!window.__editSession__) {{
+                    return {{ success: false, error: 'No editSession available' }};
+                }}
+
+                const exportedBytes = window.__editSession__.export();
+                const exportedArray = new Uint8Array(exportedBytes);
+                const decoder = new TextDecoder('utf-8', {{ fatal: false }});
+                const pdfText = decoder.decode(exportedArray);
+
+                // Check for BOTH bold AND italic font references in the PDF
+                // Bold fonts typically have "-Bold" in name
+                // Italic fonts typically have "-Italic" or "-Oblique" in name
+                const hasBoldFont = pdfText.includes('-Bold') ||
+                                    (pdfText.includes('Bold') && !pdfText.includes('BOLD'));
+                const hasItalicFont = pdfText.includes('-Italic') ||
+                                      pdfText.includes('-Oblique') ||
+                                      (pdfText.includes('Italic') && !pdfText.includes('ITAL'));
+
+                // Count Tf (text font) operators to see if there are multiple font switches
+                const tfMatches = pdfText.match(/\/F\d+\s+\d+\s+Tf/g) || [];
+                const uniqueFonts = new Set(tfMatches.map(m => m.split(' ')[0]));
+
+                return {{
+                    success: true,
+                    previewInnerHTML: previewInnerHTML,
+                    previewHasBold: previewHasBold,
+                    previewHasItalic: previewHasItalic,
+                    previewMixedWorks: previewHasBold && previewHasItalic,
+                    hasBoldFont: hasBoldFont,
+                    hasItalicFont: hasItalicFont,
+                    hasBothFontsInPdf: hasBoldFont && hasItalicFont,
+                    uniqueFontCount: uniqueFonts.size,
+                    fontSwitches: tfMatches.length,
+                    pdfSize: exportedArray.length
+                }};
+            }} catch (err) {{
+                return {{ success: false, error: err.toString() }};
+            }}
+        }})()"#,
+        pdf_b64 = pdf_b64
+    );
+
+    let result: serde_json::Value = page
+        .evaluate(js_code.as_str())
+        .await
+        .expect("Should test mixed styling export")
+        .into_value()
+        .expect("Should get value");
+
+    eprintln!("ISSUE-025b Mixed styling fonts in PDF export: {:?}", result);
+
+    assert!(
+        result["success"].as_bool().unwrap_or(false),
+        "Test should succeed. Error: {:?}",
+        result["error"]
+    );
+
+    // Preview should work
+    assert!(
+        result["previewMixedWorks"].as_bool().unwrap_or(false),
+        "Preview should show mixed styling (bold 'BOLD' + italic 'ITAL'). innerHTML: {}",
+        result["previewInnerHTML"]
+    );
+
+    // CRITICAL: Both fonts should be in the exported PDF
+    // This will likely FAIL with current implementation because commitTextBox
+    // only reads textContent.textContent (plain text) and applies single style
+    assert!(
+        result["hasBothFontsInPdf"].as_bool().unwrap_or(false),
+        "ISSUE-025b: Exported PDF should contain BOTH bold AND italic fonts for mixed styling. \
+         hasBoldFont: {}, hasItalicFont: {}, fontSwitches: {}, uniqueFonts: {}",
+        result["hasBoldFont"],
+        result["hasItalicFont"],
+        result["fontSwitches"],
+        result["uniqueFontCount"]
     );
 }

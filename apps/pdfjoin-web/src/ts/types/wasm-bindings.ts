@@ -93,6 +93,16 @@ export interface PdfJoinSessionConstructor {
 }
 
 /**
+ * Styled text segment for mixed-style text blocks.
+ * Each segment has its own text content and style flags.
+ */
+export interface StyledTextSegment {
+  text: string;
+  is_bold: boolean;
+  is_italic: boolean;
+}
+
+/**
  * EditSession class interface (PDF editing operations)
  */
 export interface EditSession {
@@ -114,6 +124,22 @@ export interface EditSession {
     fontName: string | null,
     isItalic: boolean,
     isBold: boolean
+  ): OpId;
+
+  /**
+   * Add styled text with mixed formatting (bold/italic segments).
+   * Use this when text contains mixed styles (e.g., "BOLD" + "ITALIC" with different formatting).
+   */
+  addStyledText(
+    page: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    segmentsJson: string,
+    fontSize: number,
+    color: string,
+    fontName: string | null
   ): OpId;
 
   addHighlight(

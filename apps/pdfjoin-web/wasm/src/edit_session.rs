@@ -6,7 +6,9 @@
 use lopdf::Document;
 use pdfjoin_core::apply_operations::{apply_operations, apply_operations_flattened};
 use pdfjoin_core::has_signatures;
-use pdfjoin_core::operations::{ActionKind, EditOperation, OperationLog, PdfRect, TextStyle};
+use pdfjoin_core::operations::{
+    ActionKind, EditOperation, OperationLog, PdfRect, StyledTextSegment, TextStyle,
+};
 use wasm_bindgen::prelude::*;
 
 /// Session for editing a single PDF document
@@ -104,6 +106,51 @@ impl EditSession {
             },
         };
         self.operations.add(op)
+    }
+
+    /// Add styled text with mixed formatting (bold/italic segments).
+    /// segments_json: JSON array of segments, e.g., [{"text":"BOLD","is_bold":true,"is_italic":false},...]
+    #[wasm_bindgen(js_name = addStyledText)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_styled_text(
+        &mut self,
+        page: u32,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        segments_json: &str,
+        font_size: f64,
+        color: &str,
+        font_name: Option<String>,
+    ) -> Result<u64, JsValue> {
+        // Parse segments from JSON
+        let segments: Vec<StyledTextSegment> = serde_json::from_str(segments_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid segments JSON: {}", e)))?;
+
+        if segments.is_empty() {
+            return Err(JsValue::from_str("At least one segment is required"));
+        }
+
+        let op = EditOperation::AddStyledText {
+            id: 0,
+            page,
+            rect: PdfRect {
+                x,
+                y,
+                width,
+                height,
+            },
+            segments,
+            style: TextStyle {
+                font_size,
+                color: color.to_string(),
+                font_name,
+                is_italic: false, // Base style - individual segments have their own flags
+                is_bold: false,
+            },
+        };
+        Ok(self.operations.add(op))
     }
 
     /// Add a highlight annotation

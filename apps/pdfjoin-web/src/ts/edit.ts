@@ -28,6 +28,96 @@ let drawStartX = 0;
 let drawStartY = 0;
 let drawOverlay: HTMLElement | null = null;
 let drawPageNum: number | null = null;
+let pendingFileToLoad: { file: File } | null = null; // For file replace confirmation flow
+
+/**
+ * Shows a confirmation dialog for destructive actions.
+ * Returns a promise that resolves to true if confirmed, false if cancelled.
+ * Uses the reusable confirm-dialog-overlay from index.html
+ */
+function showEditConfirmDialog(options: {
+  title: string;
+  message: string;
+  confirmText?: string;
+  cancelText?: string;
+  icon?: string;
+  modalType?: string; // Optional identifier for the modal type (e.g., 'file-replace')
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('confirm-dialog-overlay');
+    const heading = document.getElementById('confirm-dialog-heading');
+    const message = document.getElementById('confirm-dialog-message');
+    const icon = document.getElementById('confirm-dialog-icon');
+    const confirmBtn = document.getElementById('confirm-dialog-confirm');
+    const cancelBtn = document.getElementById('confirm-dialog-cancel');
+
+    if (!overlay || !heading || !message || !confirmBtn || !cancelBtn) {
+      // Fallback to native confirm if dialog elements not found
+      resolve(window.confirm(options.message));
+      return;
+    }
+
+    // Set dialog content
+    heading.textContent = options.title;
+    message.textContent = options.message;
+    if (icon) icon.innerHTML = options.icon || '&#9888;';
+    confirmBtn.textContent = options.confirmText || 'Replace';
+    cancelBtn.textContent = options.cancelText || 'Cancel';
+
+    // Set modal type identifier for testing (e.g., 'file-replace')
+    if (options.modalType) {
+      overlay.setAttribute('data-modal', options.modalType);
+      overlay.classList.add(`${options.modalType}-confirm`);
+    }
+
+    // Show dialog
+    overlay.classList.add('show');
+    confirmBtn.focus();
+
+    // Clean up function
+    const cleanup = () => {
+      overlay.classList.remove('show');
+      // Remove modal type identifiers
+      if (options.modalType) {
+        overlay.removeAttribute('data-modal');
+        overlay.classList.remove(`${options.modalType}-confirm`);
+      }
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onOverlayClick);
+      document.removeEventListener('keydown', onKeydown);
+    };
+
+    const onConfirm = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    const onCancel = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    const onOverlayClick = (e: Event) => {
+      if (e.target === overlay) {
+        onCancel();
+      }
+    };
+
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      } else if (e.key === 'Enter') {
+        onConfirm();
+      }
+    };
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onOverlayClick);
+    document.addEventListener('keydown', onKeydown);
+  });
+}
 let drawPreviewEl: HTMLElement | null = null;
 let drawPageDiv: HTMLElement | null = null;
 
@@ -379,6 +469,35 @@ async function handleEditFile(file: File): Promise<void> {
     return;
   }
 
+  // ISSUE-016: If a document is already loaded, show confirmation before replacing
+  // This prevents elderly users from accidentally losing their work
+  if (editSession !== null || currentPdfBytes !== null) {
+    const hasUnsavedChanges = editSession?.hasChanges() ?? false;
+    const currentFilename = currentPdfFilename || 'current document';
+
+    const title = hasUnsavedChanges
+      ? 'Replace Document with Unsaved Changes?'
+      : 'Replace Existing Document?';
+
+    const message = hasUnsavedChanges
+      ? `You have unsaved changes to "${currentFilename}". Loading "${file.name}" will replace your current document and discard all changes. This cannot be undone.`
+      : `You already have "${currentFilename}" open. Loading "${file.name}" will replace it. Any edits you've made will be lost.`;
+
+    const confirmed = await showEditConfirmDialog({
+      title,
+      message,
+      confirmText: 'Replace',
+      cancelText: 'Keep Current',
+      icon: hasUnsavedChanges ? '&#9888;' : '&#128196;', // Warning icon for unsaved, doc icon otherwise
+      modalType: 'file-replace', // For elderly UX testing - ISSUE-016
+    });
+
+    if (!confirmed) {
+      // User chose to keep current document - do nothing
+      return;
+    }
+  }
+
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     await loadPdfIntoEditInternal(bytes, file.name);
@@ -503,7 +622,29 @@ async function renderAllPages(): Promise<void> {
     pageDiv.addEventListener('mouseleave', () => {
       if (isDrawing) handleWhiteoutCancel();
     });
+
+    // Double-click handler for creating default-sized text box
+    // This is the preferred way to create a text box for elderly users
+    pageDiv.addEventListener('dblclick', (e) => handleTextBoxDoubleClick(e as MouseEvent, i, overlay));
   }
+}
+
+function handleTextBoxDoubleClick(e: MouseEvent, pageNum: number, overlay: HTMLElement): void {
+  // Only create text box on double-click when textbox tool is selected
+  if (currentTool !== 'textbox') return;
+
+  // Don't create if double-clicking on an existing text box
+  const elementAtClick = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+  if (elementAtClick?.closest('.text-box')) return;
+
+  // Calculate position relative to the page
+  const pageDiv = (e.currentTarget as HTMLElement);
+  const rect = pageDiv.getBoundingClientRect();
+  const domX = e.clientX - rect.left;
+  const domY = e.clientY - rect.top;
+
+  // Create default-sized text box (accessible size enforced by createTextBox)
+  createTextBox(pageNum, domX, domY);
 }
 
 function handleOverlayClick(e: MouseEvent, pageNum: number): void {
@@ -556,10 +697,9 @@ function handleOverlayClick(e: MouseEvent, pageNum: number): void {
     case 'text':
       addTextAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
       break;
-    case 'textbox':
-      // Create textbox at click position (alternative to drag creation)
-      createTextBox(pageNum, domX, domY);
-      break;
+    // Note: textbox is NOT handled on single click anymore
+    // Use double-click for default-sized box, or click+drag to size it
+    // This prevents confusing elderly users with accidental text boxes
     // DISABLED: Checkbox tool is hidden (ISSUE-003)
     // case 'checkbox':
     //   addCheckboxAtPosition(pageNum, pdfX, pdfY, overlay, domX, domY);
@@ -832,16 +972,26 @@ function editExistingTextOverlay(textOverlay: HTMLElement, pageNum: number): voi
 // ============ Whiteout Drawing Functions ============
 
 function handleWhiteoutStart(e: MouseEvent, pageNum: number, overlay: HTMLElement, pageDiv: HTMLElement): void {
-  // Handle both whiteout and textbox tools
-  if (currentTool !== 'whiteout' && currentTool !== 'textbox') return;
-
-  // Don't start drawing if clicking on UI elements (delete button, resize handles, etc.)
+  // Check if clicking on UI elements (delete button, resize handles, etc.)
   const target = e.target as HTMLElement;
-  if (target.closest('.delete-btn') ||
+  const isOnUIElement = target.closest('.delete-btn') ||
       target.closest('.resize-handle') ||
       target.closest('.text-content') ||
       target.closest('.text-box') ||
-      target.closest('.edit-whiteout-overlay')) {
+      target.closest('.edit-whiteout-overlay');
+
+  // ISSUE-014 FIX: When clicking on a blank area (not on a text box or whiteout),
+  // deselect any selected elements regardless of current tool
+  if (!isOnUIElement) {
+    deselectTextBox();
+    deselectWhiteout();
+  }
+
+  // Handle drawing only for whiteout and textbox tools
+  if (currentTool !== 'whiteout' && currentTool !== 'textbox') return;
+
+  // Don't start drawing if clicking on UI elements
+  if (isOnUIElement) {
     return;
   }
 
@@ -921,15 +1071,14 @@ function handleWhiteoutEnd(e: MouseEvent, pageNum: number): void {
   }
 
   if (wasTextbox) {
-    // For textbox, a click (small drag) creates a default-sized box at that position
-    // Larger drags create a box of that size
-    if (domWidth < 5 || domHeight < 5) {
-      // Click - create at click position
-      createTextBox(pageNum, drawStartX, drawStartY);
-    } else {
-      // Drag - create with specified size (TODO: implement sized creation)
-      createTextBox(pageNum, domX, domY);
+    // For textbox: only create on meaningful drag (>10px in at least one dimension)
+    // Single clicks are ignored - use double-click for default-sized box
+    // This prevents confusing elderly users with accidental text boxes
+    if (domWidth >= 10 || domHeight >= 10) {
+      // Create text box sized to the drag area (enforcing minimum sizes)
+      createTextBox(pageNum, domX, domY, domWidth, domHeight);
     }
+    // Small drags (<10px) are treated as clicks and ignored for textbox tool
   } else {
     // Whiteout - only add if rectangle is big enough (at least 5x5 pixels)
     if (domWidth >= 5 && domHeight >= 5) {
@@ -1075,7 +1224,13 @@ function deleteWhiteout(whiteout: HTMLElement): void {
 // Z-index counter for layering (last-added on top)
 let nextTextBoxZIndex = 100;
 
-function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement {
+// Minimum sizes for accessibility (WCAG touch target guidelines)
+const MIN_TEXTBOX_HEIGHT = 44;
+const MIN_TEXTBOX_WIDTH = 100;
+const DEFAULT_TEXTBOX_WIDTH = 200;
+const DEFAULT_TEXTBOX_HEIGHT = 48;
+
+function createTextBox(pageNum: number, domX: number, domY: number, width?: number, height?: number): HTMLElement {
   if (!editSession) throw new Error('No edit session');
 
   const id = nextTextBoxId++;
@@ -1084,8 +1239,11 @@ function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement
   const pageEl = document.querySelector(`.edit-page[data-page="${pageNum}"]`) as HTMLElement | null;
   const pageWidth = pageEl?.offsetWidth || 800;
   const margin = 10;
-  const maxAvailableWidth = Math.max(100, pageWidth - domX - margin);
-  const initialWidth = Math.min(150, maxAvailableWidth);
+  const maxAvailableWidth = Math.max(MIN_TEXTBOX_WIDTH, pageWidth - domX - margin);
+
+  // Use provided dimensions or defaults (enforcing minimums for accessibility)
+  const initialWidth = Math.min(maxAvailableWidth, Math.max(MIN_TEXTBOX_WIDTH, width ?? DEFAULT_TEXTBOX_WIDTH));
+  const initialHeight = Math.max(MIN_TEXTBOX_HEIGHT, height ?? DEFAULT_TEXTBOX_HEIGHT);
 
   // Create DOM element (always transparent)
   const box = document.createElement('div');
@@ -1095,7 +1253,7 @@ function createTextBox(pageNum: number, domX: number, domY: number): HTMLElement
   box.style.left = domX + 'px';
   box.style.top = domY + 'px';
   box.style.width = initialWidth + 'px';
-  box.style.height = '30px';
+  box.style.height = initialHeight + 'px';
   // Z-ordering: last-added on top, gets click priority
   box.style.zIndex = String(nextTextBoxZIndex++);
 
@@ -1221,6 +1379,80 @@ function deleteSelectedTextBox(): void {
   }
 }
 
+/**
+ * Parse innerHTML into styled text segments.
+ * Extracts text from bold/italic tags and creates segments with appropriate flags.
+ * Returns null if no mixed styling is detected (use simple addText instead).
+ */
+function parseStyledSegments(element: HTMLElement): { text: string; is_bold: boolean; is_italic: boolean }[] | null {
+  const innerHTML = element.innerHTML;
+
+  // Check if there are any styled tags
+  const hasStyledTags = /<(b|strong|i|em)\b/i.test(innerHTML);
+  if (!hasStyledTags) {
+    return null; // No mixed styling, use simple addText
+  }
+
+  const segments: { text: string; is_bold: boolean; is_italic: boolean }[] = [];
+
+  // Helper to recursively walk nodes and extract styled text
+  function walkNode(node: Node, isBold: boolean, isItalic: boolean): void {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent || '';
+      if (text) {
+        segments.push({ text, is_bold: isBold, is_italic: isItalic });
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tagName = el.tagName.toLowerCase();
+
+      // Determine style from tag
+      const newBold = isBold || tagName === 'b' || tagName === 'strong';
+      const newItalic = isItalic || tagName === 'i' || tagName === 'em';
+
+      // Recursively process children
+      for (const child of Array.from(el.childNodes)) {
+        walkNode(child, newBold, newItalic);
+      }
+    }
+  }
+
+  // Start walking from root element
+  for (const child of Array.from(element.childNodes)) {
+    walkNode(child, false, false);
+  }
+
+  // Merge adjacent segments with same styling
+  const merged: { text: string; is_bold: boolean; is_italic: boolean }[] = [];
+  for (const seg of segments) {
+    if (merged.length > 0) {
+      const last = merged[merged.length - 1];
+      if (last.is_bold === seg.is_bold && last.is_italic === seg.is_italic) {
+        last.text += seg.text;
+        continue;
+      }
+    }
+    merged.push({ ...seg });
+  }
+
+  // If all segments have the same style, return null (use simple addText)
+  if (merged.length <= 1) {
+    return null;
+  }
+
+  // Check if there's actual mixed styling
+  const firstStyle = { is_bold: merged[0].is_bold, is_italic: merged[0].is_italic };
+  const hasMixedStyles = merged.some(
+    s => s.is_bold !== firstStyle.is_bold || s.is_italic !== firstStyle.is_italic
+  );
+
+  if (!hasMixedStyles) {
+    return null; // All same style, use simple addText
+  }
+
+  return merged;
+}
+
 function commitTextBox(box: HTMLElement): void {
   if (!editSession) return;
 
@@ -1254,27 +1486,50 @@ function commitTextBox(box: HTMLElement): void {
   }
 
   // TextBox is always transparent - just add text, no white rect
-  if (text) {
-    // Get style from text content
-    const style = textContent ? window.getComputedStyle(textContent) : null;
-    const fontSize = style ? parseFloat(style.fontSize) : 12;
-    const isBold = style?.fontWeight === 'bold' || parseInt(style?.fontWeight || '400') >= 700;
-    const isItalic = style?.fontStyle === 'italic';
+  if (text && textContent) {
+    // Get base style from text content
+    const style = window.getComputedStyle(textContent);
+    const fontSize = parseFloat(style.fontSize) || 12;
+
+    // Check for mixed styling (partial bold/italic)
+    const styledSegments = parseStyledSegments(textContent);
 
     editSession.beginAction('textbox');
-    const opId = editSession.addText(
-      pageNum,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      pdfHeight,
-      text,
-      fontSize,
-      '#000000',
-      null, // font name
-      isItalic,
-      isBold
-    );
+
+    let opId: bigint;
+    if (styledSegments) {
+      // Use addStyledText for mixed styling
+      const segmentsJson = JSON.stringify(styledSegments);
+      opId = editSession.addStyledText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        segmentsJson,
+        fontSize,
+        '#000000',
+        null // font name
+      );
+    } else {
+      // Use simple addText for uniform styling
+      const isBold = style.fontWeight === 'bold' || parseInt(style.fontWeight || '400') >= 700;
+      const isItalic = style.fontStyle === 'italic';
+      opId = editSession.addText(
+        pageNum,
+        pdfX,
+        pdfY,
+        pdfWidth,
+        pdfHeight,
+        text,
+        fontSize,
+        '#000000',
+        null, // font name
+        isItalic,
+        isBold
+      );
+    }
+
     editSession.commitAction();
     setOpId(box, opId);
   }
@@ -1823,6 +2078,9 @@ async function openWhiteoutTextEditor(whiteRect: HTMLElement, pageNum: number): 
   input.dataset.fontFamily = coveredStyle.fontFamily;
   input.dataset.isBold = coveredStyle.isBold ? 'true' : 'false';
   input.dataset.isItalic = coveredStyle.isItalic ? 'true' : 'false';
+  // Store original dimensions for commitPendingEdits to use
+  input.dataset.originalWidth = String(originalWidth);
+  input.dataset.originalHeight = String(originalHeight);
 
   whiteRect.appendChild(input);
   whiteRect.classList.add('editing');
@@ -2002,8 +2260,29 @@ function saveWhiteoutText(whiteRect: HTMLElement, pageNum: number, input: HTMLEl
     }
   }
 
-  // Add text annotation at the whiteout position (with font styling)
-  const opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
+  // Check for mixed styling (partial bold/italic) in the whiteout text input
+  const styledSegments = parseStyledSegments(input);
+
+  let opId: bigint;
+  if (styledSegments) {
+    // Use addStyledText for mixed styling
+    const segmentsJson = JSON.stringify(styledSegments);
+    opId = editSession.addStyledText(
+      pageNum,
+      pdfX,
+      pdfY,
+      pdfWidth,
+      pdfHeight,
+      segmentsJson,
+      fontSize,
+      '#000000',
+      fontFamily
+    );
+  } else {
+    // Use simple addText for uniform styling
+    opId = editSession.addText(pageNum, pdfX, pdfY, pdfWidth, pdfHeight, text, fontSize, '#000000', fontFamily, isItalic, isBold);
+  }
+
   editSession.commitAction();
 
   // Replace input with text span INSIDE the whiteout (auto-sizing)
@@ -2439,27 +2718,59 @@ function updateStyleButtons(): void {
 function toggleBold(): void {
   if (!activeTextInput) return;
 
-  const currentBold = activeTextInput.dataset.isBold === 'true';
-  const newBold = !currentBold;
+  // ISSUE-025 FIX: Check for text selection within the active input
+  const selection = window.getSelection();
+  const hasSelection =
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.isCollapsed &&
+    activeTextInput.contains(selection.anchorNode);
 
-  activeTextInput.dataset.isBold = String(newBold);
-  activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+  if (hasSelection) {
+    // Apply bold to selected text only using execCommand
+    // This wraps selected text in <b> or <strong> tags
+    document.execCommand('bold', false);
+    activeTextInput.focus();
+  } else {
+    // No selection - apply to entire element (fallback behavior)
+    const currentBold = activeTextInput.dataset.isBold === 'true';
+    const newBold = !currentBold;
 
-  updateStyleButtons();
-  activeTextInput.focus();
+    activeTextInput.dataset.isBold = String(newBold);
+    activeTextInput.style.fontWeight = newBold ? 'bold' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 
 function toggleItalic(): void {
   if (!activeTextInput) return;
 
-  const currentItalic = activeTextInput.dataset.isItalic === 'true';
-  const newItalic = !currentItalic;
+  // ISSUE-025 FIX: Check for text selection within the active input
+  const selection = window.getSelection();
+  const hasSelection =
+    selection &&
+    selection.rangeCount > 0 &&
+    !selection.isCollapsed &&
+    activeTextInput.contains(selection.anchorNode);
 
-  activeTextInput.dataset.isItalic = String(newItalic);
-  activeTextInput.style.fontStyle = newItalic ? 'italic' : 'normal';
+  if (hasSelection) {
+    // Apply italic to selected text only using execCommand
+    // This wraps selected text in <i> or <em> tags
+    document.execCommand('italic', false);
+    activeTextInput.focus();
+  } else {
+    // No selection - apply to entire element (fallback behavior)
+    const currentItalic = activeTextInput.dataset.isItalic === 'true';
+    const newItalic = !currentItalic;
 
-  updateStyleButtons();
-  activeTextInput.focus();
+    activeTextInput.dataset.isItalic = String(newItalic);
+    activeTextInput.style.fontStyle = newItalic ? 'italic' : 'normal';
+
+    updateStyleButtons();
+    activeTextInput.focus();
+  }
 }
 
 function increaseFontSize(): void {
@@ -2476,12 +2787,39 @@ function decreaseFontSize(): void {
 
 function setFontSize(size: string): void {
   if (!activeTextInput) return;
+  const oldSize = parseInt(activeTextInput.dataset.fontSize || '12', 10) || 12;
   const sizeNum = Math.max(6, Math.min(72, parseInt(size, 10) || 12));
   activeTextInput.dataset.fontSize = String(sizeNum);
   activeTextInput.style.fontSize = sizeNum + 'px';
   const fontSizeValue = document.getElementById('font-size-value') as HTMLInputElement | null;
   if (fontSizeValue) fontSizeValue.value = String(sizeNum);
   updateStyleButtons();
+
+  // Auto-expand text box proportionally when font size increases
+  const parentBox = activeTextInput.closest('.text-box') as HTMLElement | null;
+  if (parentBox && sizeNum > oldSize) {
+    const scaleFactor = sizeNum / oldSize;
+    const currentWidth = parseFloat(parentBox.style.width) || 200;
+    const currentHeight = parseFloat(parentBox.style.height) || 48;
+
+    // Scale dimensions proportionally (with constraints)
+    const pageEl = parentBox.closest('.edit-page') as HTMLElement | null;
+    const pageWidth = pageEl?.offsetWidth || 800;
+    const boxLeft = parseFloat(parentBox.style.left) || 0;
+    const maxAvailableWidth = Math.max(100, pageWidth - boxLeft - 10);
+
+    const newWidth = Math.min(maxAvailableWidth, currentWidth * scaleFactor);
+    const newHeight = currentHeight * scaleFactor;
+
+    parentBox.style.width = newWidth + 'px';
+    parentBox.style.height = newHeight + 'px';
+  }
+
+  // Also run content-based expansion to ensure text fits
+  if (parentBox) {
+    expandTextBoxForContent(parentBox, activeTextInput);
+  }
+
   activeTextInput.focus();
 }
 
@@ -2731,14 +3069,81 @@ function updateButtons(): void {
   if (redoBtn) redoBtn.disabled = !editSession || !editSession.canRedo();
 }
 
+/**
+ * Commit any pending text edits before export.
+ * This handles the case where user types in whiteout and clicks Download
+ * before the blur event's setTimeout (200ms) completes.
+ */
+function commitPendingEdits(): void {
+  // ISSUE-013 FIX: Commit pending text boxes before export
+  // Find all text boxes with unsaved content and commit them
+  const textBoxes = document.querySelectorAll<HTMLElement>('.text-box');
+  textBoxes.forEach(box => {
+    const textContent = box.querySelector<HTMLElement>('.text-content');
+    const text = textContent?.textContent?.trim() || '';
+    if (text) {
+      // Check if this text box has a pending operation (no opId means it hasn't been saved)
+      const existingOpId = getOpId(box);
+      // Always commit to ensure latest content is saved
+      commitTextBox(box);
+    }
+  });
+
+  // Find any active whiteout text input
+  const activeWhiteoutInput = document.querySelector<HTMLElement>('.whiteout-text-input');
+  if (!activeWhiteoutInput) return;
+
+  const text = (activeWhiteoutInput.textContent || '').trim();
+  if (!text) return; // No text to save
+
+  // Find the parent whiteout
+  const whiteRect = activeWhiteoutInput.closest<HTMLElement>('.edit-whiteout-overlay');
+  if (!whiteRect) return;
+
+  // Get page number from overlay container
+  const overlayContainer = whiteRect.closest<HTMLElement>('.overlay-container');
+  const pageNum = overlayContainer ? parseInt(overlayContainer.dataset.page || '1', 10) : 1;
+
+  // Get original dimensions from data attributes
+  const originalWidth = parseFloat(activeWhiteoutInput.dataset.originalWidth || '0');
+  const originalHeight = parseFloat(activeWhiteoutInput.dataset.originalHeight || '0');
+
+  // Call saveWhiteoutText to persist the text
+  saveWhiteoutText(whiteRect, pageNum, activeWhiteoutInput, originalWidth, originalHeight);
+}
+
 async function downloadEditedPdf(): Promise<void> {
   if (!editSession) return;
+
+  // Commit any pending text edits before export
+  commitPendingEdits();
 
   const downloadBtn = document.getElementById('edit-download-btn') as HTMLButtonElement | null;
   const btnContent = downloadBtn?.querySelector('.download-btn-content');
   if (!btnContent) return;
 
   try {
+    // Parity check: Verify DOM elements match WASM operations (debug aid)
+    const opCount = editSession.getOperationCount();
+    const textBoxCount = document.querySelectorAll('.text-box').length;
+    const whiteoutCount = document.querySelectorAll('.edit-whiteout-overlay').length;
+    const highlightCount = document.querySelectorAll('.edit-highlight-overlay').length;
+    const checkboxCount = document.querySelectorAll('.edit-checkbox-overlay').length;
+    const replaceCount = document.querySelectorAll('.edit-replace-overlay').length;
+    const underlineCount = document.querySelectorAll('.edit-underline-overlay').length;
+    const domAnnotations = textBoxCount + whiteoutCount + highlightCount + checkboxCount + replaceCount + underlineCount;
+
+    // Whiteout with text creates 2 operations (whiteout + text), so adjust expected count
+    // This is an approximation - exact parity requires tracking op types
+    if (opCount > 0 && Math.abs(opCount - domAnnotations) > domAnnotations) {
+      console.warn(
+        `[PDFJoin Parity Warning] Operation count (${opCount}) significantly differs from DOM elements (${domAnnotations}). ` +
+        `TextBoxes: ${textBoxCount}, Whiteouts: ${whiteoutCount}, Highlights: ${highlightCount}, ` +
+        `Checkboxes: ${checkboxCount}, Replaces: ${replaceCount}, Underlines: ${underlineCount}. ` +
+        `This may indicate preview/download mismatch.`
+      );
+    }
+
     // Disable button during verification
     if (downloadBtn) downloadBtn.disabled = true;
 
