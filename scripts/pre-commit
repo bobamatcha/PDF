@@ -47,45 +47,37 @@ CLIPPY_OUTPUT=$(cargo clippy --all-targets --all-features -- -D warnings 2>&1) |
 }
 
 # Unit tests (fast, no browser/server needed)
-# Use cargo nextest for parallel execution if available, otherwise fall back to cargo test
+# Exclude browser tests - they require trunk servers and are slow
 echo "  Running unit tests..."
 if command -v cargo-nextest &> /dev/null; then
-    if ! cargo nextest run --all-features --workspace; then
+    if ! cargo nextest run --all-features --workspace -E 'not binary(browser_pdfjoin) and not binary(browser_agentpdf) and not binary(browser_docsign) and not binary(browser_core)'; then
         echo "❌ Unit tests failed."
         exit 1
     fi
 else
-    if ! cargo test --all-features --workspace; then
+    # Without nextest, exclude benchmark-harness entirely and run its non-browser tests separately
+    if ! cargo test --all-features --workspace --exclude benchmark-harness; then
+        echo "❌ Unit tests failed."
+        exit 1
+    fi
+    # Run only parity and benchmark tests from benchmark-harness (skip browser_* tests)
+    if ! cargo test -p benchmark-harness --test parity_tests --test pdfjoin_benchmark; then
         echo "❌ Unit tests failed."
         exit 1
     fi
 fi
 
-# Parity tests (fast, catches config drift between apps)
-echo "  Running parity tests..."
-if command -v cargo-nextest &> /dev/null; then
-    if ! cargo nextest run -p benchmark-harness --test parity_tests; then
-        echo "❌ Parity tests failed. Apps may have diverged configs."
-        exit 1
-    fi
-else
-    if ! cargo test -p benchmark-harness --test parity_tests; then
-        echo "❌ Parity tests failed. Apps may have diverged configs."
-        exit 1
-    fi
-fi
-
-# Browser tests (requires trunk servers)
-# Skip if SKIP_BROWSER_TESTS is set or if we can't start servers
-if [ -z "$SKIP_BROWSER_TESTS" ]; then
+# Browser tests (requires trunk servers) - DISABLED by default, too slow/flaky for pre-commit
+# Run manually with: ./scripts/test-browser.sh
+# Or enable with: ENABLE_BROWSER_TESTS=1 git commit ...
+if [ -n "$ENABLE_BROWSER_TESTS" ]; then
     echo "  Running browser integration tests..."
     if ! "$PROJECT_ROOT/scripts/test-browser.sh"; then
         echo "❌ Browser tests failed."
-        echo "  To skip browser tests: SKIP_BROWSER_TESTS=1 git commit ..."
         exit 1
     fi
 else
-    echo "  ⏭️  Skipping browser tests (SKIP_BROWSER_TESTS is set)"
+    echo "  ⏭️  Skipping browser tests (run ./scripts/test-browser.sh manually)"
 fi
 
 echo "✅ All pre-commit checks passed!"

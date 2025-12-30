@@ -594,6 +594,55 @@ pub fn list_templates() -> Vec<TemplateInfo> {
                 "additional_terms".to_string(),
             ],
         },
+        // CMA (Comparative Market Analysis) Report - Professional 5-Page Template
+        TemplateInfo {
+            name: "cma".to_string(),
+            description: "Professional 5-page Comparative Market Analysis with adjustment grid, neighborhood analysis, and investment metrics".to_string(),
+            uri: "typst://templates/cma".to_string(),
+            required_inputs: vec![
+                "subject_address".to_string(),
+                "site_name".to_string(),
+            ],
+            optional_inputs: vec![
+                // Site branding
+                "site_color".to_string(),
+                // Subject property details
+                "subject_city".to_string(),
+                "subject_zip".to_string(),
+                "subject_beds".to_string(),
+                "subject_baths".to_string(),
+                "subject_sqft".to_string(),
+                "subject_year_built".to_string(),
+                // Valuation
+                "estimated_value".to_string(),
+                "estimated_low".to_string(),
+                "estimated_high".to_string(),
+                "confidence_score".to_string(),
+                // Comparable sales (array with adjustments)
+                "comps".to_string(),
+                "comp_count".to_string(),
+                // Adjustment configuration
+                "adjustment_config".to_string(),
+                // Investment metrics
+                "rental_yield".to_string(),
+                "rent_estimate".to_string(),
+                "price_per_sqft".to_string(),
+                // Neighborhood scores
+                "school_score".to_string(),
+                "school_elementary".to_string(),
+                "school_middle".to_string(),
+                "school_high".to_string(),
+                "school_avg".to_string(),
+                "crime_score".to_string(),
+                "flood_zone".to_string(),
+                // Market position
+                "list_price".to_string(),
+                "market_position".to_string(),
+                "recommendation".to_string(),
+                // Metadata
+                "generated_at".to_string(),
+            ],
+        },
     ]
 }
 

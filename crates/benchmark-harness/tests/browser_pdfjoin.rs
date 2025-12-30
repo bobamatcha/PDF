@@ -14478,10 +14478,10 @@ async fn test_elderly_ux_critical_file_replace_confirmation() {
         return;
     };
 
-    let page = browser
-        .new_page("about:blank")
+    // Use isolated incognito context to prevent test interference
+    let page = browser::create_isolated_page(&browser)
         .await
-        .expect("Should create page");
+        .expect("Should create isolated page");
 
     page.goto("http://127.0.0.1:8082")
         .await
@@ -14495,8 +14495,17 @@ async fn test_elderly_ux_critical_file_replace_confirmation() {
     let js_code = format!(
         r#"(async () => {{
             try {{
-                // Switch to edit tab and load first PDF
-                document.querySelector('[data-tool="edit"]').click();
+                // Wait for edit button to appear (page may still be loading)
+                let editBtn = null;
+                for (let i = 0; i < 20; i++) {{
+                    editBtn = document.querySelector('[data-tool="edit"]');
+                    if (editBtn) break;
+                    await new Promise(r => setTimeout(r, 200));
+                }}
+                if (!editBtn) {{
+                    return {{ success: false, error: 'Edit button not found after 4s - page may not have loaded' }};
+                }}
+                editBtn.click();
                 await new Promise(r => setTimeout(r, 300));
 
                 const b64 = "{}";
