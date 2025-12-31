@@ -15,6 +15,7 @@ members = [
 
     # Apps
     "apps/agentpdf-web/wasm",
+    "apps/agentpdf-server",
     "apps/docsign-web/wasm",
     "apps/docsign-web/worker",
     "apps/pdfjoin-web/wasm",

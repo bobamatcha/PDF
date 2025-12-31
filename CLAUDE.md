@@ -228,6 +228,8 @@ Each split file should:
 |----------|----------|
 | Project-wide plans | `/PLAN*.md` |
 | App-specific plans | `/[APP]_PLAN*.md` (e.g., `PDFJOIN_PLAN0.md`) |
+| **agentPDF plan** | `/APDF_PLAN.md` - Architecture, scrivener standard, Tauri desktop |
+| Florida compliance research | `/FL_LEASE.md`, `/FL_PURCHASE.md`, `/FL_LIST.md` |
 | Technical docs | `/docs/*.md` |
 | Known issues | `/KNOWN_ISSUES.md` |
 | Claude guidelines | `/CLAUDE.md` (this file)
