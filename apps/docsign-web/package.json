@@ -1,0 +1,17 @@
+{
+  "name": "docsign-web-ts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/ts/main.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --sourcemap",
+    "build:watch": "npm run build -- --watch",
+    "typecheck": "tsc --noEmit",
+    "dev": "concurrently \"npm run build:watch\" \"trunk serve\""
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0",
+    "concurrently": "^9.1.0"
+  }
+}

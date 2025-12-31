@@ -1004,6 +1004,8 @@ dependencies = [
  "cms",
  "lopdf 0.33.0",
  "p256",
+ "pretty_assertions",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",
