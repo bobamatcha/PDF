@@ -5,7 +5,7 @@ Step-by-step guide to deploy GetSignatures to production.
 ## Prerequisites
 
 - [ ] Cloudflare account with domain `getsignatures.org` configured
-- [ ] Resend account for email sending
+- [ ] AWS account with SES configured (see `crates/email-proxy/README.md`)
 - [ ] GitHub repository secrets configured
 
 ## Step 1: Create Cloudflare KV Namespaces
@@ -38,18 +38,17 @@ Copy the namespace IDs from the output and update `wrangler.toml`.
 Set the required secrets:
 
 ```bash
-# Production secrets
-wrangler secret put RESEND_API_KEY --env production
+# Production secrets (optional - for API protection)
 wrangler secret put DOCSIGN_API_KEY --env production
 
 # Staging secrets (optional)
-wrangler secret put RESEND_API_KEY --env staging
 wrangler secret put DOCSIGN_API_KEY --env staging
 ```
 
 When prompted, enter:
-- **RESEND_API_KEY**: Your Resend API key (starts with `re_`)
 - **DOCSIGN_API_KEY**: A random secret for API authentication (generate with `openssl rand -hex 32`)
+
+**Note**: Email sending is handled by the `email-proxy` Lambda. See `crates/email-proxy/README.md` for deployment.
 
 ## Step 3: Configure DNS
 
@@ -155,8 +154,8 @@ wrangler rollback --env production
 
 ## Security Checklist
 
-- [ ] RESEND_API_KEY is a secret (not in code)
 - [ ] DOCSIGN_API_KEY is a secret (not in code)
+- [ ] AWS credentials for email-proxy Lambda are secure
 - [ ] HTTPS enforced on all endpoints
 - [ ] Rate limiting enabled
 - [ ] KV namespace IDs not committed to public repo

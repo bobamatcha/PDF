@@ -42,5 +42,6 @@ npx wrangler deploy --env production
 echo "=== getsignatures.org deployment complete ==="
 echo ""
 echo "Don't forget to set Worker secrets:"
-echo "  wrangler secret put RESEND_API_KEY"
 echo "  wrangler secret put DOCSIGN_API_KEY  (optional, leave unset for open access)"
+echo ""
+echo "Note: Email sending is handled by email-proxy Lambda (not Resend)"

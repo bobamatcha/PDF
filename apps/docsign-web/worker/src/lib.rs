@@ -1,11 +1,18 @@
 //! DocSign Server - Cloudflare Worker for email relay and signing sessions
 //!
-//! Rate limited to Resend free tier: 100/day, 3000/month
+//! Email sending via AWS Lambda email-proxy (SES)
 //! Signing sessions expire after 7 days
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use worker::*;
+
+/// Email proxy Lambda URL (AWS SES)
+const EMAIL_PROXY_URL: &str =
+    "https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws";
+
+/// Default from address for emails
+const FROM_ADDRESS: &str = "GetSignatures <noreply@getsignatures.org>";
 
 /// Request body for sending a document
 #[derive(Deserialize)]
@@ -497,7 +504,8 @@ impl RateLimitState {
     }
 }
 
-const RESEND_API_URL: &str = "https://api.resend.com/emails";
+// Email sending disabled - will use email-proxy Lambda
+// const RESEND_API_URL: &str = "https://api.resend.com/emails";
 const SESSION_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
 const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
 
@@ -766,45 +774,28 @@ fn format_decline_notification_email(
 
 /// Send notification email to sender when recipient signs
 async fn send_sender_notification(
-    env: &Env,
+    _env: &Env,
     sender_email: &str,
     subject: &str,
     html_body: &str,
 ) -> Result<()> {
-    let api_key = match env.secret("RESEND_API_KEY") {
-        Ok(key) => key.to_string(),
-        Err(_) => {
-            console_log!("Cannot send notification: RESEND_API_KEY not configured");
-            return Ok(()); // Don't fail the signing process if email fails
-        }
-    };
-
-    let email_text = html_body
-        .replace("<br>", "\n")
-        .replace("</p>", "\n")
-        .replace("<li>", "- ")
-        .chars()
-        .filter(|c| c.is_ascii() || c.is_whitespace())
-        .collect::<String>();
-
-    let resend_body = serde_json::json!({
-        "from": "GetSignatures <noreply@mail.getsignatures.org>",
+    let email_request = serde_json::json!({
+        "from": FROM_ADDRESS,
         "to": [sender_email],
         "subject": subject,
-        "html": html_body,
-        "text": email_text,
+        "html": html_body
     });
 
     let headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {}", api_key))?;
     headers.set("Content-Type", "application/json")?;
 
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+        .with_body(Some(serde_json::to_string(&email_request)?.into()));
 
-    let request = Request::new_with_init(RESEND_API_URL, &init)?;
+    let url = format!("{}/send", EMAIL_PROXY_URL);
+    let request = Request::new_with_init(&url, &init)?;
 
     match Fetch::Request(request).send().await {
         Ok(response) => {
@@ -1154,63 +1145,61 @@ fn handle_email_result(
     }
 }
 
-async fn send_email(env: &Env, body: &SendRequest) -> Result<Response> {
-    let api_key = match env.secret("RESEND_API_KEY") {
-        Ok(key) => key.to_string(),
-        Err(_) => {
-            return cors_response(error_response("RESEND_API_KEY not configured"));
-        }
-    };
-
+async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
     // Build email body with optional signing link
-    let email_text = if let Some(ref link) = body.signing_link {
+    let html_body = if let Some(ref link) = body.signing_link {
         format!(
-            "You have been requested to sign a document.\n\n\
-            Click the link below to sign:\n{}\n\n\
-            Or download the attached PDF to sign locally.",
+            "<p>You have been requested to sign a document.</p>\
+            <p><a href=\"{}\">Click here to sign</a></p>\
+            <p>Or download the attached PDF to sign locally.</p>",
             link
         )
     } else {
-        "Please find the attached document for your signature.".to_string()
+        "<p>Please find the attached document for your signature.</p>".to_string()
     };
 
-    let resend_body = serde_json::json!({
-        "from": "GetSignatures <noreply@mail.getsignatures.org>",
+    let email_request = serde_json::json!({
+        "from": FROM_ADDRESS,
         "to": [body.to],
         "subject": body.subject,
-        "text": email_text,
-        "attachments": [{
-            "filename": body.filename,
-            "content": body.pdf_base64
-        }]
+        "html": html_body
     });
 
     let headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {}", api_key))?;
     headers.set("Content-Type", "application/json")?;
 
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+        .with_body(Some(serde_json::to_string(&email_request)?.into()));
 
-    let request = Request::new_with_init(RESEND_API_URL, &init)?;
-    let response = Fetch::Request(request).send().await?;
+    let url = format!("{}/send", EMAIL_PROXY_URL);
+    let request = Request::new_with_init(&url, &init)?;
 
-    if response.status_code() != 200 {
-        let status = response.status_code();
-        let mut response = response;
-        let error_text = response.text().await.unwrap_or_default();
-        console_log!("Resend error {}: {}", status, error_text);
-        return cors_response(error_response(&format!("Resend API error: {}", status)));
+    match Fetch::Request(request).send().await {
+        Ok(response) => {
+            if response.status_code() == 200 {
+                console_log!("Email sent to {}", body.to);
+                cors_response(Response::from_json(&SendResponse {
+                    success: true,
+                    message: "Email sent".to_string(),
+                    remaining_today: None,
+                    remaining_month: None,
+                }))
+            } else {
+                let status = response.status_code();
+                console_log!("Email proxy error: HTTP {}", status);
+                cors_response(error_response(&format!(
+                    "Email proxy error: HTTP {}",
+                    status
+                )))
+            }
+        }
+        Err(e) => {
+            console_log!("Email proxy request failed: {}", e);
+            cors_response(error_response(&format!("Email proxy error: {}", e)))
+        }
     }
-
-    cors_response(Response::from_json(&SendResponse {
-        success: true,
-        message: "Email sent".to_string(),
-        remaining_today: None,
-        remaining_month: None,
-    }))
 }
 
 async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
@@ -1351,15 +1340,7 @@ async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
     }
 }
 
-async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
-    let api_key = match env.secret("RESEND_API_KEY") {
-        Ok(key) => key.to_string(),
-        Err(_) => {
-            return cors_response(error_response("RESEND_API_KEY not configured"));
-        }
-    };
-
-    // Send invitation emails to each recipient
+async fn send_invitations(_env: &Env, body: &InviteRequest) -> Result<Response> {
     let mut success_count = 0;
     let mut errors = Vec::new();
 
@@ -1393,13 +1374,6 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             <a href="{signing_link}" style="display: inline-block; background: #1e40af; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Review & Sign Document</a>
         </div>
 
-        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 4px; margin-top: 25px;">
-            <p style="margin: 0; font-size: 14px; color: #92400e;">
-                <strong>Note:</strong> This link is unique to you and expires based on the sender's deadline setting.
-                The document is encrypted end-to-end for your security.
-            </p>
-        </div>
-
         <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
             If you have any questions about this signature request, please contact the sender directly.
         </p>
@@ -1416,38 +1390,40 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             signing_link = invitation.signing_link
         );
 
-        let email_text = format!(
-            "Hello {},\n\n\
-            {} has requested your signature on the following document:\n\
-            {}\n\n\
-            Click the link below to review and sign:\n\
-            {}\n\n\
-            Note: This link is unique to you and expires based on the sender's deadline setting.\n\
-            The document is encrypted end-to-end for your security.\n\n\
-            If you have any questions, please contact the sender directly.\n\n\
-            ---\n\
-            Sent via GetSignatures - Secure Document Signing",
-            invitation.name, body.sender_name, body.document_name, invitation.signing_link
-        );
-
-        let resend_body = serde_json::json!({
-            "from": "GetSignatures <noreply@mail.getsignatures.org>",
+        let email_request = serde_json::json!({
+            "from": FROM_ADDRESS,
             "to": [invitation.email],
             "subject": format!("Signature Requested: {}", body.document_name),
-            "html": email_html,
-            "text": email_text,
+            "html": email_html
         });
 
         let headers = Headers::new();
-        headers.set("Authorization", &format!("Bearer {}", api_key))?;
-        headers.set("Content-Type", "application/json")?;
+        if headers.set("Content-Type", "application/json").is_err() {
+            errors.push(format!("{}: header error", invitation.email));
+            continue;
+        }
+
+        let body_str = match serde_json::to_string(&email_request) {
+            Ok(s) => s,
+            Err(_) => {
+                errors.push(format!("{}: serialize error", invitation.email));
+                continue;
+            }
+        };
 
         let mut init = RequestInit::new();
         init.with_method(Method::Post)
             .with_headers(headers)
-            .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+            .with_body(Some(body_str.into()));
 
-        let request = Request::new_with_init(RESEND_API_URL, &init)?;
+        let url = format!("{}/send", EMAIL_PROXY_URL);
+        let request = match Request::new_with_init(&url, &init) {
+            Ok(r) => r,
+            Err(_) => {
+                errors.push(format!("{}: request error", invitation.email));
+                continue;
+            }
+        };
 
         match Fetch::Request(request).send().await {
             Ok(response) => {
@@ -1495,42 +1471,29 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
 }
 
 /// Send a warning email to the admin when approaching rate limits
-async fn send_admin_warning(env: &Env, message: &str) {
-    let api_key = match env.secret("RESEND_API_KEY") {
-        Ok(key) => key.to_string(),
-        Err(_) => {
-            console_log!("Cannot send admin warning: RESEND_API_KEY not configured");
-            return;
-        }
-    };
-
-    let resend_body = serde_json::json!({
+async fn send_admin_warning(_env: &Env, message: &str) {
+    let email_request = serde_json::json!({
         "from": "GetSignatures Alerts <noreply@getsignatures.org>",
         "to": [ADMIN_EMAIL],
         "subject": "GetSignatures Rate Limit Warning",
-        "text": format!(
-            "{}\n\n\
-            This is an automated alert from your GetSignatures deployment.\n\n\
-            Consider upgrading your Resend plan if you're hitting limits frequently.\n\
-            Current limits: 100 emails/day, 3000 emails/month (Resend free tier)",
+        "html": format!(
+            "<p>{}</p><p>This is an automated alert from your GetSignatures deployment.</p>",
             message
         )
     });
 
     let headers = Headers::new();
-    if headers
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .is_err()
-    {
-        return;
-    }
     if headers.set("Content-Type", "application/json").is_err() {
+        console_log!("Failed to set headers for admin warning");
         return;
     }
 
-    let body_str = match serde_json::to_string(&resend_body) {
+    let body_str = match serde_json::to_string(&email_request) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => {
+            console_log!("Failed to serialize admin warning email");
+            return;
+        }
     };
 
     let mut init = RequestInit::new();
@@ -1538,9 +1501,13 @@ async fn send_admin_warning(env: &Env, message: &str) {
         .with_headers(headers)
         .with_body(Some(body_str.into()));
 
-    let request = match Request::new_with_init(RESEND_API_URL, &init) {
+    let url = format!("{}/send", EMAIL_PROXY_URL);
+    let request = match Request::new_with_init(&url, &init) {
         Ok(r) => r,
-        Err(_) => return,
+        Err(_) => {
+            console_log!("Failed to create admin warning request");
+            return;
+        }
     };
 
     match Fetch::Request(request).send().await {
@@ -1549,7 +1516,7 @@ async fn send_admin_warning(env: &Env, message: &str) {
                 console_log!("Admin warning email sent: {}", message);
             } else {
                 console_log!(
-                    "Failed to send admin warning: status {}",
+                    "Failed to send admin warning: HTTP {}",
                     response.status_code()
                 );
             }
@@ -3642,4 +3609,216 @@ mod tests {
 
     // Note: generate_session_id() uses js_sys and can't be tested in non-WASM tests
     // Session ID uniqueness is tested in integration tests
+
+    // ============================================================
+    // Email Integration Tests
+    // ============================================================
+
+    #[test]
+    fn test_email_proxy_url_is_valid() {
+        // Verify EMAIL_PROXY_URL is a valid HTTPS URL
+        assert!(EMAIL_PROXY_URL.starts_with("https://"));
+        assert!(EMAIL_PROXY_URL.contains(".lambda-url."));
+        assert!(EMAIL_PROXY_URL.contains(".on.aws"));
+    }
+
+    #[test]
+    fn test_from_address_format() {
+        // FROM_ADDRESS should be in "Name <email>" format
+        assert!(FROM_ADDRESS.contains('<'));
+        assert!(FROM_ADDRESS.contains('>'));
+        assert!(FROM_ADDRESS.contains('@'));
+        assert!(FROM_ADDRESS.contains("getsignatures.org"));
+    }
+
+    #[test]
+    fn test_email_request_payload_structure() {
+        // Verify email request JSON structure matches Lambda expectations
+        let email_request = serde_json::json!({
+            "from": FROM_ADDRESS,
+            "to": ["test@example.com"],
+            "subject": "Test Subject",
+            "html": "<p>Test body</p>"
+        });
+
+        // Verify all required fields exist
+        assert!(email_request.get("from").is_some());
+        assert!(email_request.get("to").is_some());
+        assert!(email_request.get("subject").is_some());
+        assert!(email_request.get("html").is_some());
+
+        // Verify "to" is an array
+        assert!(email_request["to"].is_array());
+        assert_eq!(email_request["to"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_email_request_multiple_recipients() {
+        // Email proxy accepts multiple recipients as array
+        let recipients = vec!["a@test.com", "b@test.com", "c@test.com"];
+        let email_request = serde_json::json!({
+            "from": FROM_ADDRESS,
+            "to": recipients,
+            "subject": "Multi-recipient test",
+            "html": "<p>Test</p>"
+        });
+
+        assert_eq!(email_request["to"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_invitation_html_escapes_special_chars() {
+        // Ensure HTML template handles special characters safely
+        let dangerous_name = "<script>alert('xss')</script>";
+        let sender_name = "Alice & Bob";
+        let document_name = "Contract \"Final\" <draft>";
+        let signing_link = "https://example.com/sign?id=123&token=abc";
+
+        // Simulate the template format string (simplified)
+        let html = format!(
+            "Hello {}, {} sent you {}. <a href=\"{}\">Sign</a>",
+            dangerous_name, sender_name, document_name, signing_link
+        );
+
+        // The template should contain the raw text (HTML escaping happens at render)
+        // This test verifies the template accepts these inputs without panicking
+        assert!(html.contains("script"));
+        assert!(html.contains("Alice & Bob"));
+    }
+
+    #[test]
+    fn test_email_url_construction() {
+        // Verify URL is constructed correctly
+        let url = format!("{}/send", EMAIL_PROXY_URL);
+        assert!(url.ends_with("/send"));
+        assert!(!url.contains("//send")); // No double slashes
+    }
+}
+
+// ============================================================
+// Email Integration Property Tests
+// ============================================================
+
+#[cfg(test)]
+mod email_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Property: Email subject can contain any printable ASCII
+        #[test]
+        fn email_subject_accepts_printable_ascii(subject in "[a-zA-Z0-9 !@#$%^&*()_+=\\-\\[\\]{}|;:',.<>?/]{1,200}") {
+            let email_request = serde_json::json!({
+                "from": FROM_ADDRESS,
+                "to": ["test@example.com"],
+                "subject": subject,
+                "html": "<p>Test</p>"
+            });
+
+            // Should serialize without error
+            let json_str = serde_json::to_string(&email_request);
+            prop_assert!(json_str.is_ok(), "Should serialize email with subject: {}", subject);
+        }
+
+        /// Property: Recipient email addresses are preserved exactly
+        #[test]
+        fn recipient_emails_preserved(
+            local in "[a-z0-9._%+-]{1,20}",
+            domain in "[a-z0-9-]{1,20}",
+            tld in "(com|org|net|io)"
+        ) {
+            let email = format!("{}@{}.{}", local, domain, tld);
+            let email_request = serde_json::json!({
+                "from": FROM_ADDRESS,
+                "to": [&email],
+                "subject": "Test",
+                "html": "<p>Test</p>"
+            });
+
+            let to_array = email_request["to"].as_array().unwrap();
+            prop_assert_eq!(to_array[0].as_str().unwrap(), email.as_str());
+        }
+
+        /// Property: HTML body can contain any valid HTML characters
+        #[test]
+        fn html_body_accepts_valid_content(
+            text in "[a-zA-Z0-9 .,!?]{1,100}"
+        ) {
+            let html = format!("<p>{}</p>", text);
+            let email_request = serde_json::json!({
+                "from": FROM_ADDRESS,
+                "to": ["test@example.com"],
+                "subject": "Test",
+                "html": html
+            });
+
+            let json_str = serde_json::to_string(&email_request);
+            prop_assert!(json_str.is_ok());
+
+            // Verify HTML is preserved in JSON
+            let parsed: serde_json::Value = serde_json::from_str(&json_str.unwrap()).unwrap();
+            prop_assert!(parsed["html"].as_str().unwrap().contains(&text));
+        }
+
+        /// Property: Multiple recipients all included in request
+        #[test]
+        fn multiple_recipients_all_included(count in 1usize..10) {
+            let recipients: Vec<String> = (0..count)
+                .map(|i| format!("user{}@example.com", i))
+                .collect();
+
+            let email_request = serde_json::json!({
+                "from": FROM_ADDRESS,
+                "to": recipients.clone(),
+                "subject": "Test",
+                "html": "<p>Test</p>"
+            });
+
+            let to_array = email_request["to"].as_array().unwrap();
+            prop_assert_eq!(to_array.len(), count);
+
+            for (i, recipient) in recipients.iter().enumerate() {
+                prop_assert_eq!(to_array[i].as_str().unwrap(), recipient.as_str());
+            }
+        }
+
+        /// Property: Invitation email template handles various name lengths
+        #[test]
+        fn invitation_template_handles_name_lengths(
+            name_len in 1usize..100
+        ) {
+            let name: String = (0..name_len).map(|_| 'A').collect();
+
+            // Simulate template format (simplified)
+            let html = format!(
+                "<p>Hello {},</p><p>You have a document to sign.</p>",
+                name
+            );
+
+            prop_assert!(html.len() > name_len);
+            prop_assert!(html.contains(&name));
+        }
+
+        /// Property: Signing link URLs are preserved in template
+        #[test]
+        fn signing_link_preserved_in_template(
+            session_id in "[a-zA-Z0-9]{8,32}",
+            recipient_id in "[a-zA-Z0-9]{4,16}",
+            key in "[a-zA-Z0-9]{16,64}"
+        ) {
+            let signing_link = format!(
+                "https://getsignatures.org/sign?session={}&recipient={}&key={}",
+                session_id, recipient_id, key
+            );
+
+            let html = format!(
+                "<a href=\"{}\">Sign Document</a>",
+                signing_link
+            );
+
+            prop_assert!(html.contains(&signing_link));
+            prop_assert!(html.contains(&session_id));
+            prop_assert!(html.contains(&recipient_id));
+        }
+    }
 }

@@ -74,8 +74,44 @@
 - [x] Tauri Desktop: `apps/docsign-tauri` (run with `cargo tauri dev`)
 - [x] Updater Keys: Located at `~/.tauri-private-key` (keep safe!)
 - [x] Public Key: Configured in `tauri.conf.json`
+- [x] Email Proxy Lambda: Deployed to AWS (see [AWS_NOTES.md](./AWS_NOTES.md))
+- [x] AWS SES: Domain verified with DKIM
+- [ ] AWS SES Production Access: Pending approval (sandbox mode - verified emails only)
 - [ ] Deploy backend to production server
 - [ ] Configure update endpoint at releases.getsignatures.org
+
+---
+
+## Email Infrastructure
+
+### Architecture
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    EMAIL FLOW                                   │
+├─────────────────────────────────────────────────────────────────┤
+│  Cloudflare Worker    →    AWS Lambda (email-proxy)    →    SES │
+│  (docsign-web)             (Rust + cargo-lambda)                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Email Proxy Lambda
+- **Endpoint**: `https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws`
+- **Code**: `crates/email-proxy/`
+- **Documentation**: [AWS_NOTES.md](./AWS_NOTES.md)
+
+### Production Access Status
+- **Requested**: 2025-12-31
+- **Status**: Pending AWS approval (typically 24-48 hours)
+- **Current Limitation**: Can only send to verified email addresses
+- **After Approval**: Can send to any recipient
+
+### Verified Test Emails
+- `bobamatchasolutions@gmail.com`
+
+To verify additional test emails during sandbox mode:
+```bash
+aws ses verify-email-identity --email-address test@example.com
+```
 
 ---
 
