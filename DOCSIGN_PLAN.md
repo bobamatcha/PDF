@@ -79,6 +79,133 @@
 
 ---
 
+## Cloudflare Deployment Architecture (Recommended)
+
+### Single-Signer Flow (No Server Required)
+```
+User uploads PDF → Signs locally (WASM) → Downloads signed PDF
+```
+**Cost:** $0 (static hosting only)
+
+### Multi-Signer Flow (Minimal Server Required)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CLOUDFLARE EDGE                              │
+├─────────────────────────────────────────────────────────────────┤
+│  Pages (FREE)              → Static HTML/JS/WASM               │
+│  Workers ($5/mo base)      → API for session coordination      │
+│  D1 ($5/mo base)           → SQLite for sessions, 25B reads/mo │
+│  KV (FREE tier)            → Rate limiting, tokens             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Multi-Signer Session Flow
+
+```
+1. SENDER creates session (Worker)
+   POST /session
+   → Returns: session_id, recipient signing links
+   → Stores: PDF, recipient list, field assignments in D1
+
+2. SENDER sends magic links via email
+   POST /invite
+   → Resend/SendGrid sends: "Sign at getsignatures.org/sign?session=X&recipient=Y&key=Z"
+   → Magic link IS the authentication (no additional verification)
+
+3. RECIPIENT A opens link
+   GET /session/:id (Worker)
+   → Returns: PDF data, fields for this recipient
+   → Recipient signs locally in browser (WASM)
+
+4. RECIPIENT A submits signature
+   POST /session/:id/signed
+   → Uploads: signed PDF with A's signature embedded
+   → Worker stores signed version, updates session status
+   → Notifies Sender + next Recipient (if sequential)
+
+5. RECIPIENT B opens link (sequential mode)
+   GET /session/:id
+   → Returns: PDF with A's signature already applied
+   → B signs, adding their signature to the document
+
+6. ALL RECIPIENTS SIGNED
+   → Sender receives final PDF with all signatures
+   → Session marked complete, auto-expires after 30 days
+```
+
+### Signing Modes
+
+**Parallel Mode (Default):**
+- All signers sign the original document simultaneously
+- No ordering required - whoever signs first, second, etc. doesn't matter
+- Each signer's version stored in `signed_versions[]`
+- When all sign, final document is generated
+- **Best for:** Most real estate transactions, simpler UX for elderly users
+
+**Sequential Mode:**
+- Signers must sign in order (1, 2, 3...)
+- Each signer sees previous signatures
+- Document updated after each signature
+- Next signer notified when their turn
+- **Best for:** Documents requiring witnessing in order
+
+**Reminder Configuration:**
+- `frequency_hours`: 48 (every 2 days by default)
+- `max_count`: 3 (maximum reminders before giving up)
+- `enabled`: true (can be disabled per session)
+
+### Authentication: Magic Link Only
+
+**Why magic link is sufficient for Florida real estate:**
+- Email delivery proves identity (recipient controls email)
+- Signing link is unique, unguessable (`key` param is cryptographic)
+- No friction for elderly users (click link → sign)
+- Same approach as DocuSign Free tier
+
+**Future Enhancement (Not MVP):** PIN-based verification for in-person scenarios where sender shares PIN verbally.
+
+### Server Requirements Summary
+
+| Feature | Server Needed? | Implementation |
+|---------|---------------|----------------|
+| Single-signer (self-sign) | ❌ No | 100% local WASM |
+| Multi-signer coordination | ✅ Yes | Cloudflare D1 + Workers |
+| Email invitations | ✅ Yes | Resend API ($0-20/mo) |
+| Signature sync | ✅ Yes | D1 stores signed versions |
+| Audit log backup | Optional | D1 or S3 |
+
+### Quick Deploy Commands
+
+```bash
+# 1. Build web app
+cd apps/docsign-web
+trunk build --release
+
+# 2. Deploy static files to Cloudflare Pages
+wrangler pages deploy www/dist --project-name=getsignatures
+
+# 3. Create D1 database
+wrangler d1 create getsignatures-sessions
+wrangler d1 migrations apply getsignatures-sessions
+
+# 4. Set secrets
+wrangler secret put RESEND_API_KEY
+wrangler secret put DOCSIGN_API_KEY
+
+# 5. Deploy worker
+cd worker && wrangler deploy
+```
+
+**Estimated Cost at Scale:**
+| Users/month | Pages | Workers | D1 | Email | Total |
+|-------------|-------|---------|-----|-------|-------|
+| 0-100 | $0 | $0 | $0 | $0 | **$0** |
+| 1K | $0 | $5 | $5 | $0 | **$10** |
+| 10K | $0 | $5 | $5 | $20 | **$30** |
+| 100K | $0 | $10 | $10 | $100 | **$120** |
+
+---
+
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)
@@ -1437,7 +1564,47 @@ cargo test -p docsign-core
 
 # Run Tauri tests only
 cd apps/docsign-tauri && npm test
+
+# Run browser E2E tests (requires trunk serve)
+./scripts/test-browser.sh docsign
+
+# Run property-based signing order tests (NOT in precommit - heavy)
+./scripts/test-signing-order.sh          # All tests
+./scripts/test-signing-order.sh --quick  # Non-browser only (faster)
+./scripts/test-signing-order.sh --clean  # Cleanup only
 ```
+
+### Browser E2E Tests
+
+The browser tests in `crates/benchmark-harness/tests/browser_docsign.rs` cover:
+
+| Category | Tests | Description |
+|----------|-------|-------------|
+| Homepage & Core | 2 | Page loads, workflow steps |
+| Mobile Viewport | 2 | Responsive layout, touch targets |
+| Session Expiry (UX-004) | 3 | Expiry page elements and display |
+| Phase 5 UX Regression | 8 | Font sizes, consent, ARIA, accessibility |
+| E2E Signing Flow | 5 | Full signing, typed/drawn signature, error handling |
+| **Multi-Signer** | 6 | Signing mode API, independent fields, parallel mode, reminders |
+| **Total** | **26** | |
+
+These tests run automatically in precommit via `./scripts/test-browser.sh`.
+
+### Property-Based Signing Order Tests
+
+Located in `crates/benchmark-harness/tests/browser_docsign_proptest.rs`:
+
+| Test | Description |
+|------|-------------|
+| `proptest_signing_order_invariance` | Different orderings produce same final document |
+| `proptest_parallel_mode_no_blocking` | No signer blocked in parallel mode |
+| `proptest_all_signers_in_final_document` | All signers appear in final result |
+| `proptest_signing_determinism` | Repeated runs produce deterministic results |
+| `proptest_signature_uniqueness` | Each signer has unique signature |
+| `proptest_browser_signing_order_ui_consistency` | UI consistent across orderings |
+| `proptest_browser_session_state_consistency` | Session state supports parallel mode |
+
+These are **NOT** run in precommit (too heavy). Run with `./scripts/test-signing-order.sh`.
 
 ### Test Coverage Summary
 

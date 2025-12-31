@@ -1087,62 +1087,6 @@
         <p style="font-size: 16px; color: var(--text-tertiary); margin-top: 8px;">This may take a moment. Please wait.</p>
     </div>
 
-    <!-- Email Verification Screen (UX-003) -->
-    <div id="verification-screen" class="consent-landing hidden" role="main" aria-labelledby="verification-heading">
-        <div style="max-width: 500px; width: 100%; background: var(--bg-secondary); border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 2rem;">
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <div style="font-size: 3rem; margin-bottom: 1rem;" aria-hidden="true">🔐</div>
-                <h2 id="verification-heading" style="font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary);">Verify Your Identity</h2>
-                <p style="color: var(--text-secondary); font-size: 18px;">
-                    Please confirm you are the intended recipient
-                </p>
-            </div>
-
-            <div style="background: var(--bg-tertiary); padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-                <p id="email-suffix-instructions" style="font-size: 18px; color: var(--text-secondary); margin-bottom: 0.5rem;">
-                    Enter the last <strong>4 characters</strong> of your email address:
-                </p>
-                <p id="masked-email" style="font-size: 1.125rem; font-weight: 600; color: var(--accent-primary); margin-bottom: 1rem;" aria-live="polite">
-                    <!-- Will be filled by JS -->
-                </p>
-                <label for="email-suffix-input" class="visually-hidden">Enter last 4 characters of your email</label>
-                <input
-                    type="text"
-                    id="email-suffix-input"
-                    placeholder="Last 4 characters"
-                    maxlength="4"
-                    aria-describedby="email-suffix-instructions"
-                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-size: 1rem; text-align: center; font-family: monospace; text-transform: lowercase;"
-                    autocomplete="off"
-                />
-            </div>
-
-            <div id="verification-error" class="hidden" style="background: #fee2e2; border-left: 4px solid #ef4444; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
-                <p style="color: #991b1b; font-size: 18px; margin: 0;">
-                    <strong id="error-message">Incorrect input. Please try again.</strong>
-                </p>
-                <p id="attempts-remaining" style="color: #991b1b; font-size: 18px; margin: 0.5rem 0 0 0;">
-                    <!-- Will be filled by JS -->
-                </p>
-            </div>
-
-            <div id="lockout-message" class="hidden" style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
-                <p style="color: #92400e; font-size: 18px; margin: 0;">
-                    <strong>Too many failed attempts.</strong><br>
-                    Please wait <span id="lockout-timer">15:00</span> before trying again.
-                </p>
-            </div>
-
-            <button id="verify-button" class="btn btn-primary" style="width: 100%; padding: 0.875rem; font-size: 1rem;">
-                Verify & Continue
-            </button>
-
-            <p style="text-align: center; margin-top: 1.5rem; font-size: 18px; color: var(--text-tertiary);">
-                This verification helps ensure the document reaches the intended recipient.
-            </p>
-        </div>
-    </div>
-
     <!-- Consent Landing Page -->
     <div id="consent-landing" class="consent-landing hidden">
         <div class="consent-container">
@@ -1172,13 +1116,18 @@
 
                 <div class="consent-text">
                     <h3>Electronic Signature Consent</h3>
-                    <p>By clicking "Review Document" below, you agree to:</p>
+                    <p>By clicking "Review Document" below, I acknowledge and agree that:</p>
                     <ul>
-                        <li>Sign documents on your computer instead of with pen and paper</li>
-                        <li>Your computer signature is legally the same as signing by hand</li>
-                        <li>Complete this signing process using this website</li>
+                        <li>I consent to sign this document electronically pursuant to the Florida Uniform Electronic Transactions Act (F.S. 668.50)</li>
+                        <li>My electronic signature shall have the same legal force and effect as a handwritten signature</li>
+                        <li>I have received a copy of this consent disclosure and may withdraw consent at any time prior to signing</li>
                     </ul>
-                    <p class="consent-note">Your electronic signature will have the same legal effect as a handwritten signature.</p>
+                    <p class="consent-note" style="font-size: 14px; color: var(--text-tertiary); margin-top: 1rem; line-height: 1.5;">
+                        <strong>Service Availability:</strong> This service is provided for use within the State of Florida, excluding Miami-Dade County.
+                        This service does not provide legal advice. Users are solely responsible for ensuring compliance with applicable laws and regulations
+                        governing their specific transactions. By using this service, you agree that the service provider assumes no liability for
+                        the legal validity or enforceability of documents signed through this platform.
+                    </p>
                 </div>
 
                 <div class="consent-actions">

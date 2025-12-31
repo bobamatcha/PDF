@@ -1,0 +1,61 @@
+[package]
+name = "email-proxy"
+version.workspace = true
+edition.workspace = true
+description = "AWS Lambda email proxy with SES integration and automated deliverability best practices"
+license = "MIT"
+
+[[bin]]
+name = "email-proxy"
+path = "src/main.rs"
+
+[lib]
+name = "email_proxy"
+path = "src/lib.rs"
+
+[dependencies]
+# AWS SDK (2025 latest)
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+aws-sdk-sesv2 = "1.110"
+aws-sdk-sns = "1.92"  # For bounce/complaint notifications
+
+# Lambda runtime - GA version (November 2025)
+# https://aws.amazon.com/blogs/aws/aws-weekly-roundup-aws-lambda-load-balancers-amazon-dcv-amazon-linux-2023-and-more-november-17-2025/
+lambda_runtime = "0.14"
+lambda_http = "0.16"  # For HTTP API Gateway integration
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+
+# Time
+chrono = { workspace = true }
+
+# Email validation and formatting
+email_address = "0.2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
+
+# Rate limiting
+governor = "0.10"
+
+# Crypto for HMAC signatures
+hmac = "0.12"
+sha2 = { workspace = true }
+hex = "0.4"
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
+tokio-test = "0.4"

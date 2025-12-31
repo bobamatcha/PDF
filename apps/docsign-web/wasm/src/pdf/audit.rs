@@ -13,6 +13,8 @@ pub enum AuditAction {
     View,
     FieldAdded,
     FieldRemoved,
+    /// Recipient consented to electronic signature (clicked "Review Document")
+    ConsentAccepted,
     Sign,
     Decline,
     Complete,
@@ -54,6 +56,34 @@ impl AuditEvent {
             document_hash: document_hash.to_string(),
             previous_hash,
             details,
+            signature: None,
+            decline_reason: None,
+        }
+    }
+
+    /// Create a new consent accepted event with browser/device details
+    /// This is logged when user clicks "Review Document" on consent page
+    pub fn new_consent(
+        actor_email: &str,
+        document_hash: &str,
+        previous_hash: Option<String>,
+        user_agent: Option<String>,
+        consent_text_hash: Option<String>,
+    ) -> Self {
+        let details = format!(
+            "Electronic signature consent accepted. User-Agent: {}. Consent text hash: {}",
+            user_agent.as_deref().unwrap_or("unknown"),
+            consent_text_hash.as_deref().unwrap_or("not-captured")
+        );
+        Self {
+            event_id: Uuid::new_v4().to_string(),
+            timestamp: Utc::now().to_rfc3339(),
+            action: AuditAction::ConsentAccepted,
+            actor_email: actor_email.to_string(),
+            actor_ip_hash: None,
+            document_hash: document_hash.to_string(),
+            previous_hash,
+            details: Some(details),
             signature: None,
             decline_reason: None,
         }

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "esbuild src/ts/main.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --sourcemap",
     "build:prod": "esbuild src/ts/main.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --minify --sourcemap --tree-shaking=true --drop:console --drop:debugger",
+    "build:trunk": "trunk build --release",
     "build:watch": "npm run build -- --watch",
     "build:analyze": "esbuild src/ts/main.ts --bundle --outfile=/dev/null --format=esm --target=es2020 --analyze --metafile=dist/meta.json 2>&1 | tee dist/bundle-analysis.txt",
     "build:analyze:prod": "esbuild src/ts/main.ts --bundle --outfile=/dev/null --format=esm --target=es2020 --minify --analyze 2>&1",
@@ -13,7 +14,9 @@
     "dev": "concurrently \"npm run build:watch\" \"trunk serve\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:perf": "vitest run --testNamePattern='performance'"
+    "test:perf": "vitest run --testNamePattern='performance'",
+    "verify-dist": "./scripts/verify-dist.sh",
+    "verify-dist:build": "./scripts/verify-dist.sh --build"
   },
   "devDependencies": {
     "@axe-core/cli": "^4.11.0",

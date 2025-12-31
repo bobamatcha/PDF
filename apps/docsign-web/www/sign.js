@@ -1799,7 +1799,10 @@ function showConsentLanding() {
 /**
  * Handle review document button click
  */
-function handleReviewDocument() {
+async function handleReviewDocument() {
+    // Record consent acceptance for audit trail FIRST
+    await recordConsentAcceptance();
+
     // Hide consent landing page
     elements.consentLanding?.classList.add('hidden');
 
@@ -1825,6 +1828,64 @@ function handleReviewDocument() {
 
     // Update initial UI state
     updateUI();
+}
+
+/**
+ * Record consent acceptance in the audit trail.
+ * Called when user clicks "Review Document" on consent page.
+ * This creates a legally-binding record that the user consented to e-signing.
+ */
+async function recordConsentAcceptance() {
+    if (!state.session?.id || !state.recipientId) {
+        console.warn('Cannot record consent: missing session or recipient ID');
+        return;
+    }
+
+    const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
+
+    // Compute hash of consent text for proof of what was shown
+    const consentTextElement = document.querySelector('.consent-text');
+    let consentTextHash = null;
+    if (consentTextElement && window.crypto?.subtle) {
+        try {
+            const text = consentTextElement.textContent || '';
+            const encoder = new TextEncoder();
+            const data = encoder.encode(text);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            consentTextHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        } catch (e) {
+            console.warn('Could not compute consent text hash:', e);
+        }
+    }
+
+    try {
+        const response = await fetch(`${WORKER_API}/session/${state.session.id}/consent`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                recipient_id: state.recipientId,
+                user_agent: navigator.userAgent,
+                consent_text_hash: consentTextHash,
+            }),
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            console.log('Consent recorded:', result.consent_at);
+
+            // Store consent timestamp locally for audit log display
+            state.consentAt = result.consent_at;
+        } else {
+            console.warn('Failed to record consent:', await response.text());
+            // Continue anyway - don't block signing due to consent tracking failure
+        }
+    } catch (error) {
+        console.warn('Error recording consent:', error);
+        // Continue anyway - don't block signing due to network issues
+    }
 }
 
 /**

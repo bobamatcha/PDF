@@ -10,7 +10,6 @@ pub mod crypto;
 pub mod pdf;
 pub mod session;
 pub mod storage;
-pub mod verification;
 
 use crypto::cert::CertificateIdentity;
 use crypto::keys::{EphemeralIdentity, SigningIdentity};
@@ -636,6 +635,3 @@ pub fn parse_tsa_response(response_bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
 pub fn validate_timestamp_token(token_bytes: &[u8]) -> Result<(), JsValue> {
     tsa::validate_timestamp_token(token_bytes).map_err(|e| JsValue::from_str(&e))
 }
-
-// Email verification exports
-pub use verification::{mask_email, verify_email_suffix};
