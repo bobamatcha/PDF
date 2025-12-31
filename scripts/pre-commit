@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pre-commit hook aligned with CI workflow
+# Pre-commit hook with parallel execution for speed
 # Install: ./scripts/install-hooks.sh
 # Or manually: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
@@ -14,78 +14,208 @@ else
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 fi
 
-echo "🔍 Running pre-commit checks..."
-
 cd "$PROJECT_ROOT"
 
-# Format check
-echo "  Checking formatting..."
-if ! cargo fmt --all -- --check; then
-    echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Temp files for capturing output
+FMT_LOG=$(mktemp)
+CLIPPY_LOG=$(mktemp)
+TS_AGENTPDF_LOG=$(mktemp)
+TS_PDFJOIN_LOG=$(mktemp)
+TEST_LOG=$(mktemp)
+PARITY_LOG=$(mktemp)
+
+cleanup() {
+    rm -f "$FMT_LOG" "$CLIPPY_LOG" "$TS_AGENTPDF_LOG" "$TS_PDFJOIN_LOG" "$TEST_LOG" "$PARITY_LOG"
+}
+trap cleanup EXIT
+
+echo -e "${YELLOW}🔍 Running pre-commit checks (parallel)...${NC}"
+
+# ============================================================================
+# PHASE 1: Lint checks (run in parallel)
+# ============================================================================
+echo -e "\n${CYAN}Phase 1: Linting (parallel)${NC}"
+
+# Start all lint checks in parallel
+(
+    cargo fmt --all -- --check > "$FMT_LOG" 2>&1
+) &
+FMT_PID=$!
+
+(
+    cargo clippy --all-targets --all-features -- -D warnings > "$CLIPPY_LOG" 2>&1
+) &
+CLIPPY_PID=$!
+
+# TypeScript checks (only if package.json exists and has typecheck script)
+TS_AGENTPDF_PID=""
+TS_PDFJOIN_PID=""
+
+if [[ -f "$PROJECT_ROOT/apps/agentpdf-web/package.json" ]]; then
+    (
+        cd "$PROJECT_ROOT/apps/agentpdf-web"
+        npm run typecheck > "$TS_AGENTPDF_LOG" 2>&1
+    ) &
+    TS_AGENTPDF_PID=$!
+fi
+
+if [[ -f "$PROJECT_ROOT/apps/pdfjoin-web/package.json" ]]; then
+    (
+        cd "$PROJECT_ROOT/apps/pdfjoin-web"
+        npm run typecheck > "$TS_PDFJOIN_LOG" 2>&1
+    ) &
+    TS_PDFJOIN_PID=$!
+fi
+
+# Wait for all lint checks and collect results
+LINT_FAILED=0
+
+echo -n "  cargo fmt..."
+if wait $FMT_PID; then
+    echo -e " ${GREEN}✓${NC}"
+else
+    echo -e " ${RED}✗${NC}"
+    LINT_FAILED=1
+fi
+
+echo -n "  cargo clippy..."
+if wait $CLIPPY_PID; then
+    echo -e " ${GREEN}✓${NC}"
+else
+    echo -e " ${RED}✗${NC}"
+    LINT_FAILED=1
+fi
+
+if [[ -n "$TS_AGENTPDF_PID" ]]; then
+    echo -n "  tsc agentpdf..."
+    if wait $TS_AGENTPDF_PID; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+        LINT_FAILED=1
+    fi
+fi
+
+if [[ -n "$TS_PDFJOIN_PID" ]]; then
+    echo -n "  tsc pdfjoin..."
+    if wait $TS_PDFJOIN_PID; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+        LINT_FAILED=1
+    fi
+fi
+
+# If any lint check failed, show errors and exit
+if [[ $LINT_FAILED -ne 0 ]]; then
+    echo -e "\n${RED}❌ Lint checks failed:${NC}"
+
+    if [[ -s "$FMT_LOG" ]] && ! grep -q "^$" "$FMT_LOG" 2>/dev/null; then
+        if ! cargo fmt --all -- --check > /dev/null 2>&1; then
+            echo -e "\n${YELLOW}=== cargo fmt ===${NC}"
+            cat "$FMT_LOG"
+            echo -e "${CYAN}Run 'cargo fmt --all' to fix${NC}"
+        fi
+    fi
+
+    if ! cargo clippy --all-targets --all-features -- -D warnings > /dev/null 2>&1; then
+        echo -e "\n${YELLOW}=== cargo clippy ===${NC}"
+        cat "$CLIPPY_LOG"
+    fi
+
+    if [[ -n "$TS_AGENTPDF_PID" ]] && [[ -s "$TS_AGENTPDF_LOG" ]]; then
+        if ! (cd "$PROJECT_ROOT/apps/agentpdf-web" && npm run typecheck > /dev/null 2>&1); then
+            echo -e "\n${YELLOW}=== tsc agentpdf-web ===${NC}"
+            cat "$TS_AGENTPDF_LOG"
+        fi
+    fi
+
+    if [[ -n "$TS_PDFJOIN_PID" ]] && [[ -s "$TS_PDFJOIN_LOG" ]]; then
+        if ! (cd "$PROJECT_ROOT/apps/pdfjoin-web" && npm run typecheck > /dev/null 2>&1); then
+            echo -e "\n${YELLOW}=== tsc pdfjoin-web ===${NC}"
+            cat "$TS_PDFJOIN_LOG"
+        fi
+    fi
+
     exit 1
 fi
 
-# Clippy (with auto-fix for safe lints)
-echo "  Running Clippy..."
-CLIPPY_OUTPUT=$(cargo clippy --all-targets --all-features -- -D warnings 2>&1) || {
-    # Check if it's a simple/safe lint that can be auto-fixed (machine-applicable only)
-    SAFE_LINTS="redundant_clone|needless_borrow|clone_on_copy|useless_conversion|needless_return"
-    if echo "$CLIPPY_OUTPUT" | grep -qE "clippy::($SAFE_LINTS)"; then
-        echo "  🔧 Auto-fixing safe clippy lints..."
-        cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>/dev/null || true
-        # Re-run clippy to verify fix worked
-        if ! cargo clippy --all-targets --all-features -- -D warnings; then
-            echo "❌ Clippy still has issues after auto-fix. Manual fix needed."
-            exit 1
-        fi
-        echo "  ✅ Auto-fix successful!"
-    else
-        echo "$CLIPPY_OUTPUT"
-        echo "❌ Clippy found issues. Fix the warnings above."
-        exit 1
-    fi
-}
+# ============================================================================
+# PHASE 2: Tests (run in parallel where possible)
+# ============================================================================
+echo -e "\n${CYAN}Phase 2: Tests (parallel)${NC}"
 
-# Unit tests (fast, no browser/server needed)
-# Use cargo nextest for parallel execution if available, otherwise fall back to cargo test
-echo "  Running unit tests..."
+# Use nextest if available for better parallelism
 if command -v cargo-nextest &> /dev/null; then
-    if ! cargo nextest run --all-features --workspace; then
-        echo "❌ Unit tests failed."
-        exit 1
-    fi
+    TEST_CMD="cargo nextest run"
 else
-    if ! cargo test --all-features --workspace; then
-        echo "❌ Unit tests failed."
-        exit 1
-    fi
+    TEST_CMD="cargo test"
 fi
 
-# Parity tests (fast, catches config drift between apps)
-echo "  Running parity tests..."
-if command -v cargo-nextest &> /dev/null; then
-    if ! cargo nextest run -p benchmark-harness --test parity_tests; then
-        echo "❌ Parity tests failed. Apps may have diverged configs."
-        exit 1
-    fi
+# Run unit tests and parity tests in parallel
+(
+    $TEST_CMD --all-features --workspace > "$TEST_LOG" 2>&1
+) &
+TEST_PID=$!
+
+(
+    $TEST_CMD -p benchmark-harness --test parity_tests > "$PARITY_LOG" 2>&1
+) &
+PARITY_PID=$!
+
+TEST_FAILED=0
+
+echo -n "  unit tests..."
+if wait $TEST_PID; then
+    echo -e " ${GREEN}✓${NC}"
 else
-    if ! cargo test -p benchmark-harness --test parity_tests; then
-        echo "❌ Parity tests failed. Apps may have diverged configs."
-        exit 1
-    fi
+    echo -e " ${RED}✗${NC}"
+    TEST_FAILED=1
 fi
 
-# Browser tests (requires trunk servers)
-# Skip if SKIP_BROWSER_TESTS is set or if we can't start servers
+echo -n "  parity tests..."
+if wait $PARITY_PID; then
+    echo -e " ${GREEN}✓${NC}"
+else
+    echo -e " ${RED}✗${NC}"
+    TEST_FAILED=1
+fi
+
+if [[ $TEST_FAILED -ne 0 ]]; then
+    echo -e "\n${RED}❌ Tests failed:${NC}"
+
+    if ! $TEST_CMD --all-features --workspace > /dev/null 2>&1; then
+        echo -e "\n${YELLOW}=== unit tests ===${NC}"
+        cat "$TEST_LOG"
+    fi
+
+    if ! $TEST_CMD -p benchmark-harness --test parity_tests > /dev/null 2>&1; then
+        echo -e "\n${YELLOW}=== parity tests ===${NC}"
+        cat "$PARITY_LOG"
+    fi
+
+    exit 1
+fi
+
+# ============================================================================
+# PHASE 3: Browser tests (optional, can be slow)
+# ============================================================================
 if [ -z "$SKIP_BROWSER_TESTS" ]; then
-    echo "  Running browser integration tests..."
+    echo -e "\n${CYAN}Phase 3: Browser tests${NC}"
     if ! "$PROJECT_ROOT/scripts/test-browser.sh"; then
-        echo "❌ Browser tests failed."
-        echo "  To skip browser tests: SKIP_BROWSER_TESTS=1 git commit ..."
+        echo -e "${RED}❌ Browser tests failed.${NC}"
+        echo -e "  ${CYAN}To skip: SKIP_BROWSER_TESTS=1 git commit ...${NC}"
         exit 1
     fi
 else
-    echo "  ⏭️  Skipping browser tests (SKIP_BROWSER_TESTS is set)"
+    echo -e "\n${CYAN}Phase 3: Browser tests${NC} ${YELLOW}(skipped)${NC}"
 fi
 
-echo "✅ All pre-commit checks passed!"
+echo -e "\n${GREEN}✅ All pre-commit checks passed!${NC}"

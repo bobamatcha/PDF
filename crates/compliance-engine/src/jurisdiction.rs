@@ -203,27 +203,35 @@ impl State {
 
     /// Check if state has implementation
     pub fn is_implemented(&self) -> bool {
-        matches!(
-            self,
-            // Tier 1: Big Five
-            State::FL
-                | State::TX
-                | State::CA
-                | State::NY
-                | State::GA
-                | State::IL
-                // Tier 2: Growth Hubs
-                | State::PA
-                | State::NJ
-                | State::VA
-                | State::MA
-                | State::OH
-                | State::MI
-                | State::WA
-                | State::AZ
-                | State::NC
-                | State::TN
-        )
+        #[cfg(feature = "all-states")]
+        {
+            matches!(
+                self,
+                // Tier 1: Big Five
+                State::FL
+                    | State::TX
+                    | State::CA
+                    | State::NY
+                    | State::GA
+                    | State::IL
+                    // Tier 2: Growth Hubs
+                    | State::PA
+                    | State::NJ
+                    | State::VA
+                    | State::MA
+                    | State::OH
+                    | State::MI
+                    | State::WA
+                    | State::AZ
+                    | State::NC
+                    | State::TN
+            )
+        }
+
+        #[cfg(not(feature = "all-states"))]
+        {
+            matches!(self, State::FL)
+        }
     }
 
     /// Parse from state code or name (case-insensitive)
@@ -258,27 +266,38 @@ impl State {
     }
 
     /// Get all implemented states
+    ///
+    /// With `florida-only` feature (default): Returns only Florida
+    /// With `all-states` feature: Returns all 16 implemented states
     pub fn implemented_states() -> Vec<Self> {
-        vec![
-            // Tier 1: Big Five
-            State::FL,
-            State::TX,
-            State::CA,
-            State::NY,
-            State::GA,
-            State::IL,
-            // Tier 2: Growth Hubs
-            State::PA,
-            State::NJ,
-            State::VA,
-            State::MA,
-            State::OH,
-            State::MI,
-            State::WA,
-            State::AZ,
-            State::NC,
-            State::TN,
-        ]
+        #[cfg(feature = "all-states")]
+        {
+            vec![
+                // Tier 1: Big Five
+                State::FL,
+                State::TX,
+                State::CA,
+                State::NY,
+                State::GA,
+                State::IL,
+                // Tier 2: Growth Hubs
+                State::PA,
+                State::NJ,
+                State::VA,
+                State::MA,
+                State::OH,
+                State::MI,
+                State::WA,
+                State::AZ,
+                State::NC,
+                State::TN,
+            ]
+        }
+
+        #[cfg(not(feature = "all-states"))]
+        {
+            vec![State::FL]
+        }
     }
 }
 

@@ -13,6 +13,7 @@ benchmark = []
 [dependencies]
 shared-types = { workspace = true }
 compliance-engine = { workspace = true }
+pdfjoin-core = { path = "../../../crates/pdfjoin-core" }
 typst-engine = { path = "../../../crates/typst-engine", default-features = false, features = ["wasm"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }

@@ -42,6 +42,62 @@ const FLORIDA_PURCHASE_AS_IS_TEMPLATE: &str =
 const FLORIDA_COMMERCIAL_LEASE_TEMPLATE: &str =
     include_str!("../../templates/florida_commercial_lease.typ");
 
+/// Florida Lease Termination Notice template - § 83.57, § 83.56, HB 1417
+const FLORIDA_LEASE_TERMINATION_TEMPLATE: &str =
+    include_str!("../../templates/florida_lease_termination.typ");
+
+/// Florida Eviction Notice template - § 83.56 (Termination of Rental Agreement)
+const FLORIDA_EVICTION_NOTICE_TEMPLATE: &str =
+    include_str!("../../templates/florida_eviction_notice.typ");
+
+/// Florida Inspection Contingency Addendum template
+const FLORIDA_INSPECTION_CONTINGENCY_TEMPLATE: &str =
+    include_str!("../../templates/florida_inspection_contingency.typ");
+
+/// Florida Financing Contingency Addendum template
+const FLORIDA_FINANCING_CONTINGENCY_TEMPLATE: &str =
+    include_str!("../../templates/florida_financing_contingency.typ");
+
+/// Florida Notice of Commencement template - § 713.13 (Construction Lien Law)
+const FLORIDA_NOTICE_OF_COMMENCEMENT_TEMPLATE: &str =
+    include_str!("../../templates/florida_notice_of_commencement.typ");
+
+/// Florida Notice to Owner template - § 713.06 (Preliminary Notice)
+const FLORIDA_NOTICE_TO_OWNER_TEMPLATE: &str =
+    include_str!("../../templates/florida_notice_to_owner.typ");
+
+/// Florida Claim of Lien template - § 713.08 (Construction Lien)
+const FLORIDA_CLAIM_OF_LIEN_TEMPLATE: &str =
+    include_str!("../../templates/florida_claim_of_lien.typ");
+
+/// Florida Release of Lien template - § 713.20, § 713.21
+const FLORIDA_RELEASE_OF_LIEN_TEMPLATE: &str =
+    include_str!("../../templates/florida_release_of_lien.typ");
+
+/// Florida Contractor Invoice template
+const FLORIDA_CONTRACTOR_INVOICE_TEMPLATE: &str =
+    include_str!("../../templates/florida_contractor_invoice.typ");
+
+/// Florida Motor Vehicle Bill of Sale template - Chapter 319
+const FLORIDA_BILL_OF_SALE_CAR_TEMPLATE: &str =
+    include_str!("../../templates/florida_bill_of_sale_car.typ");
+
+/// Florida Vessel/Boat Bill of Sale template - Chapter 328
+const FLORIDA_BILL_OF_SALE_BOAT_TEMPLATE: &str =
+    include_str!("../../templates/florida_bill_of_sale_boat.typ");
+
+/// Florida Trailer Bill of Sale template - Chapters 319 & 320
+const FLORIDA_BILL_OF_SALE_TRAILER_TEMPLATE: &str =
+    include_str!("../../templates/florida_bill_of_sale_trailer.typ");
+
+/// Florida Personal Watercraft (Jet Ski) Bill of Sale template - Chapter 328
+const FLORIDA_BILL_OF_SALE_JETSKI_TEMPLATE: &str =
+    include_str!("../../templates/florida_bill_of_sale_jetski.typ");
+
+/// Florida Mobile Home Bill of Sale template - Chapters 319 & 723
+const FLORIDA_BILL_OF_SALE_MOBILE_HOME_TEMPLATE: &str =
+    include_str!("../../templates/florida_bill_of_sale_mobile_home.typ");
+
 /// Get an embedded template by name
 pub fn get_embedded_template(name: &str) -> Option<String> {
     match name {
@@ -55,6 +111,26 @@ pub fn get_embedded_template(name: &str) -> Option<String> {
         "florida_flood_disclosure" => Some(FLORIDA_FLOOD_DISCLOSURE_TEMPLATE.to_string()),
         "florida_purchase_as_is" => Some(FLORIDA_PURCHASE_AS_IS_TEMPLATE.to_string()),
         "florida_commercial_lease" => Some(FLORIDA_COMMERCIAL_LEASE_TEMPLATE.to_string()),
+        "florida_lease_termination" => Some(FLORIDA_LEASE_TERMINATION_TEMPLATE.to_string()),
+        "florida_eviction_notice" => Some(FLORIDA_EVICTION_NOTICE_TEMPLATE.to_string()),
+        "florida_inspection_contingency" => {
+            Some(FLORIDA_INSPECTION_CONTINGENCY_TEMPLATE.to_string())
+        }
+        "florida_financing_contingency" => Some(FLORIDA_FINANCING_CONTINGENCY_TEMPLATE.to_string()),
+        "florida_notice_of_commencement" => {
+            Some(FLORIDA_NOTICE_OF_COMMENCEMENT_TEMPLATE.to_string())
+        }
+        "florida_notice_to_owner" => Some(FLORIDA_NOTICE_TO_OWNER_TEMPLATE.to_string()),
+        "florida_claim_of_lien" => Some(FLORIDA_CLAIM_OF_LIEN_TEMPLATE.to_string()),
+        "florida_release_of_lien" => Some(FLORIDA_RELEASE_OF_LIEN_TEMPLATE.to_string()),
+        "florida_contractor_invoice" => Some(FLORIDA_CONTRACTOR_INVOICE_TEMPLATE.to_string()),
+        "florida_bill_of_sale_car" => Some(FLORIDA_BILL_OF_SALE_CAR_TEMPLATE.to_string()),
+        "florida_bill_of_sale_boat" => Some(FLORIDA_BILL_OF_SALE_BOAT_TEMPLATE.to_string()),
+        "florida_bill_of_sale_trailer" => Some(FLORIDA_BILL_OF_SALE_TRAILER_TEMPLATE.to_string()),
+        "florida_bill_of_sale_jetski" => Some(FLORIDA_BILL_OF_SALE_JETSKI_TEMPLATE.to_string()),
+        "florida_bill_of_sale_mobile_home" => {
+            Some(FLORIDA_BILL_OF_SALE_MOBILE_HOME_TEMPLATE.to_string())
+        }
         _ => None,
     }
 }
@@ -72,6 +148,20 @@ pub fn list_embedded_templates() -> Vec<&'static str> {
         "florida_flood_disclosure",
         "florida_purchase_as_is",
         "florida_commercial_lease",
+        "florida_lease_termination",
+        "florida_eviction_notice",
+        "florida_inspection_contingency",
+        "florida_financing_contingency",
+        "florida_notice_of_commencement",
+        "florida_notice_to_owner",
+        "florida_claim_of_lien",
+        "florida_release_of_lien",
+        "florida_contractor_invoice",
+        "florida_bill_of_sale_car",
+        "florida_bill_of_sale_boat",
+        "florida_bill_of_sale_trailer",
+        "florida_bill_of_sale_jetski",
+        "florida_bill_of_sale_mobile_home",
     ]
 }
 
@@ -577,7 +667,7 @@ mod tests {
     #[test]
     fn test_list_embedded_templates() {
         let templates = list_embedded_templates();
-        assert_eq!(templates.len(), 10);
+        assert_eq!(templates.len(), 24);
         assert!(templates.contains(&"invoice"));
         assert!(templates.contains(&"letter"));
         assert!(templates.contains(&"florida_lease"));
@@ -588,6 +678,20 @@ mod tests {
         assert!(templates.contains(&"florida_flood_disclosure"));
         assert!(templates.contains(&"florida_purchase_as_is"));
         assert!(templates.contains(&"florida_commercial_lease"));
+        assert!(templates.contains(&"florida_lease_termination"));
+        assert!(templates.contains(&"florida_eviction_notice"));
+        assert!(templates.contains(&"florida_inspection_contingency"));
+        assert!(templates.contains(&"florida_financing_contingency"));
+        assert!(templates.contains(&"florida_notice_of_commencement"));
+        assert!(templates.contains(&"florida_notice_to_owner"));
+        assert!(templates.contains(&"florida_claim_of_lien"));
+        assert!(templates.contains(&"florida_release_of_lien"));
+        assert!(templates.contains(&"florida_contractor_invoice"));
+        assert!(templates.contains(&"florida_bill_of_sale_car"));
+        assert!(templates.contains(&"florida_bill_of_sale_boat"));
+        assert!(templates.contains(&"florida_bill_of_sale_trailer"));
+        assert!(templates.contains(&"florida_bill_of_sale_jetski"));
+        assert!(templates.contains(&"florida_bill_of_sale_mobile_home"));
     }
 
     // ========================================================================

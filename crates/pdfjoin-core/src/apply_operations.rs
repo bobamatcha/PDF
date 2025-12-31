@@ -298,6 +298,31 @@ fn flatten_operation_to_content(
             writeln!(content, "ET").unwrap();
             writeln!(content, "Q").unwrap();
         }
+        EditOperation::AddImage { rect, .. } => {
+            // For flattened export, draw a signature placeholder box
+            // Full image embedding would require XObject registration
+            writeln!(content, "q").unwrap();
+            // Draw signature box outline
+            writeln!(content, "0.4 0.4 0.4 RG").unwrap(); // Gray stroke
+            writeln!(content, "0.95 0.95 0.95 rg").unwrap(); // Light gray fill
+            writeln!(content, "1 w").unwrap();
+            writeln!(
+                content,
+                "{} {} {} {} re B",
+                rect.x, rect.y, rect.width, rect.height
+            )
+            .unwrap();
+            // Draw "Signed" text
+            writeln!(content, "0.3 0.3 0.3 rg").unwrap();
+            writeln!(content, "BT").unwrap();
+            writeln!(content, "/Helvetica 10 Tf").unwrap();
+            let text_x = rect.x + 4.0;
+            let text_y = rect.y + rect.height / 2.0 - 3.0;
+            writeln!(content, "{} {} Td", text_x, text_y).unwrap();
+            writeln!(content, "(Signed) Tj").unwrap();
+            writeln!(content, "ET").unwrap();
+            writeln!(content, "Q").unwrap();
+        }
     }
 
     Ok(())
@@ -480,6 +505,12 @@ fn apply_single_operation(
         EditOperation::AddWhiteRect { rect, color, .. } => {
             add_white_rect_annotation(doc, page_id, rect, color)
         }
+        EditOperation::AddImage {
+            rect,
+            image_data,
+            format,
+            ..
+        } => add_image_annotation(doc, page_id, rect, image_data, format),
     }
 }
 
@@ -590,6 +621,7 @@ fn add_text_annotation(
 }
 
 /// Create PDF content stream for text appearance
+#[allow(clippy::too_many_arguments)]
 fn create_text_appearance_content(
     text: &str,
     font_size: f64,
@@ -637,6 +669,7 @@ fn create_text_appearance_content(
 }
 
 /// Create PDF content stream for styled text appearance with mixed fonts
+#[allow(clippy::too_many_arguments)]
 fn create_styled_text_appearance_content(
     segments: &[StyledTextSegment],
     font_size: f64,
@@ -1102,6 +1135,233 @@ fn add_white_rect_annotation(
 
     let annot_id = doc.add_object(Object::Dictionary(annot));
     add_annotation_to_page(doc, page_id, annot_id)
+}
+
+/// Add an image annotation (used for signatures) to a PDF page
+fn add_image_annotation(
+    doc: &mut Document,
+    page_id: ObjectId,
+    rect: &PdfRect,
+    image_data: &str,
+    format: &str,
+) -> Result<(), PdfJoinError> {
+    use base64::Engine;
+
+    // Decode base64 image data
+    let image_bytes = base64::engine::general_purpose::STANDARD
+        .decode(image_data)
+        .map_err(|e| PdfJoinError::OperationError(format!("Invalid base64 image data: {}", e)))?;
+
+    // Calculate rectangle bounds
+    let x1 = rect.x as f32;
+    let y1 = rect.y as f32;
+    let x2 = (rect.x + rect.width) as f32;
+    let y2 = (rect.y + rect.height) as f32;
+    let width = x2 - x1;
+    let height = y2 - y1;
+
+    // Create an Image XObject from the image data
+    let (image_id, img_width, img_height) = if format == "jpeg" || format == "jpg" {
+        create_jpeg_xobject(doc, &image_bytes)?
+    } else {
+        // For PNG, decode and create raw RGB image
+        create_png_xobject(doc, &image_bytes)?
+    };
+
+    // Create appearance stream that draws the image scaled to fit the rect
+    // The image is drawn at (0,0) and scaled to (width, height)
+    let ap_content = format!(
+        "q\n\
+         {} 0 0 {} 0 0 cm\n\
+         /Img Do\n\
+         Q",
+        width, height
+    );
+
+    // Create resources dict with the image
+    let mut img_dict = Dictionary::new();
+    img_dict.set("Img", Object::Reference(image_id));
+
+    let mut resources_dict = Dictionary::new();
+    resources_dict.set("XObject", Object::Dictionary(img_dict));
+
+    // Create the appearance stream (Form XObject)
+    let mut ap_stream_dict = Dictionary::new();
+    ap_stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    ap_stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    ap_stream_dict.set("FormType", Object::Integer(1));
+    ap_stream_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(width),
+            Object::Real(height),
+        ]),
+    );
+    ap_stream_dict.set("Resources", Object::Dictionary(resources_dict));
+
+    let ap_stream = lopdf::Stream::new(ap_stream_dict, ap_content.into_bytes());
+    let ap_stream_id = doc.add_object(Object::Stream(ap_stream));
+
+    // Create AP dictionary pointing to the normal appearance
+    let mut ap_dict = Dictionary::new();
+    ap_dict.set("N", Object::Reference(ap_stream_id));
+
+    // Create a Stamp annotation for the image
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Stamp".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x1),
+            Object::Real(y1),
+            Object::Real(x2),
+            Object::Real(y2),
+        ]),
+    );
+    annot.set("Name", Object::Name(b"Signature".to_vec()));
+    annot.set("AP", Object::Dictionary(ap_dict));
+    // Set flags: Print (4) to ensure it prints
+    annot.set("F", Object::Integer(4));
+
+    // Store original image dimensions for reference
+    annot.set("OrigWidth", Object::Integer(img_width));
+    annot.set("OrigHeight", Object::Integer(img_height));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot));
+    add_annotation_to_page(doc, page_id, annot_id)
+}
+
+/// Create a JPEG XObject from raw JPEG bytes
+fn create_jpeg_xobject(
+    doc: &mut Document,
+    jpeg_bytes: &[u8],
+) -> Result<(ObjectId, i64, i64), PdfJoinError> {
+    // Parse JPEG header to get dimensions
+    let (width, height) = parse_jpeg_dimensions(jpeg_bytes).unwrap_or((200, 50)); // Default signature size if parsing fails
+
+    let mut img_dict = Dictionary::new();
+    img_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    img_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+    img_dict.set("Width", Object::Integer(width));
+    img_dict.set("Height", Object::Integer(height));
+    img_dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+    img_dict.set("BitsPerComponent", Object::Integer(8));
+    img_dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+
+    let img_stream = lopdf::Stream::new(img_dict, jpeg_bytes.to_vec());
+    let img_id = doc.add_object(Object::Stream(img_stream));
+
+    Ok((img_id, width, height))
+}
+
+/// Create a PNG XObject by decoding to raw RGB bytes
+fn create_png_xobject(
+    doc: &mut Document,
+    png_bytes: &[u8],
+) -> Result<(ObjectId, i64, i64), PdfJoinError> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    // Decode PNG using the png crate
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| PdfJoinError::OperationError(format!("Failed to decode PNG: {}", e)))?;
+
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| PdfJoinError::OperationError(format!("Failed to read PNG frame: {}", e)))?;
+
+    let width = info.width as i64;
+    let height = info.height as i64;
+
+    // Convert to RGB (handle RGBA by stripping alpha, or grayscale by expanding)
+    let rgb_data = match info.color_type {
+        png::ColorType::Rgba => {
+            // Strip alpha channel
+            buf.chunks(4)
+                .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                .collect::<Vec<u8>>()
+        }
+        png::ColorType::Rgb => buf[..info.buffer_size()].to_vec(),
+        png::ColorType::GrayscaleAlpha => {
+            // Convert to RGB
+            buf.chunks(2)
+                .flat_map(|chunk| [chunk[0], chunk[0], chunk[0]])
+                .collect::<Vec<u8>>()
+        }
+        png::ColorType::Grayscale => {
+            // Expand to RGB
+            buf[..info.buffer_size()]
+                .iter()
+                .flat_map(|&g| [g, g, g])
+                .collect::<Vec<u8>>()
+        }
+        png::ColorType::Indexed => {
+            // For indexed, we'd need to use the palette - fall back to default handling
+            buf[..info.buffer_size()].to_vec()
+        }
+    };
+
+    // Compress with zlib/deflate
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(&rgb_data)
+        .map_err(|e| PdfJoinError::OperationError(format!("Failed to compress image: {}", e)))?;
+    let compressed = encoder.finish().map_err(|e| {
+        PdfJoinError::OperationError(format!("Failed to finish compression: {}", e))
+    })?;
+
+    let mut img_dict = Dictionary::new();
+    img_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    img_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+    img_dict.set("Width", Object::Integer(width));
+    img_dict.set("Height", Object::Integer(height));
+    img_dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+    img_dict.set("BitsPerComponent", Object::Integer(8));
+    img_dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+
+    let img_stream = lopdf::Stream::new(img_dict, compressed);
+    let img_id = doc.add_object(Object::Stream(img_stream));
+
+    Ok((img_id, width, height))
+}
+
+/// Parse JPEG dimensions from the SOF0 marker
+fn parse_jpeg_dimensions(data: &[u8]) -> Option<(i64, i64)> {
+    // Look for SOF0 marker (0xFF 0xC0) which contains dimensions
+    let mut i = 0;
+    while i < data.len() - 1 {
+        if data[i] == 0xFF {
+            let marker = data[i + 1];
+            if marker == 0xC0 || marker == 0xC2 {
+                // SOF0 or SOF2
+                if i + 9 < data.len() {
+                    let height = ((data[i + 5] as i64) << 8) | (data[i + 6] as i64);
+                    let width = ((data[i + 7] as i64) << 8) | (data[i + 8] as i64);
+                    return Some((width, height));
+                }
+            }
+            // Skip marker
+            if marker >= 0xC0
+                && marker != 0xD8
+                && marker != 0xD9
+                && marker != 0x01
+                && i + 3 < data.len()
+            {
+                let len = ((data[i + 2] as usize) << 8) | (data[i + 3] as usize);
+                i += len + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn add_annotation_to_page(
@@ -2993,6 +3253,7 @@ mod tests {
                 EditOperation::AddCheckbox { .. } => "AddCheckbox",
                 EditOperation::AddUnderline { .. } => "AddUnderline",
                 EditOperation::ReplaceText { .. } => "ReplaceText",
+                EditOperation::AddImage { .. } => "AddImage",
             };
             eprintln!("  Op {}: {}", i, op_type);
         }

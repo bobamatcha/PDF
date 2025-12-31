@@ -35,6 +35,9 @@ pub mod rules;
 pub mod states;
 
 pub use jurisdiction::{Jurisdiction, Locality, State, Tier};
+pub use states::florida_contractor::{
+    check_florida_contractor_compliance, covered_contractor_statutes, ContractorDocumentType,
+};
 pub use states::florida_realestate::{
     check_florida_realestate_compliance, covered_realestate_statutes, RealEstateDocumentType,
 };
@@ -42,17 +45,183 @@ pub use states::florida_realestate::{
 use shared_types::{ComplianceReport, LeaseDocument, Violation};
 
 /// Document type for compliance checking
+///
+/// Hierarchical organization:
+/// - Florida::Lease::{Agreement, TerminationNotice, Eviction}
+/// - Florida::Purchase::{Contract, Contingencies::*, Addendum::*}
+/// - Florida::Listing::{Exclusive}
+/// - Florida::Contractor::{Invoice, CostOfMaterialsBill, NoticeOfCommencement, NoticeToOwner, ClaimOfLien, ReleaseOfLien, DisputeLien, FraudulentLienReport}
+/// - Florida::BillOfSale::{Car, Boat, Trailer, JetSki, MobileHome} (Phase 1.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DocumentType {
+    // ========================================================================
+    // Lease Documents (Chapter 83)
+    // ========================================================================
     /// Residential lease agreement
     #[default]
     Lease,
+    /// Lease termination notice (§ 83.56, § 83.57)
+    LeaseTerminationNotice,
+    /// Eviction notice (§ 83.56, § 83.59)
+    EvictionNotice,
+
+    // ========================================================================
+    // Real Estate Purchase Documents (Chapter 475, 689)
+    // ========================================================================
     /// Real estate purchase contract
     RealEstatePurchase,
+    /// Purchase contract - As-Is version
+    RealEstatePurchaseAsIs,
+    /// Inspection contingency addendum
+    InspectionContingency,
+    /// Financing contingency addendum
+    FinancingContingency,
     /// Escalation addendum
     EscalationAddendum,
-    /// Listing agreement
+    /// Appraisal contingency addendum
+    AppraisalContingency,
+
+    // ========================================================================
+    // Listing Documents (Chapter 475)
+    // ========================================================================
+    /// Exclusive listing agreement
     ListingAgreement,
+
+    // ========================================================================
+    // Contractor Documents (Chapter 713)
+    // ========================================================================
+    /// Contractor invoice
+    ContractorInvoice,
+    /// Cost of materials bill
+    CostOfMaterialsBill,
+    /// Notice of Commencement (§ 713.13)
+    NoticeOfCommencement,
+    /// Notice to Owner / Preliminary Notice (§ 713.06)
+    NoticeToOwner,
+    /// Claim of Lien (§ 713.08)
+    ClaimOfLien,
+    /// Release of Lien (§ 713.21)
+    ReleaseOfLien,
+    /// Dispute of Lien (§ 713.22)
+    DisputeLien,
+    /// Fraudulent Lien Report (§ 713.31)
+    FraudulentLienReport,
+    /// Final Payment Affidavit (§ 713.06)
+    FinalPaymentAffidavit,
+
+    // ========================================================================
+    // Bill of Sale Documents (Chapter 319) - Phase 1.1
+    // ========================================================================
+    /// Bill of Sale - Car
+    BillOfSaleCar,
+    /// Bill of Sale - Boat
+    BillOfSaleBoat,
+    /// Bill of Sale - Trailer
+    BillOfSaleTrailer,
+    /// Bill of Sale - Jet Ski / Personal Watercraft
+    BillOfSaleJetSki,
+    /// Bill of Sale - Mobile Home
+    BillOfSaleMobileHome,
+
+    // ========================================================================
+    // Unknown / Other
+    // ========================================================================
+    /// Unknown document type (will attempt auto-detection)
+    Unknown,
+}
+
+impl DocumentType {
+    /// Get the category of the document type
+    pub fn category(&self) -> DocumentCategory {
+        match self {
+            DocumentType::Lease
+            | DocumentType::LeaseTerminationNotice
+            | DocumentType::EvictionNotice => DocumentCategory::Lease,
+
+            DocumentType::RealEstatePurchase
+            | DocumentType::RealEstatePurchaseAsIs
+            | DocumentType::InspectionContingency
+            | DocumentType::FinancingContingency
+            | DocumentType::EscalationAddendum
+            | DocumentType::AppraisalContingency => DocumentCategory::Purchase,
+
+            DocumentType::ListingAgreement => DocumentCategory::Listing,
+
+            DocumentType::ContractorInvoice
+            | DocumentType::CostOfMaterialsBill
+            | DocumentType::NoticeOfCommencement
+            | DocumentType::NoticeToOwner
+            | DocumentType::ClaimOfLien
+            | DocumentType::ReleaseOfLien
+            | DocumentType::DisputeLien
+            | DocumentType::FraudulentLienReport
+            | DocumentType::FinalPaymentAffidavit => DocumentCategory::Contractor,
+
+            DocumentType::BillOfSaleCar
+            | DocumentType::BillOfSaleBoat
+            | DocumentType::BillOfSaleTrailer
+            | DocumentType::BillOfSaleJetSki
+            | DocumentType::BillOfSaleMobileHome => DocumentCategory::BillOfSale,
+
+            DocumentType::Unknown => DocumentCategory::Unknown,
+        }
+    }
+
+    /// Get all document types for a category
+    pub fn types_for_category(category: DocumentCategory) -> Vec<DocumentType> {
+        match category {
+            DocumentCategory::Lease => vec![
+                DocumentType::Lease,
+                DocumentType::LeaseTerminationNotice,
+                DocumentType::EvictionNotice,
+            ],
+            DocumentCategory::Purchase => vec![
+                DocumentType::RealEstatePurchase,
+                DocumentType::RealEstatePurchaseAsIs,
+                DocumentType::InspectionContingency,
+                DocumentType::FinancingContingency,
+                DocumentType::EscalationAddendum,
+                DocumentType::AppraisalContingency,
+            ],
+            DocumentCategory::Listing => vec![DocumentType::ListingAgreement],
+            DocumentCategory::Contractor => vec![
+                DocumentType::ContractorInvoice,
+                DocumentType::CostOfMaterialsBill,
+                DocumentType::NoticeOfCommencement,
+                DocumentType::NoticeToOwner,
+                DocumentType::ClaimOfLien,
+                DocumentType::ReleaseOfLien,
+                DocumentType::DisputeLien,
+                DocumentType::FraudulentLienReport,
+                DocumentType::FinalPaymentAffidavit,
+            ],
+            DocumentCategory::BillOfSale => vec![
+                DocumentType::BillOfSaleCar,
+                DocumentType::BillOfSaleBoat,
+                DocumentType::BillOfSaleTrailer,
+                DocumentType::BillOfSaleJetSki,
+                DocumentType::BillOfSaleMobileHome,
+            ],
+            DocumentCategory::Unknown => vec![DocumentType::Unknown],
+        }
+    }
+}
+
+/// Document category for grouping document types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentCategory {
+    /// Lease documents (Chapter 83)
+    Lease,
+    /// Real estate purchase documents (Chapter 475, 689)
+    Purchase,
+    /// Listing documents (Chapter 475)
+    Listing,
+    /// Contractor/construction lien documents (Chapter 713)
+    Contractor,
+    /// Bill of sale documents (Chapter 319)
+    BillOfSale,
+    /// Unknown category
+    Unknown,
 }
 
 /// Multi-jurisdiction compliance engine
@@ -176,6 +345,8 @@ impl ComplianceEngine {
     }
 
     /// Check real estate compliance on raw text for a specific jurisdiction
+    ///
+    /// Note: For full document type support, use `check_document_text_compliance` instead.
     pub fn check_realestate_text_with_jurisdiction(
         &self,
         jurisdiction: &Jurisdiction,
@@ -183,27 +354,8 @@ impl ComplianceEngine {
         doc_type: DocumentType,
         year_built: Option<u32>,
     ) -> Vec<Violation> {
-        let mut violations = Vec::new();
-
-        // Layer 1: Federal (lead paint for pre-1978)
-        violations.extend(layers::check_federal_compliance(text, year_built));
-
-        // Layer 2: State-specific real estate rules
-        if jurisdiction.state == State::FL {
-            let re_doc_type = match doc_type {
-                DocumentType::RealEstatePurchase => RealEstateDocumentType::PurchaseContract,
-                DocumentType::EscalationAddendum => RealEstateDocumentType::EscalationAddendum,
-                DocumentType::ListingAgreement => RealEstateDocumentType::ListingAgreement,
-                DocumentType::Lease => RealEstateDocumentType::Unknown,
-            };
-            violations.extend(states::florida_realestate::check_document_type(
-                text,
-                re_doc_type,
-            ));
-        }
-        // Other states can be added here as they get real estate implementations
-
-        violations
+        // Route to the new unified compliance checker
+        self.check_document_text_compliance(jurisdiction, text, doc_type, year_built)
     }
 
     /// Auto-detect document type and check appropriate compliance rules
@@ -226,7 +378,117 @@ impl ComplianceEngine {
     pub fn detect_document_type(&self, text: &str) -> DocumentType {
         let text_lower = text.to_lowercase();
 
-        // Check for escalation addendum first (most specific)
+        // ====================================================================
+        // Contractor Documents (Chapter 713) - Most specific first
+        // ====================================================================
+
+        // Notice of Commencement
+        if (text_lower.contains("notice of commencement") || text_lower.contains("713.13"))
+            && (text_lower.contains("owner") || text_lower.contains("property"))
+        {
+            return DocumentType::NoticeOfCommencement;
+        }
+
+        // Notice to Owner / Preliminary Notice
+        if (text_lower.contains("notice to owner")
+            || text_lower.contains("preliminary notice")
+            || text_lower.contains("713.06"))
+            && (text_lower.contains("lien") || text_lower.contains("furnish"))
+        {
+            return DocumentType::NoticeToOwner;
+        }
+
+        // Claim of Lien
+        if (text_lower.contains("claim of lien") || text_lower.contains("713.08"))
+            && (text_lower.contains("amount") || text_lower.contains("owed"))
+        {
+            return DocumentType::ClaimOfLien;
+        }
+
+        // Release of Lien
+        if (text_lower.contains("release of lien")
+            || text_lower.contains("satisfaction of lien")
+            || text_lower.contains("lien waiver")
+            || text_lower.contains("713.21"))
+            && (text_lower.contains("release") || text_lower.contains("waive"))
+        {
+            return DocumentType::ReleaseOfLien;
+        }
+
+        // Dispute of Lien
+        if text_lower.contains("contest of lien")
+            || text_lower.contains("dispute") && text_lower.contains("lien")
+            || text_lower.contains("713.22")
+        {
+            return DocumentType::DisputeLien;
+        }
+
+        // Fraudulent Lien Report
+        if text_lower.contains("fraudulent lien")
+            || text_lower.contains("713.31")
+            || text_lower.contains("false lien")
+        {
+            return DocumentType::FraudulentLienReport;
+        }
+
+        // Final Payment Affidavit
+        if text_lower.contains("final payment")
+            && (text_lower.contains("affidavit") || text_lower.contains("713.06"))
+        {
+            return DocumentType::FinalPaymentAffidavit;
+        }
+
+        // Cost of Materials Bill
+        if (text_lower.contains("materials") || text_lower.contains("supplies"))
+            && (text_lower.contains("bill") || text_lower.contains("cost"))
+            && (text_lower.contains("amount") || text_lower.contains("total"))
+        {
+            return DocumentType::CostOfMaterialsBill;
+        }
+
+        // Contractor Invoice
+        if (text_lower.contains("invoice") || text_lower.contains("billing"))
+            && (text_lower.contains("contractor")
+                || text_lower.contains("services")
+                || text_lower.contains("labor"))
+        {
+            return DocumentType::ContractorInvoice;
+        }
+
+        // ====================================================================
+        // Bill of Sale Documents (Chapter 319)
+        // ====================================================================
+
+        if text_lower.contains("bill of sale") {
+            if text_lower.contains("mobile home") || text_lower.contains("manufactured home") {
+                return DocumentType::BillOfSaleMobileHome;
+            }
+            if text_lower.contains("jet ski")
+                || text_lower.contains("personal watercraft")
+                || text_lower.contains("pwc")
+            {
+                return DocumentType::BillOfSaleJetSki;
+            }
+            if text_lower.contains("boat") || text_lower.contains("vessel") {
+                return DocumentType::BillOfSaleBoat;
+            }
+            if text_lower.contains("trailer") {
+                return DocumentType::BillOfSaleTrailer;
+            }
+            if text_lower.contains("vehicle")
+                || text_lower.contains("automobile")
+                || text_lower.contains("car")
+                || text_lower.contains("vin")
+            {
+                return DocumentType::BillOfSaleCar;
+            }
+        }
+
+        // ====================================================================
+        // Real Estate Purchase Documents (Chapter 475, 689)
+        // ====================================================================
+
+        // Escalation addendum
         if text_lower.contains("escalation")
             && (text_lower.contains("addendum") || text_lower.contains("clause"))
             && text_lower.contains("maximum")
@@ -234,7 +496,32 @@ impl ComplianceEngine {
             return DocumentType::EscalationAddendum;
         }
 
-        // Check for listing agreement
+        // Inspection contingency
+        if text_lower.contains("inspection")
+            && (text_lower.contains("contingency") || text_lower.contains("addendum"))
+            && (text_lower.contains("days") || text_lower.contains("period"))
+        {
+            return DocumentType::InspectionContingency;
+        }
+
+        // Financing contingency
+        if (text_lower.contains("financing") || text_lower.contains("mortgage"))
+            && (text_lower.contains("contingency") || text_lower.contains("addendum"))
+        {
+            return DocumentType::FinancingContingency;
+        }
+
+        // Appraisal contingency
+        if text_lower.contains("appraisal")
+            && (text_lower.contains("contingency") || text_lower.contains("addendum"))
+        {
+            return DocumentType::AppraisalContingency;
+        }
+
+        // ====================================================================
+        // Listing Documents (Chapter 475)
+        // ====================================================================
+
         if (text_lower.contains("listing agreement") || text_lower.contains("exclusive listing"))
             && text_lower.contains("broker")
             && text_lower.contains("commission")
@@ -242,7 +529,19 @@ impl ComplianceEngine {
             return DocumentType::ListingAgreement;
         }
 
-        // Check for purchase contract
+        // ====================================================================
+        // Real Estate Purchase Contracts
+        // ====================================================================
+
+        // As-Is purchase contract
+        if (text_lower.contains("purchase") || text_lower.contains("sale"))
+            && text_lower.contains("as-is")
+            && (text_lower.contains("buyer") || text_lower.contains("seller"))
+        {
+            return DocumentType::RealEstatePurchaseAsIs;
+        }
+
+        // Standard purchase contract
         if (text_lower.contains("purchase") && text_lower.contains("contract"))
             || (text_lower.contains("sale") && text_lower.contains("agreement"))
                 && (text_lower.contains("buyer") || text_lower.contains("seller"))
@@ -251,8 +550,165 @@ impl ComplianceEngine {
             return DocumentType::RealEstatePurchase;
         }
 
-        // Default to lease
-        DocumentType::Lease
+        // ====================================================================
+        // Lease Documents (Chapter 83)
+        // ====================================================================
+
+        // Eviction notice
+        if text_lower.contains("eviction")
+            || (text_lower.contains("unlawful detainer") && text_lower.contains("notice"))
+            || text_lower.contains("83.59")
+        {
+            return DocumentType::EvictionNotice;
+        }
+
+        // Termination notice
+        if text_lower.contains("termination")
+            && text_lower.contains("notice")
+            && (text_lower.contains("lease") || text_lower.contains("tenancy"))
+        {
+            return DocumentType::LeaseTerminationNotice;
+        }
+
+        // Default to lease if it has lease-like characteristics, otherwise unknown
+        if text_lower.contains("lease")
+            || text_lower.contains("tenant")
+            || text_lower.contains("landlord")
+            || text_lower.contains("rent")
+        {
+            return DocumentType::Lease;
+        }
+
+        DocumentType::Unknown
+    }
+
+    /// Check compliance for any Florida document type
+    ///
+    /// This is the unified entry point that routes to the appropriate
+    /// compliance checker based on document type.
+    pub fn check_document_compliance(
+        &self,
+        jurisdiction: &Jurisdiction,
+        document: &LeaseDocument,
+        doc_type: DocumentType,
+        year_built: Option<u32>,
+    ) -> ComplianceReport {
+        let full_text = document.text_content.join("\n");
+        let violations =
+            self.check_document_text_compliance(jurisdiction, &full_text, doc_type, year_built);
+
+        ComplianceReport {
+            document_id: document.id.clone(),
+            violations,
+            checked_at: chrono::Utc::now().timestamp() as u64,
+        }
+    }
+
+    /// Check document compliance on raw text
+    pub fn check_document_text_compliance(
+        &self,
+        jurisdiction: &Jurisdiction,
+        text: &str,
+        doc_type: DocumentType,
+        year_built: Option<u32>,
+    ) -> Vec<Violation> {
+        let mut violations = Vec::new();
+
+        // Layer 1: Federal (applies to most document types)
+        if matches!(
+            doc_type.category(),
+            DocumentCategory::Lease | DocumentCategory::Purchase
+        ) {
+            violations.extend(layers::check_federal_compliance(text, year_built));
+        }
+
+        // Layer 2: Route to appropriate state-specific checker
+        if jurisdiction.state == State::FL {
+            match doc_type.category() {
+                DocumentCategory::Lease => {
+                    violations.extend(states::check_state_compliance(State::FL, text));
+                    violations.extend(layers::check_local_compliance(jurisdiction, text));
+                }
+                DocumentCategory::Purchase => {
+                    let re_doc_type = match doc_type {
+                        DocumentType::RealEstatePurchase | DocumentType::RealEstatePurchaseAsIs => {
+                            RealEstateDocumentType::PurchaseContract
+                        }
+                        DocumentType::EscalationAddendum => {
+                            RealEstateDocumentType::EscalationAddendum
+                        }
+                        DocumentType::InspectionContingency
+                        | DocumentType::FinancingContingency
+                        | DocumentType::AppraisalContingency => {
+                            // Contingencies are checked as part of purchase contract
+                            RealEstateDocumentType::PurchaseContract
+                        }
+                        _ => RealEstateDocumentType::Unknown,
+                    };
+                    violations.extend(states::florida_realestate::check_document_type(
+                        text,
+                        re_doc_type,
+                    ));
+                }
+                DocumentCategory::Listing => {
+                    violations.extend(states::florida_realestate::check_listing_agreement(text));
+                }
+                DocumentCategory::Contractor => {
+                    let contractor_doc_type = match doc_type {
+                        DocumentType::ContractorInvoice => ContractorDocumentType::Invoice,
+                        DocumentType::CostOfMaterialsBill => {
+                            ContractorDocumentType::CostOfMaterialsBill
+                        }
+                        DocumentType::NoticeOfCommencement => {
+                            ContractorDocumentType::NoticeOfCommencement
+                        }
+                        DocumentType::NoticeToOwner => ContractorDocumentType::NoticeToOwner,
+                        DocumentType::ClaimOfLien => ContractorDocumentType::ClaimOfLien,
+                        DocumentType::ReleaseOfLien => ContractorDocumentType::ReleaseOfLien,
+                        DocumentType::DisputeLien => ContractorDocumentType::DisputeLien,
+                        DocumentType::FraudulentLienReport => {
+                            ContractorDocumentType::FraudulentLienReport
+                        }
+                        DocumentType::FinalPaymentAffidavit => {
+                            ContractorDocumentType::FinalPaymentAffidavit
+                        }
+                        _ => ContractorDocumentType::Unknown,
+                    };
+                    violations.extend(states::florida_contractor::check_document_type(
+                        text,
+                        contractor_doc_type,
+                    ));
+                }
+                DocumentCategory::BillOfSale => {
+                    // Bill of Sale compliance (Chapter 319 - Motor Vehicle Titles)
+                    use states::florida_billofsale::{check_bill_of_sale, BillOfSaleType};
+
+                    let bill_of_sale_type = match doc_type {
+                        DocumentType::BillOfSaleCar => BillOfSaleType::Car,
+                        DocumentType::BillOfSaleBoat => BillOfSaleType::Boat,
+                        DocumentType::BillOfSaleTrailer => BillOfSaleType::Trailer,
+                        DocumentType::BillOfSaleJetSki => BillOfSaleType::JetSki,
+                        DocumentType::BillOfSaleMobileHome => BillOfSaleType::MobileHome,
+                        _ => BillOfSaleType::detect(text),
+                    };
+                    violations.extend(check_bill_of_sale(text, bill_of_sale_type));
+                }
+                DocumentCategory::Unknown => {
+                    // Try auto-detection
+                    let detected = self.detect_document_type(text);
+                    if detected != DocumentType::Unknown {
+                        return self.check_document_text_compliance(
+                            jurisdiction,
+                            text,
+                            detected,
+                            year_built,
+                        );
+                    }
+                }
+            }
+        }
+
+        violations
     }
 }
 
@@ -280,6 +736,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "all-states")]
     fn test_texas_jurisdiction_check() {
         let engine = ComplianceEngine::new();
         let jurisdiction = Jurisdiction::new(State::TX);
@@ -341,6 +798,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "all-states")]
     fn test_compliant_texas_lease() {
         let engine = ComplianceEngine::new();
         let jurisdiction = Jurisdiction::new(State::TX);
@@ -365,38 +823,60 @@ mod tests {
         let engine = ComplianceEngine::new();
         let states = engine.supported_states();
 
-        // Tier 1: Big Five + Florida
+        // Florida always supported
         assert!(states.contains(&State::FL));
-        assert!(states.contains(&State::TX));
-        assert!(states.contains(&State::CA));
-        assert!(states.contains(&State::NY));
-        assert!(states.contains(&State::GA));
-        assert!(states.contains(&State::IL));
-        // Tier 2: Growth Hubs
-        assert!(states.contains(&State::PA));
-        assert!(states.contains(&State::NJ));
-        assert!(states.contains(&State::VA));
-        assert!(states.contains(&State::MA));
-        assert!(states.contains(&State::OH));
-        assert!(states.contains(&State::MI));
-        assert!(states.contains(&State::WA));
-        assert!(states.contains(&State::AZ));
-        assert!(states.contains(&State::NC));
-        assert!(states.contains(&State::TN));
-        assert_eq!(states.len(), 16);
+
+        #[cfg(feature = "all-states")]
+        {
+            // Tier 1: Big Five + Florida
+            assert!(states.contains(&State::TX));
+            assert!(states.contains(&State::CA));
+            assert!(states.contains(&State::NY));
+            assert!(states.contains(&State::GA));
+            assert!(states.contains(&State::IL));
+            // Tier 2: Growth Hubs
+            assert!(states.contains(&State::PA));
+            assert!(states.contains(&State::NJ));
+            assert!(states.contains(&State::VA));
+            assert!(states.contains(&State::MA));
+            assert!(states.contains(&State::OH));
+            assert!(states.contains(&State::MI));
+            assert!(states.contains(&State::WA));
+            assert!(states.contains(&State::AZ));
+            assert!(states.contains(&State::NC));
+            assert!(states.contains(&State::TN));
+            assert_eq!(states.len(), 16);
+        }
+
+        #[cfg(not(feature = "all-states"))]
+        {
+            // Florida-only mode
+            assert_eq!(states.len(), 1);
+        }
     }
 
     #[test]
     fn test_covered_statutes() {
         let engine = ComplianceEngine::new();
 
+        // Florida statutes always available
         let fl_statutes = engine.covered_statutes(State::FL);
         assert!(!fl_statutes.is_empty());
         assert!(fl_statutes.iter().any(|s| s.contains("83.47")));
 
-        let tx_statutes = engine.covered_statutes(State::TX);
-        assert!(!tx_statutes.is_empty());
-        assert!(tx_statutes.iter().any(|s| s.contains("92.")));
+        #[cfg(feature = "all-states")]
+        {
+            let tx_statutes = engine.covered_statutes(State::TX);
+            assert!(!tx_statutes.is_empty());
+            assert!(tx_statutes.iter().any(|s| s.contains("92.")));
+        }
+
+        #[cfg(not(feature = "all-states"))]
+        {
+            // Non-Florida states return empty in florida-only mode
+            let tx_statutes = engine.covered_statutes(State::TX);
+            assert!(tx_statutes.is_empty());
+        }
     }
 
     #[test]
@@ -431,6 +911,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[cfg(feature = "all-states")]
     fn test_chicago_rlto_applies_via_zip_not_text() {
         // BUG TEST: When user provides Chicago ZIP but lease text doesn't mention Chicago,
         // RLTO requirements should still apply based on the jurisdiction locality.
@@ -457,6 +938,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "all-states")]
     fn test_nyc_rent_rules_apply_via_zip_not_text() {
         // BUG TEST: When user provides NYC ZIP but lease text doesn't mention NYC,
         // NYC-specific rules should still apply.

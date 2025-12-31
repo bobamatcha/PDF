@@ -227,7 +227,44 @@ pub struct ComplianceRequest {
     /// ZIP code for locality-specific rules
     pub zip_code: Option<String>,
 
-    /// Document type: "lease", "purchase", "listing"
+    /// Document type - supports all Florida document categories:
+    ///
+    /// **Lease Documents (Chapter 83):**
+    /// - `lease` - Residential lease agreement (default)
+    /// - `lease_termination` - Lease termination notice
+    /// - `eviction` - Eviction notice
+    ///
+    /// **Real Estate Purchase (Chapter 475, 689):**
+    /// - `purchase` - Real estate purchase contract
+    /// - `purchase_as_is` - As-Is purchase contract
+    /// - `inspection_contingency` - Inspection contingency addendum
+    /// - `financing_contingency` - Financing contingency addendum
+    /// - `escalation` - Escalation addendum
+    /// - `appraisal_contingency` - Appraisal contingency addendum
+    ///
+    /// **Listing Documents (Chapter 475):**
+    /// - `listing` - Exclusive listing agreement
+    ///
+    /// **Contractor Documents (Chapter 713):**
+    /// - `contractor_invoice` - Contractor invoice
+    /// - `cost_of_materials` - Cost of materials bill
+    /// - `notice_of_commencement` - Notice of Commencement (§ 713.13)
+    /// - `notice_to_owner` - Notice to Owner (§ 713.06)
+    /// - `claim_of_lien` - Claim of Lien (§ 713.08)
+    /// - `release_of_lien` - Release of Lien (§ 713.21)
+    /// - `dispute_lien` - Dispute of Lien (§ 713.22)
+    /// - `fraudulent_lien` - Fraudulent Lien Report (§ 713.31)
+    /// - `final_payment_affidavit` - Final Payment Affidavit
+    ///
+    /// **Bill of Sale (Chapter 319) - Phase 1.1:**
+    /// - `bill_of_sale_car` - Bill of Sale for car
+    /// - `bill_of_sale_boat` - Bill of Sale for boat
+    /// - `bill_of_sale_trailer` - Bill of Sale for trailer
+    /// - `bill_of_sale_jetski` - Bill of Sale for jet ski
+    /// - `bill_of_sale_mobile_home` - Bill of Sale for mobile home
+    ///
+    /// **Auto-detect:**
+    /// - `auto` - Automatically detect document type
     #[serde(default = "default_doc_type")]
     pub document_type: String,
 }
@@ -238,6 +275,183 @@ fn default_state() -> String {
 
 fn default_doc_type() -> String {
     "lease".to_string()
+}
+
+/// Supported document types response
+#[derive(Serialize)]
+pub struct DocumentTypesResponse {
+    pub success: bool,
+    pub categories: Vec<DocumentCategoryInfo>,
+    pub total_types: usize,
+}
+
+/// Document category information
+#[derive(Serialize)]
+pub struct DocumentCategoryInfo {
+    pub category: String,
+    pub chapter: String,
+    pub types: Vec<DocumentTypeInfo>,
+}
+
+/// Document type information
+#[derive(Serialize)]
+pub struct DocumentTypeInfo {
+    pub api_value: String,
+    pub name: String,
+    pub description: String,
+    pub statutes: Vec<String>,
+}
+
+/// Handler: GET /api/document-types
+pub async fn handle_list_document_types() -> Json<DocumentTypesResponse> {
+    let categories = vec![
+        DocumentCategoryInfo {
+            category: "Lease".to_string(),
+            chapter: "Chapter 83".to_string(),
+            types: vec![
+                DocumentTypeInfo {
+                    api_value: "lease".to_string(),
+                    name: "Residential Lease Agreement".to_string(),
+                    description: "Standard residential lease agreement".to_string(),
+                    statutes: vec![
+                        "§ 83.47 - Prohibited provisions".to_string(),
+                        "§ 83.48 - Attorney fees".to_string(),
+                        "§ 83.49 - Security deposits".to_string(),
+                    ],
+                },
+                DocumentTypeInfo {
+                    api_value: "lease_termination".to_string(),
+                    name: "Lease Termination Notice".to_string(),
+                    description: "Notice to terminate tenancy".to_string(),
+                    statutes: vec![
+                        "§ 83.56 - Termination".to_string(),
+                        "§ 83.57 - Month-to-month".to_string(),
+                    ],
+                },
+                DocumentTypeInfo {
+                    api_value: "eviction".to_string(),
+                    name: "Eviction Notice".to_string(),
+                    description: "Notice of eviction proceedings".to_string(),
+                    statutes: vec!["§ 83.59 - Right of action".to_string()],
+                },
+            ],
+        },
+        DocumentCategoryInfo {
+            category: "Real Estate Purchase".to_string(),
+            chapter: "Chapter 475, 689".to_string(),
+            types: vec![
+                DocumentTypeInfo {
+                    api_value: "purchase".to_string(),
+                    name: "Purchase Contract".to_string(),
+                    description: "Standard residential purchase contract".to_string(),
+                    statutes: vec![
+                        "§ 404.056 - Radon disclosure".to_string(),
+                        "§ 689.261 - Property tax disclosure".to_string(),
+                        "§ 689.302 - Flood disclosure".to_string(),
+                    ],
+                },
+                DocumentTypeInfo {
+                    api_value: "purchase_as_is".to_string(),
+                    name: "As-Is Purchase Contract".to_string(),
+                    description: "Purchase contract with as-is provisions".to_string(),
+                    statutes: vec!["Same as purchase contract".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "escalation".to_string(),
+                    name: "Escalation Addendum".to_string(),
+                    description: "Price escalation clause addendum".to_string(),
+                    statutes: vec!["Escalation clause best practices".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "inspection_contingency".to_string(),
+                    name: "Inspection Contingency".to_string(),
+                    description: "Home inspection contingency addendum".to_string(),
+                    statutes: vec![],
+                },
+                DocumentTypeInfo {
+                    api_value: "financing_contingency".to_string(),
+                    name: "Financing Contingency".to_string(),
+                    description: "Mortgage financing contingency addendum".to_string(),
+                    statutes: vec![],
+                },
+            ],
+        },
+        DocumentCategoryInfo {
+            category: "Listing".to_string(),
+            chapter: "Chapter 475".to_string(),
+            types: vec![DocumentTypeInfo {
+                api_value: "listing".to_string(),
+                name: "Exclusive Listing Agreement".to_string(),
+                description: "Exclusive right to sell listing agreement".to_string(),
+                statutes: vec![
+                    "§ 475.278 - Brokerage relationship".to_string(),
+                    "§ 475.25 - Expiration date".to_string(),
+                ],
+            }],
+        },
+        DocumentCategoryInfo {
+            category: "Contractor".to_string(),
+            chapter: "Chapter 713".to_string(),
+            types: vec![
+                DocumentTypeInfo {
+                    api_value: "notice_of_commencement".to_string(),
+                    name: "Notice of Commencement".to_string(),
+                    description: "Notice recorded before construction begins".to_string(),
+                    statutes: vec!["§ 713.13 - Notice of Commencement".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "notice_to_owner".to_string(),
+                    name: "Notice to Owner".to_string(),
+                    description: "Preliminary notice to preserve lien rights".to_string(),
+                    statutes: vec!["§ 713.06 - Notice to Owner".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "claim_of_lien".to_string(),
+                    name: "Claim of Lien".to_string(),
+                    description: "Construction lien claim".to_string(),
+                    statutes: vec!["§ 713.08 - Claim of Lien".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "release_of_lien".to_string(),
+                    name: "Release of Lien".to_string(),
+                    description: "Lien release/satisfaction".to_string(),
+                    statutes: vec!["§ 713.21 - Release of Lien".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "dispute_lien".to_string(),
+                    name: "Dispute of Lien".to_string(),
+                    description: "Contest of lien filing".to_string(),
+                    statutes: vec!["§ 713.22 - Contest of Lien".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "fraudulent_lien".to_string(),
+                    name: "Fraudulent Lien Report".to_string(),
+                    description: "Report of allegedly fraudulent lien".to_string(),
+                    statutes: vec!["§ 713.31 - Fraudulent Liens".to_string()],
+                },
+                DocumentTypeInfo {
+                    api_value: "contractor_invoice".to_string(),
+                    name: "Contractor Invoice".to_string(),
+                    description: "Invoice for contractor services".to_string(),
+                    statutes: vec![],
+                },
+                DocumentTypeInfo {
+                    api_value: "cost_of_materials".to_string(),
+                    name: "Cost of Materials Bill".to_string(),
+                    description: "Bill for construction materials".to_string(),
+                    statutes: vec![],
+                },
+            ],
+        },
+    ];
+
+    let total_types = categories.iter().map(|c| c.types.len()).sum();
+
+    Json(DocumentTypesResponse {
+        success: true,
+        categories,
+        total_types,
+    })
 }
 
 /// Compliance check response
@@ -280,40 +494,24 @@ pub async fn handle_check_compliance(
         Jurisdiction::new(state)
     };
 
-    // Use compliance-engine to check document
-    let violations = match req.document_type.as_str() {
-        "lease" => engine.check_text_with_jurisdiction(&jurisdiction, &req.text, req.year_built),
-        "purchase" => engine.check_realestate_text_with_jurisdiction(
-            &jurisdiction,
-            &req.text,
-            CEDocType::RealEstatePurchase,
-            req.year_built,
-        ),
-        "listing" => engine.check_realestate_text_with_jurisdiction(
-            &jurisdiction,
-            &req.text,
-            CEDocType::ListingAgreement,
-            req.year_built,
-        ),
-        "auto" => {
-            // Auto-detect document type
-            let doc = LeaseDocument {
-                id: "api-check".to_string(),
-                filename: "uploaded.pdf".to_string(),
-                pages: 1,
-                text_content: vec![req.text.clone()],
-                created_at: 0,
-            };
-            engine
-                .check_auto_detect(&jurisdiction, &doc, req.year_built)
-                .violations
-        }
-        other => {
-            return Err(ServerError::InvalidRequest(format!(
-                "Unknown document type '{}'. Must be 'lease', 'purchase', 'listing', or 'auto'",
-                other
-            )));
-        }
+    // Parse document type
+    let doc_type = parse_document_type(&req.document_type)?;
+
+    // Use the unified compliance checker
+    let violations = if doc_type == CEDocType::Unknown {
+        // Auto-detect mode
+        let doc = LeaseDocument {
+            id: "api-check".to_string(),
+            filename: "uploaded.pdf".to_string(),
+            pages: 1,
+            text_content: vec![req.text.clone()],
+            created_at: 0,
+        };
+        engine
+            .check_auto_detect(&jurisdiction, &doc, req.year_built)
+            .violations
+    } else {
+        engine.check_document_text_compliance(&jurisdiction, &req.text, doc_type, req.year_built)
     };
 
     let violation_infos: Vec<ViolationInfo> = violations
@@ -335,6 +533,53 @@ pub async fn handle_check_compliance(
         violations: violation_infos,
         violation_count: count,
     }))
+}
+
+/// Parse document type string into DocumentType enum
+fn parse_document_type(doc_type: &str) -> Result<CEDocType, ServerError> {
+    match doc_type.to_lowercase().as_str() {
+        // Lease Documents (Chapter 83)
+        "lease" => Ok(CEDocType::Lease),
+        "lease_termination" => Ok(CEDocType::LeaseTerminationNotice),
+        "eviction" => Ok(CEDocType::EvictionNotice),
+
+        // Real Estate Purchase (Chapter 475, 689)
+        "purchase" => Ok(CEDocType::RealEstatePurchase),
+        "purchase_as_is" => Ok(CEDocType::RealEstatePurchaseAsIs),
+        "inspection_contingency" => Ok(CEDocType::InspectionContingency),
+        "financing_contingency" => Ok(CEDocType::FinancingContingency),
+        "escalation" => Ok(CEDocType::EscalationAddendum),
+        "appraisal_contingency" => Ok(CEDocType::AppraisalContingency),
+
+        // Listing Documents (Chapter 475)
+        "listing" => Ok(CEDocType::ListingAgreement),
+
+        // Contractor Documents (Chapter 713)
+        "contractor_invoice" => Ok(CEDocType::ContractorInvoice),
+        "cost_of_materials" => Ok(CEDocType::CostOfMaterialsBill),
+        "notice_of_commencement" => Ok(CEDocType::NoticeOfCommencement),
+        "notice_to_owner" => Ok(CEDocType::NoticeToOwner),
+        "claim_of_lien" => Ok(CEDocType::ClaimOfLien),
+        "release_of_lien" => Ok(CEDocType::ReleaseOfLien),
+        "dispute_lien" => Ok(CEDocType::DisputeLien),
+        "fraudulent_lien" => Ok(CEDocType::FraudulentLienReport),
+        "final_payment_affidavit" => Ok(CEDocType::FinalPaymentAffidavit),
+
+        // Bill of Sale (Chapter 319) - Phase 1.1
+        "bill_of_sale_car" => Ok(CEDocType::BillOfSaleCar),
+        "bill_of_sale_boat" => Ok(CEDocType::BillOfSaleBoat),
+        "bill_of_sale_trailer" => Ok(CEDocType::BillOfSaleTrailer),
+        "bill_of_sale_jetski" => Ok(CEDocType::BillOfSaleJetSki),
+        "bill_of_sale_mobile_home" => Ok(CEDocType::BillOfSaleMobileHome),
+
+        // Auto-detect
+        "auto" => Ok(CEDocType::Unknown),
+
+        other => Err(ServerError::InvalidRequest(format!(
+            "Unknown document type '{}'. Use GET /api/document-types for list of supported types.",
+            other
+        ))),
+    }
 }
 
 /// Parse state code string into State enum

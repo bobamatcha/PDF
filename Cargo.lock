@@ -73,6 +73,7 @@ dependencies = [
  "lopdf 0.33.0",
  "pdf-extract",
  "pdf_oxide",
+ "pdfjoin-core",
  "proptest",
  "serde",
  "serde-wasm-bindgen",
@@ -2958,7 +2959,10 @@ dependencies = [
 name = "pdfjoin-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "flate2",
  "lopdf 0.33.0",
+ "png 0.17.16",
  "pretty_assertions",
  "proptest",
  "regex",

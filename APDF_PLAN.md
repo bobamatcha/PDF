@@ -1,772 +1,700 @@
 # agentPDF Strategic Plan
 
-> Comprehensive Architecture and Roadmap for Florida Real Estate Contract Generation Platform
+> Florida-First Document Generation & Compliance Platform
 
-**Document Version**: 1.1
-**Last Updated**: December 30, 2025
-**Status**: Active Development
+**Document Version**: 3.1
+**Last Updated**: December 31, 2025
+**Status**: Active Development - Florida MVP
 
 ---
 
-## Implementation Progress
+## Scope Philosophy
+
+**Perfect for Florida first, then expand.**
+
+This plan focuses exclusively on Florida documents until the platform is production-ready. Multi-state support (TX, CA, NY, etc.) is archived for future phases but deliberately excluded from MVP to ensure quality.
+
+### Core Principles
+
+1. **Florida Excellence** - Every Florida document type must be legally compliant and user-tested before expanding scope
+2. **Scrivener Standard** - Present options, never recommend (see Part IV)
+3. **Self-Contained Experience** - Template completion engine embedded directly; NO external redirects
+4. **Template Strategy** - Server-side Typst rendering + client-side form completion
+5. **No Contract Drafting** - Users complete templates, not write contracts (prevents UPL concerns)
+
+---
+
+## Part I: Document Type Hierarchy
+
+### Phase 1.0 - Core Florida Documents
+
+```
+Florida::
+├── Lease::
+│   ├── Agreement              # Ch. 83 Part II residential lease
+│   ├── TerminationNotice      # 7/15/30-day notices (83.57)
+│   └── Eviction               # 3-day notice, eviction complaint
+│
+├── Purchase::
+│   ├── Contract               # Standard + As-Is variants
+│   ├── OptionalContingencies::
+│   │   ├── Inspection         # Inspection period addendum
+│   │   └── Financing          # Mortgage contingency
+│   └── Addendum::
+│       └── Escalation         # Escalation clause addendum
+│
+├── Listing::
+│   └── Exclusive              # Exclusive right to sell (Ch. 475)
+│
+└── Contractor::
+    ├── Invoice                # Standard contractor invoice
+    ├── CostOfMaterialsBill    # Materials cost breakdown
+    ├── NoticeOfCommencement   # Ch. 713.13 - starts lien period
+    ├── NoticeOfLien           # Ch. 713 - notice to owner
+    ├── DisputeLien            # Contest/dispute filed lien
+    └── FraudulentLienReporting # Report fraudulent lien filing
+```
+
+### Phase 1.1 - Bill of Sale (High-Volume Florida Transactions)
+
+```
+Florida::
+└── BillOfSale::
+    ├── Car                    # Motor vehicle (HSMV 82050)
+    ├── Boat                   # Vessel (HSMV 87002)
+    ├── Trailer                # Trailer title transfer
+    ├── JetSki                 # PWC/watercraft
+    └── MobileHome             # Mobile home (Ch. 319)
+```
+
+---
+
+## Part II: Architecture Decision - Template Generation Strategy
+
+### 2.1 The WASM Size Question
+
+**Problem**: Full typst-engine WASM bundle is ~75MB (8.3MB brotli). This is too large for web delivery.
+
+**Two Approaches**:
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **A: Server-side Typst** | Small frontend (<500KB), fast renders (~100ms), caching | Requires server, ~$0.001/doc |
+| **B: Pre-generated PDFs** | Zero server cost, works offline, users familiar with PDF editing | Less flexible, harder to update |
+
+### 2.2 Template Completion Engine (Self-Contained)
+
+```
+Template Completion Flow
+========================
+
+1. TYPST SERVER (agentpdf-server)
+   └─ Generates base PDF from template + user inputs
+   └─ Returns PDF ready for field placement
+
+2. TEMPLATE COMPLETION ENGINE (in agentpdf-web)
+   └─ Self-contained, NOT a redirect to pdfjoin
+   └─ LIMITED field types (prevents contract drafting):
+
+   ALLOWED FIELDS:
+   ┌────────────────────────────────────────────────┐
+   │ 📝 Text Field    - Fill in blanks (names, $)  │
+   │ ✍️  Signature     - Mark where to sign         │
+   │ 🔤 Initials      - Contract revision marks    │
+   │ ☑️  Checkbox      - Yes/No selections          │
+   │ 📅 Date Field    - Auto-format date entry     │
+   └────────────────────────────────────────────────┘
+
+   ALLOWED OPERATIONS:
+   ┌────────────────────────────────────────────────┐
+   │ ✂️  Split Pages   - Extract specific pages     │
+   │ 📎 Merge PDFs    - Combine with another doc   │
+   │ 🔡 Font Controls - Size, type, bold/italic    │
+   │ 👁️  Visual Preview - See document as you work │
+   └────────────────────────────────────────────────┘
+
+   EXPLICITLY NOT ALLOWED (prevents UPL):
+   ┌────────────────────────────────────────────────┐
+   │ ❌ Free-form text editing on existing content │
+   │ ❌ Whiteout/blackout tools (could hide terms) │
+   │ ❌ Text replacement (could alter clauses)     │
+   │ ❌ Adding paragraphs/sections                 │
+   └────────────────────────────────────────────────┘
+
+3. SIGNATURE COLLECTION (in agentpdf-web)
+   └─ Signature placement and collection
+   └─ Same interface, no redirect
+```
+
+**Key Insight**: This is a "form filler" not a "document editor". Users can complete pre-generated templates but cannot draft their own contract language.
+
+### 2.3 Size Benchmarking Results
+
+**Benchmark Date**: December 30, 2025
+
+| Component | Raw Size | Gzipped | Notes |
+|-----------|----------|---------|-------|
+| pdfjoin-wasm | 759 KB | 260 KB | PDF editing - acceptable |
+| typst-engine | **N/A** | **N/A** | **Cannot compile to WASM** |
+
+**typst-engine WASM Status**: BLOCKED
+- Dependency `mio` does not support `wasm32-unknown-unknown` target
+- 49 compilation errors related to network/IO primitives
+- Server-side rendering is **required** - no client-side option
+
+**Decision**: Server-side Typst rendering confirmed as only viable approach.
+
+```
+Architecture (Confirmed)
+========================
+
+1. agentpdf-server (Rust/Axum)
+   └─ Runs typst-engine natively
+   └─ Renders PDF from template + inputs
+   └─ ~100ms render time
+
+2. agentpdf-web (React + pdfjoin-wasm)
+   └─ 260KB gzipped WASM bundle (acceptable)
+   └─ Embedded PDF editing
+   └─ Embedded signature collection
+```
+
+---
+
+## Part III: Implementation Progress
 
 ### Overall Status
 
 | Phase | Name | Status | Progress |
 |-------|------|--------|----------|
-| 0 | Infrastructure | COMPLETE | 5/7 tasks |
-| 1 | Slim Frontend | NOT STARTED | 0/4 tasks |
-| 2 | Residential Lease MVP | NOT STARTED | 0/5 tasks |
-| 3 | Desktop App (Tauri) | NOT STARTED | 0/5 tasks |
-| 4 | Purchase Contracts | NOT STARTED | 0/4 tasks |
-| 5 | Listing Agreements | NOT STARTED | 0/4 tasks |
+| 0 | Infrastructure | ✅ COMPLETE | 7/7 tasks |
+| 1.0 | Florida Core Documents | ✅ COMPLETE | 24 templates |
+| 1.1 | Bill of Sale | ✅ COMPLETE | 5/5 types + Ch. 319 compliance |
+| 2 | Compliance Validation | ✅ COMPLETE | 4/4 tasks (incl. Ch. 319) |
+| 3 | Template Completion Engine | ✅ COMPLETE | 5/5 features |
+| 4 | Browser Test Coverage | 🚧 IN PROGRESS | 4 regression tests |
 
-### Phase 0: Infrastructure - COMPLETE
+### Phase 0: Infrastructure (7/7 Complete)
 
 | Task | Status | Notes |
 |------|--------|-------|
 | Create agentpdf-server with Axum | DONE | `apps/agentpdf-server/` |
-| Define API endpoints for typst-engine | DONE | `/api/render`, `/api/templates`, `/api/compliance` |
-| Add property tests for rendering API | DONE | 15 tests passing (proptest + regression) |
-| Configure rate limiting with tower-governor | DONE | Configurable per-IP limiting |
-| Integrate compliance-engine | DONE | 16-state support, locality detection |
-| Add authentication middleware | PENDING | JWT/API key auth planned |
-| CI/CD for server deployment | PENDING | |
+| Define API endpoints | DONE | `/api/render`, `/api/templates`, `/api/compliance`, `/api/document-types` |
+| Add comprehensive test suite | DONE | **40 tests** (proptest + HTTP + regression) |
+| Configure rate limiting | DONE | tower-governor, per-IP |
+| Integrate compliance-engine | DONE | Florida-focused, all document types |
+| Expand DocumentType enum | DONE | **26 document types** across 5 categories |
+| Feature flags for FL-only mode | DONE | `florida-only` / `all-states` features |
 
-### Server Implementation Summary
+### Phase 1.0: Florida Core Documents ✅ TEMPLATES COMPLETE
 
-The `agentpdf-server` is now operational with:
+| Category | Documents | Status | Statute |
+|----------|-----------|--------|---------|
+| Lease | Agreement, Termination, Eviction | ✅ COMPLETE | Ch. 83 |
+| Purchase | Contract, Contingencies, Escalation | ✅ COMPLETE | Ch. 689, 718, 720 |
+| Listing | Exclusive | ✅ COMPLETE | Ch. 475 |
+| Contractor | Invoice, NOC, Lien notices | ✅ COMPLETE | Ch. 713 |
 
-```
-apps/agentpdf-server/
-├── Cargo.toml          # Dependencies including tower-governor, axum
-├── src/
-│   ├── main.rs         # CLI + server bootstrap (configurable port, rate limit, timeout)
-│   ├── api.rs          # REST handlers (/health, /templates, /render, /compliance)
-│   ├── error.rs        # Error handling with proper HTTP status codes
-│   └── tests.rs        # 15 property tests + regression tests
-```
+**All Templates** (24 total, registered in typst-engine):
+- `florida_lease.typ` - Residential lease agreement
+- `florida_lease_termination.typ` - 7/15/30-day notices ✅ NEW
+- `florida_eviction_notice.typ` - 3-day, 7-day, 15-day notices ✅ NEW
+- `florida_purchase_contract.typ` - Standard purchase
+- `florida_purchase_as_is.typ` - As-is purchase
+- `florida_inspection_contingency.typ` - Inspection addendum ✅ NEW
+- `florida_financing_contingency.typ` - Financing addendum ✅ NEW
+- `florida_listing_agreement.typ` - Exclusive right to sell
+- `florida_escalation_addendum.typ` - Escalation clause
+- `florida_flood_disclosure.typ` - Flood zone disclosure
+- `florida_notice_of_commencement.typ` - Ch. 713.13 ✅ NEW
+- `florida_notice_to_owner.typ` - Ch. 713.06 ✅ NEW
+- `florida_claim_of_lien.typ` - Ch. 713.08 ✅ NEW
+- `florida_release_of_lien.typ` - Ch. 713.20/21 ✅ NEW
+- `florida_contractor_invoice.typ` - Standard/progress billing ✅ NEW
 
-**API Endpoints:**
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check with version info |
-| `/api/templates` | GET | List all 10 available templates |
-| `/api/render` | POST | Render template to PDF/SVG/PNG |
-| `/api/compliance` | POST | Check document compliance (16 states) |
+### Phase 1.1: Bill of Sale ✅ COMPLETE
 
-**CLI Options:**
-```bash
-cargo run -p agentpdf-server -- \
-  --port 3000 \
-  --host 0.0.0.0 \
-  --rate-limit 10 \
-  --timeout-ms 10000 \
-  --verbose
-```
-
-**Test Coverage (15 tests):**
-- Property tests for template validation (4 tests)
-- Property tests for compliance engine states (3 tests)
-- Regression tests for Florida lease/purchase rendering (2 tests)
-- Regression tests for locality detection - Chicago RLTO, NYC (4 tests)
-- Edge case tests for empty/long text (2 tests)
+| Type | Statute/Form | Status |
+|------|--------------|--------|
+| Car | Ch. 319, HSMV 82050 | ✅ `florida_bill_of_sale_car.typ` |
+| Boat | Ch. 328, HSMV 87002 | ✅ `florida_bill_of_sale_boat.typ` |
+| Trailer | Ch. 319/320 | ✅ `florida_bill_of_sale_trailer.typ` |
+| JetSki | Ch. 328 | ✅ `florida_bill_of_sale_jetski.typ` |
+| MobileHome | Ch. 319/723 | ✅ `florida_bill_of_sale_mobile_home.typ` |
 
 ---
 
-## Executive Summary
+## Part IV: Scrivener Standard (Legal Compliance)
 
-agentPDF.org is a specialized platform for generating legally compliant Florida real estate contracts. This document outlines the strategic architecture, implementation roadmap, and technical decisions for building a production-ready system by Q1 2026.
+### 4.1 The Doctrine
 
-### Core Philosophy: The Scrivener Standard
+agentPDF is a **scrivener** (intelligent typewriter), not a legal advisor.
 
-agentPDF operates under the **Scrivener Doctrine** - functioning as an intelligent typewriter, not a legal counselor. This approach:
+| Allowed | Not Allowed |
+|---------|-------------|
+| "Do you want to include X?" | "We recommend X" |
+| "X is defined as..." | "Based on your situation, you should..." |
+| "Properties built before 1978 require lead paint disclosure" | "You need lead paint disclosure" |
+| Present options with definitions | Apply law to user's specific facts |
 
-- **Presents options** for user selection without recommending specific choices
-- **Derives contracts from statute** (Florida Statutes, case law) rather than copying bar association templates
-- **Validates bar association documents privately** to ensure no critical provisions are missed
-- **Rephrases and relocates** any similar concepts to avoid IP infringement
-
-> **Critical Distinction**: Advisory logic ("Based on your assets, we recommend...") = UPL violation. Scrivener logic ("Do you want to include X? (Definition: X is...)") = Permitted.
-
-### MVP Priority Order
-
-| Priority | Use Case | Target Date | Key Statute |
-|----------|----------|-------------|-------------|
-| **P0** | Florida Residential Leases | Q1 2026 | Chapter 83 Part II |
-| **P1** | Purchase Contracts (As-Is) | Q2 2026 | Chapter 689, 718, 720 |
-| **P2** | Listing Agreements | Q2 2026 | Chapter 475 |
-
----
-
-## Part I: Architecture Decision - The Hybrid Microservices Model
-
-### 1.1 The Problem with Local-First WASM
-
-The current agentpdf-web bundles the full typst-engine into WASM, resulting in:
-
-- **75MB WASM bundle** (8.3MB brotli-compressed)
-- **~650ms render time** per template
-- **Browser constraints** on memory and CPU
-- **No caching** between sessions
-
-While local-first is ideal for offline scenarios, contract generation is fundamentally an **online workflow** where users:
-1. Fill out forms (needs connectivity for autocomplete, validation)
-2. Generate PDFs (can be server-side)
-3. Download for editing (final step before signing)
-
-### 1.2 The Proposed Architecture: Slim Frontend + Proxy Server
+### 4.2 UI Pattern
 
 ```
-Architecture Overview
-=====================
-
-+------------------+      HTTPS       +----------------------+
-|   agentPDF.org   |  <----------->   |   Proxy Server       |
-|   (Slim Frontend)|                  |   (typst-engine)     |
-+------------------+                  +----------------------+
-        |                                     |
-        | Final Edit                          | Render
-        v                                     v
-+------------------+                  +----------------------+
-|   pdfjoin-web    |                  |   Typst Templates    |
-|   Edit Component |                  |   + FL Compliance    |
-+------------------+                  +----------------------+
-```
-
-### 1.3 Component Responsibilities
-
-#### Slim Frontend (agentPDF.org)
-- **Form wizard** for contract configuration
-- **State management** for multi-step workflows
-- **Preview iframe** for rendered PDFs
-- **Download handler** with optional pdfjoin-web edit step
-- **Bundle size target**: <500KB
-
-#### Proxy Server (typst-engine)
-- **Typst rendering** via native Rust (not WASM)
-- **Template caching** and hot-reload
-- **Compliance validation** before render
-- **Rate limiting** and authentication
-- **Horizontal scaling** for high volume
-
-#### pdfjoin-web Integration
-- **Final step only** - after template generation
-- **Edit capabilities**: TextBox, Whiteout, Checkbox, Highlight
-- **Flatten on export** - burns edits into PDF content stream
-- **Optional** - users can download without editing
-
-### 1.4 Benefits of This Architecture
-
-| Aspect | WASM-Only | Hybrid Model |
-|--------|-----------|--------------|
-| Bundle Size | 75MB | <500KB frontend |
-| Render Time | 650ms | ~100ms (server) |
-| Memory | Browser-limited | Server-scaled |
-| Caching | None | Multi-layer |
-| Offline | Full | Download-only |
-| Cost | $0/document | ~$0.001/document |
-
-The trade-off is acceptable because contract generation is not an offline-critical workflow.
-
----
-
-## Part II: Tauri 2.0 Desktop Application
-
-### 2.1 Why Tauri for agentPDF Desktop
-
-[Tauri 2.0](https://v2.tauri.app/) (released October 2024) offers:
-
-- **95% smaller binaries** than Electron (~3MB vs 100MB+)
-- **30-40MB idle memory** vs Electron's 150MB+
-- **Unified desktop + mobile** from single codebase
-- **Rust security** with system WebView integration
-- **Native system access** via permission-gated APIs
-
-### 2.2 Desktop-Specific Advantages
-
-```
-Tauri Desktop Benefits
-======================
-
-+------------------------------------------+
-|  agentPDF Desktop (Tauri 2.0)            |
-+------------------------------------------+
-|  - Local template caching                |
-|  - Offline form completion               |
-|  - Native file system integration        |
-|  - System keychain for credentials       |
-|  - Auto-update via Tauri updater         |
-|  - macOS notarization / Windows signing  |
-+------------------------------------------+
-        |
-        | Shares backend with web
-        v
-+------------------------------------------+
-|  Proxy Server (same as web)              |
-|  - PDF generation                        |
-|  - Compliance checking                   |
-|  - Template updates                      |
-+------------------------------------------+
-```
-
-### 2.3 Tauri Architecture Pattern
-
-Following [Tauri 2.0 best practices](https://v2.tauri.app/concept/architecture/):
-
-```rust
-// Tauri command example for agentPDF
-#[tauri::command]
-async fn generate_contract(
-    config: ContractConfig,
-    state: State<'_, AppState>,
-) -> Result<Vec<u8>, String> {
-    // Option 1: Call remote proxy server
-    let pdf = state.client
-        .post(&state.server_url)
-        .json(&config)
-        .send()
-        .await?
-        .bytes()
-        .await?;
-
-    // Option 2: Local typst-engine (for offline)
-    // let pdf = typst_engine::render(&config)?;
-
-    Ok(pdf.to_vec())
-}
-```
-
-### 2.4 Desktop Roadmap
-
-| Phase | Feature | Implementation |
-|-------|---------|----------------|
-| D1 | Basic shell | Tauri + same React frontend |
-| D2 | Offline forms | Local state persistence |
-| D3 | Local rendering | Embed typst-engine sidecar |
-| D4 | Auto-update | Tauri updater + code signing |
-
----
-
-## Part III: MVP - Florida Residential Leases
-
-### 3.1 Statutory Foundation
-
-Florida residential leases are governed by **Chapter 83, Part II** of the Florida Statutes. The template must enforce:
-
-| Requirement | Statute | Implementation |
-|-------------|---------|----------------|
-| Radon Disclosure | 404.056(5) | Exact statutory text, non-editable |
-| Lead Paint | 42 U.S.C. 4852d | Conditional on Year Built < 1978 |
-| Flood Disclosure | 83.512 / SB 948 | Wizard-driven, Oct 2025 expanded |
-| Security Deposit | 83.49 | Bank details + 30-day notice language |
-| Electronic Notice | HB 615 | Consent checkbox with statutory cite |
-| 30-Day Termination | HB 1417 | Month-to-month notice period |
-| Service Member | 83.682 | 35-mile military base termination |
-| Squatter Removal | HB 621 / SB 1084 | Unauthorized occupant clause |
-
-### 3.2 Template Modules (Scrivener Approach)
-
-Following the scrivener standard, the UI presents options without recommendations:
-
-```
-Form Wizard Structure (Residential Lease)
+Form Wizard Pattern (Scrivener-Compliant)
 =========================================
 
-Step 1: Property Information
-----------------------------
-- Property Type: [ ] Single Family [ ] Condo/Townhome [ ] Apartment
-- Year Built: [____]
-  └─ System note: "Properties built before 1978 require lead paint disclosure"
-- In HOA/Condo Association: [ ] Yes [ ] No
-  └─ If Yes: Attach Association Addendum (720.401)
+GOOD:
+┌─────────────────────────────────────────────┐
+│ Inspection Contingency                       │
+│                                              │
+│ [ ] Include inspection contingency           │
+│                                              │
+│ ℹ️ An inspection contingency allows the      │
+│   buyer to terminate if significant defects  │
+│   are found during the inspection period.    │
+│                                              │
+│ If included, inspection period: [15] days    │
+└─────────────────────────────────────────────┘
 
-Step 2: Flood History (SB 948 Compliant)
-----------------------------------------
-"Has this property experienced flooding during your ownership?"
-  [ ] Yes, the property has flooded
-  [ ] No known flooding events
-  [ ] I don't know / Property recently acquired
-
-"Have you filed any flood-related insurance claims?"
-  [ ] Yes, claims have been filed
-  [ ] No claims filed
-
-"Has this property received FEMA or federal flood assistance?"
-  [ ] Yes, federal assistance received
-  [ ] No federal assistance
-
-→ Generates: Section 83.512 Compliant Flood Disclosure Addendum
-
-Step 3: Notice Preferences (HB 615)
------------------------------------
-"Does tenant consent to receive legal notices via email?"
-  [ ] Yes - Email: [________________]
-      └─ System inserts: "pursuant to Florida Statute 83.56 as amended"
-  [ ] No - Tenant requires postal mail only
-
-Step 4: Security Deposit
-------------------------
-"How will security be handled?"
-  [ ] Traditional security deposit
-      └─ Bank Name: [________________]
-      └─ Account Type: [ ] Interest-bearing [ ] Non-interest
-  [ ] Monthly fee in lieu of deposit (83.491)
-      └─ System inserts: Non-refundable fee language
-
-Step 5: Optional Addenda
-------------------------
-[ ] Liquidated Damages (83.595) - Max 2 months rent
-[ ] Mold Prevention Addendum
-[ ] Pet/ESA Addendum (citing SB 1084)
-[ ] Jury Trial Waiver
+BAD:
+┌─────────────────────────────────────────────┐
+│ We recommend including an inspection         │
+│ contingency to protect yourself.             │  ← UPL VIOLATION
+└─────────────────────────────────────────────┘
 ```
 
-### 3.3 Typst Template Structure
+### 4.3 Required Disclaimers
 
-```typst
-// florida_lease.typ - Module structure
+Every generated document must include:
 
-#let florida_lease(
-  // Property
-  property_address,
-  property_type,
-  year_built,
-  in_association: false,
+```
+DISCLAIMER: This document was prepared using agentPDF.org, a document
+preparation service. No attorney-client relationship is created. This
+is not legal advice. For complex matters, consult a Florida attorney.
+```
 
-  // Parties
-  landlord_name,
-  tenant_name,
+---
 
-  // Terms
-  rent_amount,
-  lease_start,
-  lease_end,
-  security_deposit,
+## Part V: Compliance Validation Engine
 
-  // Compliance flags
-  flood_history: "unknown",
-  flood_claims: false,
-  fema_assistance: false,
-  email_notice_consent: false,
-  tenant_email: none,
+### 5.1 Florida-Only Focus
 
-  // Optional addenda
-  include_liquidated_damages: false,
-  include_mold_addendum: false,
-  include_pet_addendum: false,
-  include_jury_waiver: false,
-) = {
-  // Document generation with conditional sections
+The compliance engine validates uploaded documents against Florida law.
+
+**Current Coverage** (florida.rs + florida_realestate.rs + florida_contractor.rs):
+- Ch. 83 Part II - Residential leases
+- Ch. 689 - Conveyances
+- Ch. 718 - Condominiums
+- Ch. 720 - HOAs
+- Ch. 475 - Real estate brokers
+- **Ch. 713 - Construction liens** (NEW - 9 document types)
+  - § 713.13 - Notice of Commencement
+  - § 713.06 - Notice to Owner
+  - § 713.04 - Lien Rights Disclosure
+  - § 713.08 - Claim of Lien
+  - § 713.21 - Release of Lien
+  - § 713.22 - Contest of Lien
+  - § 713.31 - Fraudulent Liens
+- 42 U.S.C. 4852d - Lead paint (federal)
+- F.S. 404.056 - Radon disclosure
+
+**New Coverage** (Phase 1.1 - COMPLETE):
+- **Ch. 319 - Motor vehicle titles** (`florida_billofsale.rs`)
+  - § 319.22 - Title transfer requirements (VIN, seller/buyer info, signatures)
+  - § 319.23 - Odometer disclosure requirements
+  - § 319.261 - Mobile home title requirements
+  - § 327.02 - Vessel (boat/jet ski) title requirements
+- Bill of Sale type detection (Car, Boat, Trailer, JetSki, MobileHome)
+- 10 unit tests for bill of sale compliance
+
+### 5.2 Validation API
+
+**GET /api/document-types** - List all supported document types
+
+```json
+{
+  "success": true,
+  "categories": [
+    {"category": "Lease", "chapter": "Chapter 83", "types": [...]},
+    {"category": "Real Estate Purchase", "chapter": "Chapter 475, 689", "types": [...]},
+    {"category": "Listing", "chapter": "Chapter 475", "types": [...]},
+    {"category": "Contractor", "chapter": "Chapter 713", "types": [...]}
+  ],
+  "total_types": 20
 }
 ```
 
-### 3.4 Compliance Engine Integration
+**POST /api/compliance** - Check document compliance
 
-The existing `compliance-engine` crate (268 tests) validates contracts:
+```json
+Request:
+{
+  "text": "...",           // Extracted document text
+  "document_type": "lease" | "purchase" | "listing" | "notice_of_commencement" | "claim_of_lien" | ...,
+  "year_built": 1970,      // Optional: for lead paint
+  "state": "FL",           // Always FL for MVP
+  "zip_code": "33101"      // Optional: for local ordinances
+}
 
-```rust
-// Pre-render validation
-pub fn validate_lease_config(config: &LeaseConfig) -> Vec<Violation> {
-    let mut violations = Vec::new();
-
-    // § 83.49 - Security deposit bank required
-    if config.security_deposit.is_some()
-       && config.bank_name.is_none() {
-        violations.push(Violation {
-            rule: "fl-83.49-bank",
-            severity: Critical,
-            message: "Security deposit requires bank disclosure",
-        });
+Response:
+{
+  "success": true,
+  "compliant": false,
+  "violations": [
+    {
+      "statute": "F.S. § 713.13",
+      "message": "Notice of Commencement may be incomplete...",
+      "severity": "Warning",
+      "page": 1,
+      "text_snippet": "..."
     }
-
-    // § 83.512 - Flood disclosure required
-    if config.flood_history == FloodHistory::Unknown
-       && config.effective_date >= date!(2025-10-01) {
-        violations.push(Violation {
-            rule: "fl-83.512-flood",
-            severity: Critical,
-            message: "Flood disclosure required after Oct 1, 2025",
-        });
-    }
-
-    violations
+  ],
+  "violation_count": 1
 }
 ```
 
----
+**Supported Document Types (20 total)**:
+- Lease: `lease`, `lease_termination`, `eviction`
+- Purchase: `purchase`, `purchase_as_is`, `inspection_contingency`, `financing_contingency`, `escalation`, `appraisal_contingency`
+- Listing: `listing`
+- Contractor: `notice_of_commencement`, `notice_to_owner`, `claim_of_lien`, `release_of_lien`, `dispute_lien`, `fraudulent_lien`, `contractor_invoice`, `cost_of_materials`, `final_payment_affidavit`
 
-## Part IV: Phase 2 - Purchase Contracts (As-Is)
+### 5.3 Test Cases Needed
 
-### 4.1 Strategic Approach
-
-Purchase contracts are governed by multiple statutes and common law. The "As-Is" contract form provides buyers with **maximum discretion** (unilateral termination power) during inspection.
-
-Key requirements:
-
-| Requirement | Source | Implementation |
-|-------------|--------|----------------|
-| Property Tax Disclosure | 689.261 | Exact statutory warning |
-| Flood Disclosure | 689.302 | Oct 2024+ expanded requirements |
-| Foreign Ownership | SB 264 | Affidavit for countries of concern |
-| SIRS/Milestone (Condo) | SB 4-D | 718.503 disclosure + 7-day review |
-| Johnson v. Davis | Case Law | Material defect disclosure duty |
-| Radon | 404.056 | Same as lease |
-| Lead Paint | Federal | Same as lease |
-
-### 4.2 As-Is vs Standard Contract Logic
-
-```
-Contract Selection (Scrivener Approach)
-=======================================
-
-"Which contract type do you want to use?"
-
-[ ] As-Is Contract
-    └─ "Buyer has unilateral right to terminate during inspection"
-    └─ "Seller has no obligation to make repairs"
-    └─ "15-day inspection period (negotiable)"
-
-[ ] Standard Contract
-    └─ "Seller obligated to repair defects up to repair limits"
-    └─ "Buyer loses termination right if repairs within limits"
-    └─ "Default repair limits: 1.5% of purchase price per category"
-
-System does NOT recommend - presents factual differences only.
-```
-
-### 4.3 Addenda Modules
-
-```
-Purchase Contract Addenda
-=========================
-
-Mandatory (Auto-Attached):
-- Radon Gas Disclosure
-- Property Tax Disclosure
-- Flood Disclosure (689.302)
-
-Conditional:
-- Lead Paint (if Year Built < 1978)
-- HOA Disclosure (if in association)
-- CDD Disclosure (if in CDD - 190.048)
-- Foreign Interest Affidavit (SB 264)
-- Condo Safety Rider (if condo - SIRS/Milestone)
-
-Optional (User Selection):
-- Escalation Clause Addendum
-- Appraisal Gap Guarantee
-- Kick-Out Clause (Rider X)
-- Post-Occupancy Agreement
-```
+| Document Type | Test Case | Expected |
+|---------------|-----------|----------|
+| Lease | Missing radon disclosure | Violation |
+| Lease | Security deposit > 2 months | Warning |
+| Lease | Pre-1978 without lead paint | Violation |
+| Purchase | Missing property tax disclosure | Violation |
+| Purchase | Condo without SIRS/Milestone | Violation |
+| Listing | No expiration date | Violation |
+| Contractor | NOC missing property description | Violation |
+| BillOfSale | Car without VIN | Violation |
 
 ---
 
-## Part V: Phase 3 - Listing Agreements
+## Part VI: Template Completion Engine (Self-Contained)
 
-### 5.1 Chapter 475 Requirements
+### 6.1 Architecture
 
-Listing agreements must satisfy the "Four Pillars" of validity:
-
-| Pillar | Requirement | Enforcement |
-|--------|-------------|-------------|
-| 1 | Definite expiration date | Hard-coded date field, no auto-renewal |
-| 2 | Legal description | Parcel ID + full legal from deed |
-| 3 | Price and terms | Commission structure clearly stated |
-| 4 | Fee structure | Listing fee separate from buyer concessions |
-
-### 5.2 NAR Settlement Integration (Aug 2024)
-
-Post-NAR settlement requirements:
-
-- **Decoupled compensation** - No pre-determined buyer-broker splits
-- **Negotiability disclosure** - "Fees are fully negotiable" in bold
-- **Concession authorization** - Seller authorizes willingness to consider
+The Template Completion Engine is **self-contained** within agentpdf-web. It reuses
+pdfjoin-core Rust crates but has its own TypeScript UI with intentionally limited features.
 
 ```
-Listing Agreement Structure (Post-NAR)
-======================================
-
-Section A: Listing Broker Compensation
---------------------------------------
-"Seller agrees to pay Listing Broker: ___% or $___"
-
-Section B: Buyer Concessions (Optional)
----------------------------------------
-"Does Seller authorize communication of willingness to
-consider buyer concessions?"
-  [ ] Yes - Up to ___% or $___ toward buyer costs
-  [ ] No - No concession communication authorized
-
-Section C: Steering Defense Acknowledgment
-------------------------------------------
-"Seller acknowledges that failing to offer concessions
-may limit the pool of potential buyers who cannot pay
-for their own representation."
+agentpdf-web/
+├── src/ts/
+│   ├── template-editor.ts    # LIMITED field placement (NEW)
+│   ├── pdf-bridge.ts         # PDF.js wrapper (copied from pdfjoin)
+│   ├── coord-utils.ts        # Coordinate conversion (copied)
+│   └── types/                # Type definitions (copied)
+├── wasm/                     # Uses pdfjoin-core for PDF ops
+└── www/
+    └── index.html            # Unified interface
 ```
 
-### 5.3 Brokerage Relationship Disclosure
-
-Required under 475.278:
-
-```
-Brokerage Relationship Type
-===========================
-
-[ ] Single Agent
-    └─ Fiduciary duties: Loyalty, Confidentiality, Obedience,
-       Full Disclosure, Accounting, Skill/Care/Diligence
-    └─ First sentence in UPPERCASE BOLD
-
-[ ] Transaction Broker
-    └─ Limited duties: Deal honestly, Account for funds,
-       Use skill/care/diligence, Disclose material facts
-```
-
----
-
-## Part VI: pdfjoin-web Integration
-
-### 6.1 Integration Point
-
-pdfjoin-web is used **only as the final step** before download:
-
-```
-User Flow
-=========
-
-1. User completes form wizard
-2. System generates PDF via proxy server
-3. User previews PDF
-4. [Optional] User clicks "Edit Before Download"
-   └─ Opens pdfjoin-web Edit component
-   └─ Available tools: TextBox, Whiteout, Checkbox, Highlight
-5. User downloads PDF
-   └─ If edited: Flattens edits into content stream
-```
-
-### 6.2 Technical Integration
+### 6.2 Allowed Field Types
 
 ```typescript
-// agentPDF integration with pdfjoin-web
+// template-editor.ts - ONLY these field types are allowed
 
-interface EditableDocument {
-  pdfBase64: string;
-  filename: string;
-  metadata: ContractMetadata;
+enum FieldType {
+  TextField = 'text',       // Fill in names, dates, amounts
+  Signature = 'signature',  // Mark signature locations
+  Initials = 'initials',    // Contract revision acknowledgment
+  Checkbox = 'checkbox',    // Yes/No selections
+  DateField = 'date',       // Auto-formatted date entry
 }
 
-async function openForEditing(doc: EditableDocument) {
-  // Load pdfjoin-web Edit component
-  const editModule = await import('@pdfjoin/edit');
-
-  // Initialize with generated PDF
-  const session = editModule.createSession({
-    pdf: doc.pdfBase64,
-    tools: ['textbox', 'whiteout', 'checkbox', 'highlight'],
-    onSave: async (editedPdf) => {
-      // Flatten and download
-      const flattened = await editModule.flatten(editedPdf);
-      downloadPdf(flattened, doc.filename);
-    }
-  });
-}
+// EXPLICITLY NOT IMPLEMENTED (prevents contract drafting):
+// - WhiteoutTool (could hide contract terms)
+// - BlackoutTool (could hide contract terms)
+// - TextReplaceTool (could alter clauses)
+// - HighlightTool (not needed for form completion)
+// - UnderlineTool (not needed for form completion)
 ```
 
-### 6.3 Bundle Strategy
+### 6.3 Page Operations
 
-pdfjoin-web edit components are **dynamically imported** only when needed:
+```typescript
+// Split/merge reuse pdfjoin-core directly
+import { PdfJoinSession, SessionMode } from 'pdfjoin-wasm';
+
+// Split pages
+const split = new PdfJoinSession(SessionMode.Split);
+split.addDocument("contract.pdf", bytes);
+split.setPageSelection("1-3, 5");
+const extracted = split.execute();
+
+// Merge documents
+const merge = new PdfJoinSession(SessionMode.Merge);
+merge.addDocument("addendum.pdf", addendumBytes);
+merge.addDocument("contract.pdf", contractBytes);
+const combined = merge.execute();
+```
+
+### 6.4 User Flow
 
 ```
-Bundle Sizes
-============
+User Flow (Self-Contained)
+==========================
 
-agentPDF core:     ~300KB (forms, wizard, preview)
-pdfjoin-web edit:  ~327KB (loaded on demand)
-                   -------
-Total (if editing): ~627KB
+1. [Form Wizard] User selects template, fills required fields
+         ↓
+2. [Server] Typst generates base PDF from template
+         ↓
+3. [Template Completion Engine] User places fields:
+   ├─ 📝 Text fields for names, dates, amounts
+   ├─ ✍️  Signature placeholders
+   ├─ 🔤 Initials for revisions
+   ├─ ☑️  Checkboxes for options
+   └─ 📅 Date fields
+         ↓
+4. [Page Operations] Optional split/merge
+         ↓
+5. [Signature Collection] Collect actual signatures
+         ↓
+6. [Download] Final PDF
 
-Compare to current: 75MB WASM bundle
+All steps in same interface. NO external redirects.
 ```
+
+### 6.5 Files Copied from pdfjoin-web
+
+**Minimal set** (only what's needed, ~500 lines):
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `pdf-bridge.ts` | 178 | PDF.js wrapper |
+| `pdf-loader.ts` | 66 | Lazy load PDF.js |
+| `coord-utils.ts` | 164 | Coordinate conversion |
+| `types/pdf-types.ts` | 156 | Type definitions |
+
+**NOT copied** (intentionally excluded):
+- `edit.ts` lines for whiteout/blackout
+- `edit.ts` lines for text replacement
+- `edit.ts` lines for highlight/underline
 
 ---
 
-## Part VII: Implementation Roadmap
+## Part VII: Archived Code (Non-Florida States)
 
-### Phase 0: Infrastructure (Week 1-2) - COMPLETE
+### 7.1 Archived for Future Use
 
-- [x] Set up proxy server with Axum (`apps/agentpdf-server/`)
-- [x] Deploy typst-engine as native Rust service (integrated via workspace)
-- [x] Configure rate limiting (tower-governor, configurable per-IP)
-- [x] Add property tests (15 tests: proptest + regression)
-- [x] Add compliance API endpoint (`/api/compliance`)
-- [ ] Add authentication middleware (JWT/API key - planned)
-- [ ] Set up CI/CD for server deployment
+The following state modules exist but are **not active in MVP**:
 
-**Server running with:**
-```bash
-cargo run -p agentpdf-server -- --port 3000 --rate-limit 10 --timeout-ms 10000
+```
+crates/compliance-engine/src/states/
+├── florida.rs           # ACTIVE
+├── florida_realestate.rs # ACTIVE
+├── arizona.rs           # ARCHIVED
+├── california.rs        # ARCHIVED
+├── georgia.rs           # ARCHIVED
+├── illinois.rs          # ARCHIVED
+├── massachusetts.rs     # ARCHIVED
+├── michigan.rs          # ARCHIVED
+├── new_jersey.rs        # ARCHIVED
+├── new_york.rs          # ARCHIVED
+├── north_carolina.rs    # ARCHIVED
+├── ohio.rs              # ARCHIVED
+├── pennsylvania.rs      # ARCHIVED
+├── tennessee.rs         # ARCHIVED
+├── texas.rs             # ARCHIVED
+├── virginia.rs          # ARCHIVED
+└── washington.rs        # ARCHIVED
+
+crates/typst-engine/templates/
+├── florida_*.typ        # ACTIVE
+├── texas_lease.typ      # ARCHIVED
+├── invoice.typ          # KEEP (generic)
+└── letter.typ           # KEEP (generic)
 ```
 
-### Phase 1: Slim Frontend (Week 3-4)
+### 7.2 Feature Flag Strategy
 
-- [ ] Extract form wizard from current agentpdf-web
-- [ ] Remove WASM dependencies
-- [ ] Implement API client for proxy server
-- [ ] Build preview iframe with PDF.js
+```rust
+// compliance-engine/src/lib.rs
 
-### Phase 2: Residential Lease MVP (Week 5-8)
+#[cfg(feature = "florida-only")]
+pub fn supported_states() -> Vec<State> {
+    vec![State::FL]
+}
 
-- [ ] Implement all mandatory disclosures
-- [ ] Build SB 948 Flood Disclosure wizard
-- [ ] Add HB 615 Electronic Notice consent
-- [ ] Integrate pdfjoin-web edit step
-- [ ] Complete end-to-end testing
+#[cfg(not(feature = "florida-only"))]
+pub fn supported_states() -> Vec<State> {
+    vec![State::FL, State::TX, State::CA, /* ... */]
+}
+```
 
-### Phase 3: Desktop App (Week 9-10)
-
-- [ ] Scaffold Tauri 2.0 application
-- [ ] Wrap existing React frontend
-- [ ] Add native file save dialogs
-- [ ] Configure auto-updater
-- [ ] Code signing for macOS/Windows
-
-### Phase 4: Purchase Contracts (Week 11-14)
-
-- [ ] Implement As-Is contract template
-- [ ] Add all conditional addenda
-- [ ] Build SB 264 Foreign Interest affidavit
-- [ ] Add condo SIRS/Milestone disclosure
-
-### Phase 5: Listing Agreements (Week 15-16)
-
-- [ ] Implement Chapter 475 compliant template
-- [ ] Add NAR settlement compensation structure
-- [ ] Build brokerage relationship disclosure
-- [ ] Add protection period clause generator
+Default: `florida-only` feature enabled for MVP.
 
 ---
 
-## Part VIII: Legal Compliance Framework
+## Part VIII: Implementation Roadmap
 
-### 8.1 Scrivener Standard Enforcement
+### Phase 0: Infrastructure (COMPLETE)
 
-Every UI element must pass the scrivener test:
+- [x] agentpdf-server with Axum
+- [x] API endpoints (render, templates, compliance, document-types)
+- [x] 40+ tests passing (proptest + HTTP + regression)
+- [x] Rate limiting (tower-governor)
+- [x] Florida compliance integration
+- [x] DocumentType enum with 26 types across 5 categories
+- [x] Feature flags (`florida-only` / `all-states`)
+- [x] WASM bindings for all document types
+- [ ] Authentication middleware (future)
+- [ ] CI/CD deployment (future)
 
-| Pattern | Allowed? | Example |
-|---------|----------|---------|
-| Present options | YES | "Do you want X?" with tooltip definition |
-| State facts | YES | "Properties over $184,500 typically require probate" |
-| Recommend | NO | "We recommend X based on your situation" |
-| Apply law to facts | NO | "Since you have $500K, you should use a trust" |
+### Phase 1.0: Florida Core Documents
 
-### 8.2 Disclaimer Requirements
+**Milestone 1.0.1 - Lease Documents**
+- [ ] Review/update florida_lease.typ for Ch. 83 compliance
+- [ ] Create termination notice templates (7/15/30-day)
+- [ ] Create eviction notice template
+- [ ] Add compliance tests for each
 
-Terms of Service must include:
+**Milestone 1.0.2 - Purchase Documents**
+- [ ] Review florida_purchase_contract.typ
+- [ ] Review florida_purchase_as_is.typ
+- [ ] Create inspection contingency addendum
+- [ ] Create financing contingency addendum
+- [ ] Review florida_escalation_addendum.typ
 
-```
-REQUIRED DISCLAIMERS
-====================
+**Milestone 1.0.3 - Listing Documents**
+- [ ] Review florida_listing_agreement.typ for Ch. 475
+- [ ] Ensure NAR settlement compliance (Aug 2024)
 
-1. NO ATTORNEY-CLIENT RELATIONSHIP
-   "agentPDF is a document preparation service. No attorney-client
-   relationship is created by use of this service."
+**Milestone 1.0.4 - Contractor Documents** ✅ COMPLIANCE COMPLETE
 
-2. PRO SE REPRESENTATION
-   "By using this service, you acknowledge that you are representing
-   yourself and bear full responsibility for your legal decisions."
+- [x] Ch. 713 compliance module (`florida_contractor.rs`)
+  - [x] Notice of Commencement (§ 713.13)
+  - [x] Notice to Owner (§ 713.06)
+  - [x] Claim of Lien (§ 713.08)
+  - [x] Release of Lien (§ 713.21)
+  - [x] Dispute of Lien (§ 713.22)
+  - [x] Fraudulent Lien Report (§ 713.31)
+  - [x] Final Payment Affidavit (§ 713.06)
+  - [x] Contractor Invoice validation
+  - [x] Cost of Materials Bill validation
+- [ ] Create Typst templates for contractor documents
 
-3. DATA ACCURACY
-   "You are solely responsible for the accuracy of all information
-   entered. agentPDF does not verify the truthfulness of your inputs."
+### Phase 1.1: Bill of Sale
 
-4. NOT LEGAL ADVICE
-   "This service does not provide legal advice. For complex situations,
-   consult a licensed Florida attorney."
-```
+- [ ] Car bill of sale (HSMV 82050 format)
+- [ ] Boat bill of sale (HSMV 87002 format)
+- [ ] Trailer bill of sale
+- [ ] JetSki/PWC bill of sale
+- [ ] Mobile home bill of sale (Ch. 319)
 
-### 8.3 Template Sourcing Protocol
+### Phase 2: Compliance Validation ✅ COMPLETE
 
-To avoid IP issues with bar association forms:
+- [x] Add Ch. 713 contractor lien rules (`florida_contractor.rs` - 21 tests)
+- [x] Unified DocumentType enum (26 types)
+- [x] Unified compliance API (`check_document_compliance`)
+- [x] WASM bindings for all document types
+- [x] Server API `/api/document-types` endpoint
+- [x] Add Ch. 319 motor vehicle rules (`florida_billofsale.rs` - 10 tests)
 
-1. **Derive from statute** - Primary source is Florida Statutes
-2. **Private validation** - Compare to FAR/BAR forms internally
-3. **Rephrase provisions** - Use different language for similar concepts
-4. **Relocate clauses** - Place sections in different order
-5. **Document sourcing** - Maintain audit trail of statutory basis
+### Phase 3: Template Completion Engine ✅ COMPLETE
+
+**Milestone 3.1 - Core Infrastructure**
+- [x] TypeScript build setup with esbuild (`apps/agentpdf-web/`)
+- [x] Template editor implementation (`src/ts/template-editor.ts`)
+- [x] PDF coordinate transformation utilities
+- [x] WASM bindings for field flattening (`field_export.rs`)
+
+**Milestone 3.2 - Field Types**
+- [x] Text field placement with font controls (font family, size, bold, italic, color)
+- [x] Signature field placement with canvas capture
+- [x] Initials field placement
+- [x] Checkbox field placement (toggle yes/no)
+- [x] Date field placement (auto-format)
+
+**Milestone 3.3 - Page Operations**
+- [x] Split pages modal with page range input
+- [x] Merge PDFs modal with file selection
+- [x] Visual page picker UI
+- [x] Integration with pdfjoin-core via WASM
+
+**Milestone 3.4 - Signature Collection**
+- [x] Signature capture canvas modal
+- [x] Clear/save signature functionality
+- [x] Signature embedding into PDF via AddImage operation
+
+**Milestone 3.5 - Field Flattening (Export)**
+- [x] `export_pdf_with_fields` WASM function
+- [x] `validate_fields_for_export` WASM function
+- [x] AddImage operation in pdfjoin-core for signatures
+- [x] PNG/JPEG image embedding support
+
+### Phase 4: Browser Test Coverage 🚧 IN PROGRESS
+
+**Regression Tests** (chromiumoxide, parallel execution):
+- [x] Field type buttons exist test
+- [x] Font controls panel test
+- [x] Page operations buttons test
+- [x] Signature capture modal test
+- [ ] E2E: Template generation → field placement → download
+- [ ] E2E: Text field: place, type, resize, font change
+- [ ] E2E: Signature field: place, capture, embed
+- [ ] E2E: Checkbox field: place, toggle, export
+- [ ] E2E: Page split: select pages, extract, verify
+- [ ] E2E: Page merge: add documents, combine
+
+**Property Tests** (`proptest`):
+- [x] Page range parsing (27 tests in `page_ranges.rs`)
+- [x] Field dimension validation (WCAG compliance)
+- [x] Font size validation
+
+**Smart Pre-commit Hook** ✅ COMPLETE:
+- [x] Detect which app was edited (agentpdf-web, pdfjoin-web, docsign-web)
+- [x] Only run browser tests for edited app
+- [x] Uses cargo-nextest for parallel test execution
 
 ---
 
 ## Part IX: Success Metrics
 
-### 9.1 Tampa Demo Targets (Q1 2026)
+### Florida MVP Launch Criteria
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Lease generation time | <2 seconds | Server logs |
-| Compliance pass rate | 100% | Automated validation |
-| User completion rate | >80% | Analytics |
-| Edit step adoption | Track only | Analytics |
+| Metric | Target |
+|--------|--------|
+| All Phase 1.0 documents complete | 100% |
+| Compliance test coverage | >90% |
+| WASM size decision made | Done |
+| Integration (pdfjoin/docsign) working | Done |
+| User testing with FL landlords | 10+ users |
+| Zero critical compliance bugs | 0 |
 
-### 9.2 Market Entry Goals
+### Post-MVP Expansion Order
 
-| Milestone | Target Date | Goal |
-|-----------|-------------|------|
-| Beta launch | Jan 2026 | 100 landlords using system |
-| REIA presentation | Feb 2026 | Tampa REIA demo |
-| Paid launch | Mar 2026 | First paying customers |
-| Purchase contracts | May 2026 | Full contract suite |
+1. Florida perfected (MVP)
+2. Texas (similar landlord-friendly laws)
+3. Georgia (Southeast expansion)
+4. California (high volume, complex)
+5. New York (highest complexity)
 
 ---
 
 ## References
 
-### Statutory Sources
-- [Florida Statutes Chapter 83](https://www.flsenate.gov/Laws/Statutes/2025/Chapter83)
-- [Florida Statutes Chapter 475](https://www.flsenate.gov/Laws/Statutes/2025/Chapter475)
-- [Florida Statutes Chapter 689](https://www.flsenate.gov/Laws/Statutes/2025/Chapter689)
+### Florida Statutes
 
-### Technical Resources
-- [Tauri 2.0 Architecture](https://v2.tauri.app/concept/architecture/)
-- [Tauri Process Model](https://v2.tauri.app/concept/process-model/)
-- [Typst Automated PDF Generation](https://typst.app/blog/2025/automated-generation/)
+- [Chapter 83 - Landlord and Tenant](https://www.flsenate.gov/Laws/Statutes/2025/Chapter83)
+- [Chapter 475 - Real Estate Brokers](https://www.flsenate.gov/Laws/Statutes/2025/Chapter475)
+- [Chapter 689 - Conveyances](https://www.flsenate.gov/Laws/Statutes/2025/Chapter689)
+- [Chapter 713 - Construction Liens](https://www.flsenate.gov/Laws/Statutes/2025/Chapter713)
+- [Chapter 319 - Motor Vehicle Titles](https://www.flsenate.gov/Laws/Statutes/2025/Chapter319)
+- [Chapter 718 - Condominiums](https://www.flsenate.gov/Laws/Statutes/2025/Chapter718)
+- [Chapter 720 - HOAs](https://www.flsenate.gov/Laws/Statutes/2025/Chapter720)
+
+### HSMV Forms
+
+- [HSMV 82050 - Certificate of Title](https://www.flhsmv.gov/pdf/forms/82050.pdf)
+- [HSMV 87002 - Vessel Registration](https://www.flhsmv.gov/pdf/forms/87002.pdf)
 
 ### Related Plan Documents
+
 - `FL_LEASE.md` - Detailed Florida lease law analysis
 - `FL_PURCHASE.md` - Purchase contract architecture
 - `FL_LIST.md` - Listing agreement compliance
-- `STRATEGY.md` - Market positioning and business model
-- `RESEARCH.md` - Local-first architectural decisions
-
----
-
-## Appendix A: Existing Template Status
-
-| Template | File | Status | Compliance |
-|----------|------|--------|------------|
-| Florida Lease | `florida_lease.typ` | Ready | 31 FL rules |
-| Florida Purchase | `florida_purchase_contract.typ` | Ready | Multi-statute |
-| Florida As-Is | `florida_purchase_as_is.typ` | Ready | As-Is specific |
-| Florida Listing | `florida_listing_agreement.typ` | Ready | Ch 475 + NAR |
-| Escalation Addendum | `florida_escalation_addendum.typ` | Ready | Best practices |
-| Flood Disclosure | `florida_flood_disclosure.typ` | Ready | SB 948 |
-| Commercial Lease | `florida_commercial_lease.typ` | Ready | Part I |
-| Texas Lease | `texas_lease.typ` | Ready | Ch 92 |
-
-## Appendix B: Compliance Engine Coverage
-
-The `compliance-engine` crate provides:
-
-- **268 tests** across 16 states
-- **31 Florida rules** with statutory citations
-- **Property-based fuzz testing** for edge cases
-- **Pattern matching** for prohibited provisions
-
-Key Florida rules enforced:
-- 83.47 - Prohibited lease provisions
-- 83.48 - Attorney fee reciprocity
-- 83.49 - Security deposit requirements
-- 83.56 - Electronic notice consent
-- 83.57 - Termination periods (30 days)
-- 83.512 - Flood disclosure
-- 83.682 - Service member rights

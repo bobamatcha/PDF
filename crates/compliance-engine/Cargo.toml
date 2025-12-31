@@ -3,6 +3,11 @@ name = "compliance-engine"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["florida-only"]
+florida-only = []
+all-states = []
+
 [dependencies]
 shared-types = { workspace = true }
 serde = { workspace = true }

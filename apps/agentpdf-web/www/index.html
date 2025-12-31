@@ -998,20 +998,181 @@
                                 <div class="field-type-icon">📝</div>
                                 <div class="field-type-label">Text Field</div>
                             </div>
+                            <div class="field-type" data-type="checkbox">
+                                <div class="field-type-icon">☑️</div>
+                                <div class="field-type-label">Checkbox</div>
+                            </div>
                         </div>
                         <p style="margin-top: 1rem; font-size: 0.75rem; color: var(--text-tertiary);">
                             Select a field type, then click on the PDF to place it.
                         </p>
+
+                        <!-- Font Controls -->
+                        <div id="font-controls" class="font-controls" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-primary); display: none;">
+                            <h4 style="font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-secondary);">Text Formatting</h4>
+                            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                <select id="font-family" style="flex: 1; padding: 0.375rem; border: 1px solid var(--border-primary); border-radius: 4px; font-size: 0.8rem;">
+                                    <option value="sans-serif">Sans-serif</option>
+                                    <option value="serif">Serif</option>
+                                    <option value="monospace">Monospace</option>
+                                </select>
+                                <select id="font-size" style="width: 70px; padding: 0.375rem; border: 1px solid var(--border-primary); border-radius: 4px; font-size: 0.8rem;">
+                                    <option value="11">11pt</option>
+                                    <option value="12">12pt</option>
+                                    <option value="14" selected>14pt</option>
+                                    <option value="16">16pt</option>
+                                    <option value="18">18pt</option>
+                                    <option value="24">24pt</option>
+                                    <option value="36">36pt</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 0.25rem;">
+                                <button id="btn-bold" class="format-btn" title="Bold" style="padding: 0.375rem 0.75rem; border: 1px solid var(--border-primary); border-radius: 4px; background: white; cursor: pointer; font-weight: bold;">B</button>
+                                <button id="btn-italic" class="format-btn" title="Italic" style="padding: 0.375rem 0.75rem; border: 1px solid var(--border-primary); border-radius: 4px; background: white; cursor: pointer; font-style: italic;">I</button>
+                                <input type="color" id="font-color" value="#000000" title="Text Color" style="width: 36px; height: 30px; padding: 0; border: 1px solid var(--border-primary); border-radius: 4px; cursor: pointer;">
+                            </div>
+                        </div>
+
+                        <!-- Page Operations -->
+                        <div class="page-operations" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-primary);">
+                            <h4 style="font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--text-secondary);">Page Operations</h4>
+                            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                <button id="btn-split-pages" class="btn btn-secondary btn-sm" style="width: 100%;">
+                                    <span>✂️</span> Split Pages
+                                </button>
+                                <button id="btn-merge-pdf" class="btn btn-secondary btn-sm" style="width: 100%;">
+                                    <span>📎</span> Merge with PDF
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </aside>
         </div>
     </div>
 
+    <!-- Split/Merge Modal -->
+    <div id="split-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 400px;">
+            <h3 style="margin-bottom: 1rem;">Split Pages</h3>
+            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                Enter page ranges to extract (e.g., "1-3, 5, 8-10")
+            </p>
+            <input type="text" id="split-range-input" placeholder="1-3, 5" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-primary); border-radius: 4px; margin-bottom: 1rem;">
+            <div id="split-page-picker" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; max-height: 200px; overflow-y: auto;"></div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button id="split-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="split-confirm" class="btn btn-primary">Extract Pages</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Merge Modal -->
+    <div id="merge-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 400px;">
+            <h3 style="margin-bottom: 1rem;">Merge PDF</h3>
+            <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                Select a PDF to merge with the current document
+            </p>
+            <div class="merge-options" style="margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                    <input type="radio" name="merge-position" value="append" checked>
+                    <span>Append after current document</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; margin-top: 0.5rem;">
+                    <input type="radio" name="merge-position" value="prepend">
+                    <span>Insert before current document</span>
+                </label>
+            </div>
+            <div id="merge-drop-zone" class="drop-zone" style="padding: 2rem; margin-bottom: 1rem;">
+                <div style="text-align: center;">
+                    <span style="font-size: 2rem;">📄</span>
+                    <p style="margin-top: 0.5rem;">Drop PDF here or click to browse</p>
+                </div>
+                <input type="file" id="merge-file-input" accept=".pdf" style="display: none;">
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button id="merge-cancel" class="btn btn-secondary">Cancel</button>
+                <button id="merge-confirm" class="btn btn-primary" disabled>Merge</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signature Capture Modal -->
+    <div id="signature-modal" class="modal hidden">
+        <div class="modal-content" style="max-width: 500px;">
+            <h3 style="margin-bottom: 1rem;">Draw Signature</h3>
+            <canvas id="signature-canvas" width="460" height="200" style="border: 1px solid var(--border-primary); border-radius: 4px; cursor: crosshair;"></canvas>
+            <div style="display: flex; gap: 0.5rem; justify-content: space-between; margin-top: 1rem;">
+                <button id="signature-clear" class="btn btn-secondary">Clear</button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button id="signature-cancel" class="btn btn-secondary">Cancel</button>
+                    <button id="signature-confirm" class="btn btn-primary">Apply Signature</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal.hidden {
+            display: none;
+        }
+        .modal-content {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            max-width: 90%;
+        }
+        .page-chip {
+            padding: 0.375rem 0.75rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+        .page-chip:hover {
+            border-color: var(--gulf-stream-blue);
+        }
+        .page-chip.selected {
+            background: var(--gulf-stream-blue);
+            color: white;
+            border-color: var(--gulf-stream-blue);
+        }
+        .format-btn.active {
+            background: var(--gulf-stream-blue);
+            color: white;
+            border-color: var(--gulf-stream-blue);
+        }
+        .placed-field.checkbox {
+            min-width: 24px;
+            min-height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(240, 255, 240, 0.9);
+            border-color: #00cc66;
+        }
+    </style>
+
     <!-- JavaScript -->
     <script src="js/pdf-bridge.js"></script>
     <script src="js/docsign-handoff.js"></script>
     <script src="js/template-selector.js"></script>
+    <script src="js/bundle.js" type="module"></script>
     <script type="module">
         // Wait for trunk's WASM module to complete initialization
         // Trunk exposes bindings on window.wasmBindings after init
@@ -1577,9 +1738,21 @@
                 signature: 'Signature',
                 initials: 'Initials',
                 date: 'Date',
-                text: 'Text'
+                text: 'Text',
+                checkbox: '☑'
             };
             return labels[type] || type;
+        }
+
+        // Show font controls when text field is selected
+        function updateFontControlsVisibility() {
+            const fontControls = document.getElementById('font-controls');
+            const showForTypes = ['text', 'date', 'initials'];
+            if (state.selectedFieldType && showForTypes.includes(state.selectedFieldType)) {
+                fontControls.style.display = 'block';
+            } else {
+                fontControls.style.display = 'none';
+            }
         }
 
         // Ghost field follows cursor
@@ -1616,21 +1789,121 @@
 
             const field = document.createElement('div');
             field.className = 'placed-field';
-            field.textContent = getFieldLabel(state.selectedFieldType);
             field.style.left = x + 'px';
             field.style.top = y + 'px';
             field.dataset.type = state.selectedFieldType;
             field.dataset.page = pageNum;
 
-            // Add delete button
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'delete-btn';
-            deleteBtn.textContent = '×';
-            deleteBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                field.remove();
+            // Handle different field types
+            if (state.selectedFieldType === 'checkbox') {
+                createCheckboxContent(field);
+            } else if (state.selectedFieldType === 'signature') {
+                field.textContent = getFieldLabel(state.selectedFieldType);
+                field.style.backgroundColor = 'rgba(255, 245, 230, 0.9)';
+                field.style.borderColor = '#cc6600';
+                field.style.minWidth = '200px';
+                field.style.minHeight = '60px';
+                field.addEventListener('click', () => openSignatureCapture(field));
+
+                // Add delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '×';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    field.remove();
+                });
+                field.appendChild(deleteBtn);
+            } else if (state.selectedFieldType === 'text' || state.selectedFieldType === 'date') {
+                // Create editable input
+                field.innerHTML = '';
+                const input = document.createElement('input');
+                input.type = state.selectedFieldType === 'date' ? 'date' : 'text';
+                input.placeholder = state.selectedFieldType === 'date' ? '' : 'Enter text...';
+                input.style.border = 'none';
+                input.style.outline = 'none';
+                input.style.width = '100%';
+                input.style.height = '100%';
+                input.style.padding = '4px 8px';
+                input.style.boxSizing = 'border-box';
+                input.style.backgroundColor = 'transparent';
+                input.style.fontFamily = currentFontStyle.fontFamily;
+                input.style.fontSize = currentFontStyle.fontSize + 'px';
+                input.style.fontWeight = currentFontStyle.isBold ? 'bold' : 'normal';
+                input.style.fontStyle = currentFontStyle.isItalic ? 'italic' : 'normal';
+                input.style.color = currentFontStyle.color;
+                field.appendChild(input);
+                field.style.minWidth = state.selectedFieldType === 'date' ? '150px' : '200px';
+                field.style.minHeight = '44px';
+
+                // Add delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '×';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    field.remove();
+                });
+                field.appendChild(deleteBtn);
+
+                // Focus input after placing
+                setTimeout(() => input.focus(), 50);
+            } else if (state.selectedFieldType === 'initials') {
+                // Create initials input
+                field.innerHTML = '';
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'AB';
+                input.maxLength = 4;
+                input.style.border = 'none';
+                input.style.outline = 'none';
+                input.style.width = '100%';
+                input.style.height = '100%';
+                input.style.padding = '4px';
+                input.style.boxSizing = 'border-box';
+                input.style.backgroundColor = 'transparent';
+                input.style.textAlign = 'center';
+                input.style.fontWeight = 'bold';
+                input.style.fontSize = '14px';
+                input.addEventListener('input', () => {
+                    input.value = input.value.toUpperCase();
+                });
+                field.appendChild(input);
+                field.style.backgroundColor = 'rgba(230, 245, 255, 0.9)';
+                field.style.borderColor = '#0099cc';
+                field.style.minWidth = '80px';
+                field.style.minHeight = '44px';
+
+                // Add delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '×';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    field.remove();
+                });
+                field.appendChild(deleteBtn);
+
+                // Focus input after placing
+                setTimeout(() => input.focus(), 50);
+            } else {
+                field.textContent = getFieldLabel(state.selectedFieldType);
+                // Add delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '×';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    field.remove();
+                });
+                field.appendChild(deleteBtn);
+            }
+
+            // Make field selectable for font controls
+            field.addEventListener('click', () => {
+                document.querySelectorAll('.placed-field').forEach(f => f.classList.remove('selected'));
+                field.classList.add('selected');
             });
-            field.appendChild(deleteBtn);
 
             overlay.appendChild(field);
 
@@ -1693,6 +1966,351 @@
 
         // Make it globally accessible for onclick
         window.openTemplateSelector = openTemplateSelector;
+
+        // ============================================================================
+        // FONT CONTROLS
+        // ============================================================================
+
+        const fontFamily = document.getElementById('font-family');
+        const fontSize = document.getElementById('font-size');
+        const btnBold = document.getElementById('btn-bold');
+        const btnItalic = document.getElementById('btn-italic');
+        const fontColor = document.getElementById('font-color');
+
+        // Track current font style
+        let currentFontStyle = {
+            fontFamily: 'sans-serif',
+            fontSize: 14,
+            isBold: false,
+            isItalic: false,
+            color: '#000000'
+        };
+
+        fontFamily?.addEventListener('change', () => {
+            currentFontStyle.fontFamily = fontFamily.value;
+            applyStyleToSelectedField();
+        });
+
+        fontSize?.addEventListener('change', () => {
+            currentFontStyle.fontSize = parseInt(fontSize.value);
+            applyStyleToSelectedField();
+        });
+
+        btnBold?.addEventListener('click', () => {
+            currentFontStyle.isBold = !currentFontStyle.isBold;
+            btnBold.classList.toggle('active', currentFontStyle.isBold);
+            applyStyleToSelectedField();
+        });
+
+        btnItalic?.addEventListener('click', () => {
+            currentFontStyle.isItalic = !currentFontStyle.isItalic;
+            btnItalic.classList.toggle('active', currentFontStyle.isItalic);
+            applyStyleToSelectedField();
+        });
+
+        fontColor?.addEventListener('input', () => {
+            currentFontStyle.color = fontColor.value;
+            applyStyleToSelectedField();
+        });
+
+        function applyStyleToSelectedField() {
+            // Apply to placed fields with inputs
+            const selectedField = document.querySelector('.placed-field.selected input');
+            if (selectedField) {
+                selectedField.style.fontFamily = currentFontStyle.fontFamily;
+                selectedField.style.fontSize = currentFontStyle.fontSize + 'px';
+                selectedField.style.fontWeight = currentFontStyle.isBold ? 'bold' : 'normal';
+                selectedField.style.fontStyle = currentFontStyle.isItalic ? 'italic' : 'normal';
+                selectedField.style.color = currentFontStyle.color;
+            }
+        }
+
+        // ============================================================================
+        // PAGE SPLIT
+        // ============================================================================
+
+        const splitModal = document.getElementById('split-modal');
+        const splitRangeInput = document.getElementById('split-range-input');
+        const splitPagePicker = document.getElementById('split-page-picker');
+        const splitCancel = document.getElementById('split-cancel');
+        const splitConfirm = document.getElementById('split-confirm');
+
+        document.getElementById('btn-split-pages')?.addEventListener('click', () => {
+            if (!state.pdfBytes) {
+                showError('Please load a PDF first');
+                return;
+            }
+            // Create page picker chips
+            splitPagePicker.innerHTML = '';
+            for (let i = 1; i <= state.totalPages; i++) {
+                const chip = document.createElement('div');
+                chip.className = 'page-chip';
+                chip.textContent = i;
+                chip.dataset.page = i;
+                chip.addEventListener('click', () => {
+                    chip.classList.toggle('selected');
+                    updateSplitRangeFromChips();
+                });
+                splitPagePicker.appendChild(chip);
+            }
+            splitRangeInput.value = '';
+            splitModal.classList.remove('hidden');
+        });
+
+        function updateSplitRangeFromChips() {
+            const selected = Array.from(splitPagePicker.querySelectorAll('.page-chip.selected'))
+                .map(c => parseInt(c.dataset.page))
+                .sort((a, b) => a - b);
+            splitRangeInput.value = selected.join(', ');
+        }
+
+        splitCancel?.addEventListener('click', () => {
+            splitModal.classList.add('hidden');
+        });
+
+        splitConfirm?.addEventListener('click', async () => {
+            const rangeStr = splitRangeInput.value.trim();
+            if (!rangeStr) {
+                showError('Please select pages to extract');
+                return;
+            }
+
+            try {
+                // Use PageOperations from bundle
+                const PageOperations = window.PageOperations;
+                if (!PageOperations) {
+                    showError('Page operations not available');
+                    return;
+                }
+
+                const result = await PageOperations.splitPdf(state.pdfBytes, rangeStr);
+                if (result.success && result.data) {
+                    // Download the split PDF
+                    const blob = new Blob([result.data], { type: 'application/pdf' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `split_${docName.textContent || 'document.pdf'}`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    splitModal.classList.add('hidden');
+                } else {
+                    showError(result.error || 'Failed to split PDF');
+                }
+            } catch (err) {
+                showError('Failed to split: ' + err.message);
+            }
+        });
+
+        // ============================================================================
+        // PAGE MERGE
+        // ============================================================================
+
+        const mergeModal = document.getElementById('merge-modal');
+        const mergeDropZone = document.getElementById('merge-drop-zone');
+        const mergeFileInput = document.getElementById('merge-file-input');
+        const mergeCancel = document.getElementById('merge-cancel');
+        const mergeConfirm = document.getElementById('merge-confirm');
+        let mergeFileBytes = null;
+        let mergeFileName = null;
+
+        document.getElementById('btn-merge-pdf')?.addEventListener('click', () => {
+            if (!state.pdfBytes) {
+                showError('Please load a PDF first');
+                return;
+            }
+            mergeFileBytes = null;
+            mergeFileName = null;
+            mergeConfirm.disabled = true;
+            mergeModal.classList.remove('hidden');
+        });
+
+        mergeDropZone?.addEventListener('click', () => mergeFileInput?.click());
+
+        mergeDropZone?.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            mergeDropZone.classList.add('dragover');
+        });
+
+        mergeDropZone?.addEventListener('dragleave', () => {
+            mergeDropZone.classList.remove('dragover');
+        });
+
+        mergeDropZone?.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            mergeDropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type === 'application/pdf') {
+                await loadMergeFile(file);
+            }
+        });
+
+        mergeFileInput?.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                await loadMergeFile(file);
+            }
+        });
+
+        async function loadMergeFile(file) {
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                mergeFileBytes = new Uint8Array(arrayBuffer);
+                mergeFileName = file.name;
+                mergeDropZone.innerHTML = `<div style="text-align: center;"><span style="font-size: 2rem;">✅</span><p style="margin-top: 0.5rem;">${file.name}</p></div>`;
+                mergeConfirm.disabled = false;
+            } catch (err) {
+                showError('Failed to load file: ' + err.message);
+            }
+        }
+
+        mergeCancel?.addEventListener('click', () => {
+            mergeModal.classList.add('hidden');
+        });
+
+        mergeConfirm?.addEventListener('click', async () => {
+            if (!mergeFileBytes) {
+                showError('Please select a file to merge');
+                return;
+            }
+
+            try {
+                const PageOperations = window.PageOperations;
+                if (!PageOperations) {
+                    showError('Page operations not available');
+                    return;
+                }
+
+                const prepend = document.querySelector('input[name="merge-position"]:checked')?.value === 'prepend';
+                const result = await PageOperations.appendPdf(
+                    state.pdfBytes,
+                    docName.textContent || 'document.pdf',
+                    mergeFileBytes,
+                    mergeFileName,
+                    prepend
+                );
+
+                if (result.success && result.data) {
+                    // Update the current document with merged PDF
+                    state.pdfBytes = result.data;
+                    state.pdfDoc = await pdfjsLib.getDocument({ data: result.data }).promise;
+                    state.totalPages = state.pdfDoc.numPages;
+                    totalPagesSpan.textContent = state.totalPages;
+                    await renderAllPages();
+                    mergeModal.classList.add('hidden');
+                } else {
+                    showError(result.error || 'Failed to merge PDF');
+                }
+            } catch (err) {
+                showError('Failed to merge: ' + err.message);
+            }
+        });
+
+        // ============================================================================
+        // SIGNATURE CAPTURE
+        // ============================================================================
+
+        const signatureModal = document.getElementById('signature-modal');
+        const signatureCanvas = document.getElementById('signature-canvas');
+        const signatureCtx = signatureCanvas?.getContext('2d');
+        let isDrawing = false;
+        let signatureTargetField = null;
+
+        // Initialize signature canvas
+        if (signatureCanvas && signatureCtx) {
+            signatureCtx.strokeStyle = '#000000';
+            signatureCtx.lineWidth = 2;
+            signatureCtx.lineCap = 'round';
+            signatureCtx.lineJoin = 'round';
+
+            signatureCanvas.addEventListener('mousedown', (e) => {
+                isDrawing = true;
+                signatureCtx.beginPath();
+                signatureCtx.moveTo(e.offsetX, e.offsetY);
+            });
+
+            signatureCanvas.addEventListener('mousemove', (e) => {
+                if (!isDrawing) return;
+                signatureCtx.lineTo(e.offsetX, e.offsetY);
+                signatureCtx.stroke();
+            });
+
+            signatureCanvas.addEventListener('mouseup', () => {
+                isDrawing = false;
+            });
+
+            signatureCanvas.addEventListener('mouseleave', () => {
+                isDrawing = false;
+            });
+        }
+
+        document.getElementById('signature-clear')?.addEventListener('click', () => {
+            if (signatureCtx) {
+                signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            }
+        });
+
+        document.getElementById('signature-cancel')?.addEventListener('click', () => {
+            signatureModal.classList.add('hidden');
+            signatureTargetField = null;
+        });
+
+        document.getElementById('signature-confirm')?.addEventListener('click', () => {
+            if (!signatureTargetField || !signatureCanvas) return;
+
+            // Get signature as data URL
+            const dataUrl = signatureCanvas.toDataURL('image/png');
+
+            // Apply to field
+            signatureTargetField.style.backgroundImage = `url(${dataUrl})`;
+            signatureTargetField.style.backgroundSize = 'contain';
+            signatureTargetField.style.backgroundRepeat = 'no-repeat';
+            signatureTargetField.style.backgroundPosition = 'center';
+            signatureTargetField.textContent = '';
+            signatureTargetField.dataset.signed = 'true';
+
+            // Clear and close
+            if (signatureCtx) {
+                signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            }
+            signatureModal.classList.add('hidden');
+            signatureTargetField = null;
+        });
+
+        // Open signature modal when clicking on signature field
+        function openSignatureCapture(fieldElement) {
+            signatureTargetField = fieldElement;
+            if (signatureCtx) {
+                signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+            }
+            signatureModal.classList.remove('hidden');
+        }
+
+        // ============================================================================
+        // CHECKBOX FIELD HANDLING
+        // ============================================================================
+
+        function createCheckboxContent(field) {
+            field.classList.add('checkbox');
+            field.innerHTML = '';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.style.width = '18px';
+            checkbox.style.height = '18px';
+            checkbox.style.cursor = 'pointer';
+            checkbox.addEventListener('click', (e) => e.stopPropagation());
+            field.appendChild(checkbox);
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = '×';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                field.remove();
+            });
+            field.appendChild(deleteBtn);
+        }
 
         async function openInDocSign() {
             if (!state.pdfBytes) {

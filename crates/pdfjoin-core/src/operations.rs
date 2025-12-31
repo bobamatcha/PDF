@@ -274,6 +274,16 @@ pub enum EditOperation {
         #[serde(default = "default_whiteout_color")]
         color: String,
     },
+    /// Add an image (PNG/JPEG) to the PDF - used for signatures
+    AddImage {
+        id: OpId,
+        page: u32,
+        rect: PdfRect,
+        /// Base64-encoded image data (PNG or JPEG)
+        image_data: String,
+        /// Image format: "png" or "jpeg"
+        format: String,
+    },
 }
 
 fn default_whiteout_color() -> String {
@@ -295,6 +305,8 @@ pub enum ActionKind {
     AddUnderline,
     /// Replacing existing PDF text
     ReplaceText,
+    /// Adding an image (signature)
+    AddImage,
     /// Moving an element
     Move,
     /// Resizing an element
@@ -333,6 +345,7 @@ impl EditOperation {
             EditOperation::AddCheckbox { id, .. } => *id,
             EditOperation::ReplaceText { id, .. } => *id,
             EditOperation::AddWhiteRect { id, .. } => *id,
+            EditOperation::AddImage { id, .. } => *id,
         }
     }
 
@@ -345,6 +358,7 @@ impl EditOperation {
             EditOperation::AddCheckbox { page, .. } => *page,
             EditOperation::ReplaceText { page, .. } => *page,
             EditOperation::AddWhiteRect { page, .. } => *page,
+            EditOperation::AddImage { page, .. } => *page,
         }
     }
 }
@@ -382,6 +396,7 @@ impl OperationLog {
             EditOperation::AddCheckbox { id: op_id, .. } => *op_id = id,
             EditOperation::ReplaceText { id: op_id, .. } => *op_id = id,
             EditOperation::AddWhiteRect { id: op_id, .. } => *op_id = id,
+            EditOperation::AddImage { id: op_id, .. } => *op_id = id,
         }
 
         // Track in pending action if one is being built
@@ -467,6 +482,10 @@ impl OperationLog {
                     true
                 }
                 EditOperation::AddWhiteRect { ref mut rect, .. } => {
+                    *rect = new_rect;
+                    true
+                }
+                EditOperation::AddImage { ref mut rect, .. } => {
                     *rect = new_rect;
                     true
                 }

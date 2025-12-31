@@ -7,8 +7,10 @@ pub mod audit_display;
 pub mod compliance_panel;
 pub mod coords;
 pub mod extraction;
+pub mod field_export;
 pub mod fields;
 pub mod overlay;
+pub mod page_ranges;
 pub mod pdf_renderer;
 pub mod pdf_text;
 pub mod pdf_viewer;
@@ -24,6 +26,12 @@ pub use pdf_renderer::{PageMetadata, PdfRenderer, ScaledDimensions};
 pub use pdf_text::{extract_pdf_text, get_pdf_page_count};
 pub use pdf_viewer::{init_pdf_js, init_pdf_js_with_worker, PdfViewer};
 pub use storage::{init_storage, uint8_array_to_vec, vec_to_uint8_array, Storage};
+
+// Re-export page range utilities
+pub use page_ranges::{field_constraints, parse_page_ranges, validate_page_range};
+
+// Re-export field export functions
+pub use field_export::{export_pdf_with_fields, validate_fields_for_export};
 
 // Re-export extraction module items
 pub use extraction::{
@@ -167,20 +175,179 @@ pub fn check_compliance_auto_detect_wasm(
     check_realestate_compliance_wasm(document_json, state_code, "auto", year_built)
 }
 
-/// Detect the type of real estate document
+/// Detect the type of Florida document
 ///
-/// Returns one of: "lease", "purchase", "listing", "escalation"
+/// Returns document type string. Categories:
+/// - Lease: "lease", "lease_termination", "eviction"
+/// - Purchase: "purchase", "purchase_as_is", "inspection_contingency", "financing_contingency", "escalation", "appraisal_contingency"
+/// - Listing: "listing"
+/// - Contractor: "contractor_invoice", "cost_of_materials", "notice_of_commencement", "notice_to_owner", "claim_of_lien", "release_of_lien", "dispute_lien", "fraudulent_lien", "final_payment_affidavit"
+/// - Bill of Sale: "bill_of_sale_car", "bill_of_sale_boat", "bill_of_sale_trailer", "bill_of_sale_jetski", "bill_of_sale_mobile_home"
+/// - Unknown: "unknown"
 #[wasm_bindgen]
 pub fn detect_document_type_wasm(text: &str) -> String {
     let engine = ComplianceEngine::new();
     let doc_type = engine.detect_document_type(text);
 
     match doc_type {
+        // Lease Documents
         DocumentType::Lease => "lease".to_string(),
+        DocumentType::LeaseTerminationNotice => "lease_termination".to_string(),
+        DocumentType::EvictionNotice => "eviction".to_string(),
+        // Purchase Documents
         DocumentType::RealEstatePurchase => "purchase".to_string(),
-        DocumentType::ListingAgreement => "listing".to_string(),
+        DocumentType::RealEstatePurchaseAsIs => "purchase_as_is".to_string(),
+        DocumentType::InspectionContingency => "inspection_contingency".to_string(),
+        DocumentType::FinancingContingency => "financing_contingency".to_string(),
         DocumentType::EscalationAddendum => "escalation".to_string(),
+        DocumentType::AppraisalContingency => "appraisal_contingency".to_string(),
+        // Listing Documents
+        DocumentType::ListingAgreement => "listing".to_string(),
+        // Contractor Documents
+        DocumentType::ContractorInvoice => "contractor_invoice".to_string(),
+        DocumentType::CostOfMaterialsBill => "cost_of_materials".to_string(),
+        DocumentType::NoticeOfCommencement => "notice_of_commencement".to_string(),
+        DocumentType::NoticeToOwner => "notice_to_owner".to_string(),
+        DocumentType::ClaimOfLien => "claim_of_lien".to_string(),
+        DocumentType::ReleaseOfLien => "release_of_lien".to_string(),
+        DocumentType::DisputeLien => "dispute_lien".to_string(),
+        DocumentType::FraudulentLienReport => "fraudulent_lien".to_string(),
+        DocumentType::FinalPaymentAffidavit => "final_payment_affidavit".to_string(),
+        // Bill of Sale Documents
+        DocumentType::BillOfSaleCar => "bill_of_sale_car".to_string(),
+        DocumentType::BillOfSaleBoat => "bill_of_sale_boat".to_string(),
+        DocumentType::BillOfSaleTrailer => "bill_of_sale_trailer".to_string(),
+        DocumentType::BillOfSaleJetSki => "bill_of_sale_jetski".to_string(),
+        DocumentType::BillOfSaleMobileHome => "bill_of_sale_mobile_home".to_string(),
+        // Unknown
+        DocumentType::Unknown => "unknown".to_string(),
     }
+}
+
+/// Check compliance for any Florida document type
+///
+/// This function routes to the appropriate compliance checker based on document type.
+#[wasm_bindgen]
+pub fn check_document_compliance_wasm(
+    document_json: &str,
+    state_code: &str,
+    doc_type: &str,
+    year_built: Option<u32>,
+) -> Result<String, JsValue> {
+    let document: LeaseDocument = serde_json::from_str(document_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse document: {}", e)))?;
+
+    let state = State::parse_code(state_code)
+        .ok_or_else(|| JsValue::from_str(&format!("Unsupported state: {}", state_code)))?;
+
+    let jurisdiction = Jurisdiction::new(state);
+    let engine = ComplianceEngine::new();
+
+    // Parse document type
+    let document_type = parse_doc_type_string(doc_type, &document, &engine);
+
+    let report =
+        engine.check_document_compliance(&jurisdiction, &document, document_type, year_built);
+
+    serde_json::to_string(&report)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize report: {}", e)))
+}
+
+/// Parse document type string to DocumentType enum
+fn parse_doc_type_string(
+    doc_type: &str,
+    document: &LeaseDocument,
+    engine: &ComplianceEngine,
+) -> DocumentType {
+    match doc_type.to_lowercase().as_str() {
+        // Lease Documents
+        "lease" => DocumentType::Lease,
+        "lease_termination" => DocumentType::LeaseTerminationNotice,
+        "eviction" => DocumentType::EvictionNotice,
+        // Purchase Documents
+        "purchase" | "purchase_contract" | "realestate" => DocumentType::RealEstatePurchase,
+        "purchase_as_is" => DocumentType::RealEstatePurchaseAsIs,
+        "inspection_contingency" => DocumentType::InspectionContingency,
+        "financing_contingency" => DocumentType::FinancingContingency,
+        "escalation" | "escalation_addendum" => DocumentType::EscalationAddendum,
+        "appraisal_contingency" => DocumentType::AppraisalContingency,
+        // Listing Documents
+        "listing" | "listing_agreement" => DocumentType::ListingAgreement,
+        // Contractor Documents
+        "contractor_invoice" => DocumentType::ContractorInvoice,
+        "cost_of_materials" => DocumentType::CostOfMaterialsBill,
+        "notice_of_commencement" => DocumentType::NoticeOfCommencement,
+        "notice_to_owner" => DocumentType::NoticeToOwner,
+        "claim_of_lien" => DocumentType::ClaimOfLien,
+        "release_of_lien" => DocumentType::ReleaseOfLien,
+        "dispute_lien" => DocumentType::DisputeLien,
+        "fraudulent_lien" => DocumentType::FraudulentLienReport,
+        "final_payment_affidavit" => DocumentType::FinalPaymentAffidavit,
+        // Bill of Sale Documents
+        "bill_of_sale_car" => DocumentType::BillOfSaleCar,
+        "bill_of_sale_boat" => DocumentType::BillOfSaleBoat,
+        "bill_of_sale_trailer" => DocumentType::BillOfSaleTrailer,
+        "bill_of_sale_jetski" => DocumentType::BillOfSaleJetSki,
+        "bill_of_sale_mobile_home" => DocumentType::BillOfSaleMobileHome,
+        // Auto-detect
+        _ => {
+            let full_text = document.text_content.join("\n");
+            engine.detect_document_type(&full_text)
+        }
+    }
+}
+
+/// Get list of all supported document types
+#[wasm_bindgen]
+pub fn get_supported_document_types() -> Result<String, JsValue> {
+    let categories = vec![
+        serde_json::json!({
+            "category": "Lease",
+            "chapter": "Chapter 83",
+            "types": [
+                {"value": "lease", "name": "Residential Lease Agreement"},
+                {"value": "lease_termination", "name": "Lease Termination Notice"},
+                {"value": "eviction", "name": "Eviction Notice"}
+            ]
+        }),
+        serde_json::json!({
+            "category": "Real Estate Purchase",
+            "chapter": "Chapter 475, 689",
+            "types": [
+                {"value": "purchase", "name": "Purchase Contract"},
+                {"value": "purchase_as_is", "name": "As-Is Purchase Contract"},
+                {"value": "inspection_contingency", "name": "Inspection Contingency"},
+                {"value": "financing_contingency", "name": "Financing Contingency"},
+                {"value": "escalation", "name": "Escalation Addendum"},
+                {"value": "appraisal_contingency", "name": "Appraisal Contingency"}
+            ]
+        }),
+        serde_json::json!({
+            "category": "Listing",
+            "chapter": "Chapter 475",
+            "types": [
+                {"value": "listing", "name": "Exclusive Listing Agreement"}
+            ]
+        }),
+        serde_json::json!({
+            "category": "Contractor",
+            "chapter": "Chapter 713",
+            "types": [
+                {"value": "notice_of_commencement", "name": "Notice of Commencement"},
+                {"value": "notice_to_owner", "name": "Notice to Owner"},
+                {"value": "claim_of_lien", "name": "Claim of Lien"},
+                {"value": "release_of_lien", "name": "Release of Lien"},
+                {"value": "dispute_lien", "name": "Dispute of Lien"},
+                {"value": "fraudulent_lien", "name": "Fraudulent Lien Report"},
+                {"value": "contractor_invoice", "name": "Contractor Invoice"},
+                {"value": "cost_of_materials", "name": "Cost of Materials Bill"},
+                {"value": "final_payment_affidavit", "name": "Final Payment Affidavit"}
+            ]
+        }),
+    ];
+
+    serde_json::to_string(&categories)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize document types: {}", e)))
 }
 
 /// Get covered statutes for real estate transactions in a state

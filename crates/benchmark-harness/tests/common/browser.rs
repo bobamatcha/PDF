@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::Page;
 use futures::StreamExt;
 use std::time::Duration;
 
@@ -127,4 +128,70 @@ pub async fn require_browser() -> Option<(Browser, tokio::task::JoinHandle<()>)>
             }
         }
     }
+}
+
+/// Clear all browser storage (localStorage, sessionStorage, IndexedDB, cookies) for clean test context
+#[allow(dead_code)]
+pub async fn clear_browser_storage(page: &Page) -> Result<()> {
+    page.evaluate(
+        r#"(async () => {
+            // Clear localStorage
+            try { localStorage.clear(); } catch(e) {}
+
+            // Clear sessionStorage
+            try { sessionStorage.clear(); } catch(e) {}
+
+            // Clear IndexedDB databases
+            try {
+                const databases = await indexedDB.databases?.() || [];
+                for (const db of databases) {
+                    if (db.name) {
+                        indexedDB.deleteDatabase(db.name);
+                    }
+                }
+            } catch(e) {}
+
+            // Clear Cache Storage
+            try {
+                const cacheNames = await caches.keys();
+                for (const name of cacheNames) {
+                    await caches.delete(name);
+                }
+            } catch(e) {}
+
+            return true;
+        })()"#,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Navigate to URL with clean context - clears storage before loading
+#[allow(dead_code)]
+pub async fn navigate_clean(page: &Page, url: &str) -> Result<()> {
+    // First navigate to about:blank to get a clean page
+    page.goto("about:blank").await?;
+
+    // Clear any existing storage
+    clear_browser_storage(page).await?;
+
+    // Now navigate to the actual URL
+    page.goto(url).await?;
+
+    Ok(())
+}
+
+/// Macro to clear storage at origin before test
+#[macro_export]
+macro_rules! clear_storage {
+    ($page:expr, $url:expr) => {{
+        // Navigate to origin first to clear its storage
+        $page.goto($url).await.expect("Should navigate");
+        browser::clear_browser_storage(&$page)
+            .await
+            .expect("Should clear storage");
+        // Navigate away and back to reset app state
+        $page.goto("about:blank").await.expect("Should navigate");
+        $page.goto($url).await.expect("Should navigate");
+    }};
 }

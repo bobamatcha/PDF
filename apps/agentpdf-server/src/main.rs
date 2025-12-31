@@ -35,7 +35,10 @@ mod error;
 #[cfg(test)]
 mod tests;
 
-use api::{handle_check_compliance, handle_health, handle_list_templates, handle_render_template};
+use api::{
+    handle_check_compliance, handle_health, handle_list_document_types, handle_list_templates,
+    handle_render_template,
+};
 
 /// Command-line arguments for the agentPDF server
 #[derive(Parser, Debug)]
@@ -114,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(handle_health))
         // API endpoints
         .route("/api/templates", get(handle_list_templates))
+        .route("/api/document-types", get(handle_list_document_types))
         .route("/api/render", post(handle_render_template))
         .route("/api/compliance", post(handle_check_compliance))
         // Apply middleware
