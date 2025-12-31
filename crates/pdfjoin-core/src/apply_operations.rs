@@ -590,6 +590,7 @@ fn add_text_annotation(
 }
 
 /// Create PDF content stream for text appearance
+#[allow(clippy::too_many_arguments)]
 fn create_text_appearance_content(
     text: &str,
     font_size: f64,
@@ -637,6 +638,7 @@ fn create_text_appearance_content(
 }
 
 /// Create PDF content stream for styled text appearance with mixed fonts
+#[allow(clippy::too_many_arguments)]
 fn create_styled_text_appearance_content(
     segments: &[StyledTextSegment],
     font_size: f64,

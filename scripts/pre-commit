@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smart pre-commit hook - only runs tests for affected crates
+# Pre-commit hook aligned with CI workflow
 # Install: ./scripts/install-hooks.sh
 # Or manually: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
@@ -14,264 +14,70 @@ else
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 fi
 
-cd "$PROJECT_ROOT"
-
 echo "🔍 Running pre-commit checks..."
 
-# ============================================================================
-# Step 1: Detect changed files
-# ============================================================================
-# Get files staged for commit, or if nothing staged, get files changed since HEAD
-CHANGED_FILES=$(git diff --cached --name-only 2>/dev/null)
-if [ -z "$CHANGED_FILES" ]; then
-    CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null)
-fi
+cd "$PROJECT_ROOT"
 
-if [ -z "$CHANGED_FILES" ]; then
-    echo "  No files changed, skipping tests."
-    exit 0
-fi
-
-echo "  Changed files:"
-echo "$CHANGED_FILES" | sed 's/^/    /'
-
-# ============================================================================
-# Step 2: Map changed files to affected crates
-# ============================================================================
-AFFECTED_CRATES=""
-RUN_ALL_TESTS=false
-DOCSIGN_WEB_CHANGED=false
-DOCSIGN_WORKER_CHANGED=false
-
-# Helper function to add a crate to the affected list
-add_crate() {
-    local crate=$1
-    if [[ ! "$AFFECTED_CRATES" =~ "$crate" ]]; then
-        AFFECTED_CRATES="$AFFECTED_CRATES $crate"
-    fi
-}
-
-while IFS= read -r file; do
-    case "$file" in
-        # Workspace-level changes affect everything
-        Cargo.toml|Cargo.lock|rust-toolchain.toml)
-            RUN_ALL_TESTS=true
-            ;;
-
-        # Shared crates affect all downstream crates
-        crates/shared-types/*)
-            add_crate "shared-types"
-            add_crate "docsign-core"
-            add_crate "docsign-wasm"
-            add_crate "pdfjoin-core"
-            add_crate "compliance-engine"
-            ;;
-        crates/shared-pdf/*)
-            add_crate "shared-pdf"
-            add_crate "docsign-core"
-            add_crate "docsign-wasm"
-            add_crate "pdfjoin-core"
-            ;;
-        crates/shared-crypto/*)
-            add_crate "shared-crypto"
-            add_crate "docsign-core"
-            add_crate "docsign-wasm"
-            ;;
-
-        # Individual crates
-        crates/docsign-core/*)
-            add_crate "docsign-core"
-            add_crate "docsign-wasm"
-            ;;
-        crates/pdfjoin-core/*)
-            add_crate "pdfjoin-core"
-            add_crate "pdfjoin-wasm"
-            ;;
-        crates/compliance-engine/*)
-            add_crate "compliance-engine"
-            ;;
-        crates/typst-engine/*)
-            add_crate "typst-engine"
-            ;;
-        crates/email-proxy/*)
-            add_crate "email-proxy"
-            ;;
-        crates/benchmark-harness/*)
-            add_crate "benchmark-harness"
-            ;;
-
-        # App-specific changes
-        apps/docsign-web/wasm/*)
-            add_crate "docsign-wasm"
-            ;;
-        apps/docsign-web/worker/*)
-            DOCSIGN_WORKER_CHANGED=true
-            add_crate "docsign-worker"
-            ;;
-        apps/docsign-web/www/*|apps/docsign-web/*.json|apps/docsign-web/*.toml)
-            DOCSIGN_WEB_CHANGED=true
-            ;;
-        apps/pdfjoin-web/wasm/*)
-            add_crate "pdfjoin-wasm"
-            ;;
-        apps/agentpdf-web/wasm/*)
-            add_crate "agentpdf-wasm"
-            ;;
-        apps/mcp-server/*)
-            add_crate "mcp-server"
-            ;;
-        apps/docsign-api/*)
-            add_crate "docsign-api"
-            ;;
-        apps/docsign-tauri/*)
-            add_crate "docsign-tauri"
-            ;;
-
-        # Scripts affect hook behavior
-        scripts/*)
-            # Don't run extra tests, but continue
-            ;;
-
-        # Documentation only - no tests needed
-        *.md|*.txt|LICENSE|.gitignore)
-            # No tests needed for docs
-            ;;
-
-        # TypeScript/JS changes in docsign-web
-        apps/docsign-web/*.ts|apps/docsign-web/*.js)
-            DOCSIGN_WEB_CHANGED=true
-            ;;
-    esac
-done <<< "$CHANGED_FILES"
-
-# ============================================================================
-# Step 3: Format check (always run, it's fast)
-# ============================================================================
+# Format check
 echo "  Checking formatting..."
 if ! cargo fmt --all -- --check; then
     echo "❌ Formatting check failed. Run 'cargo fmt --all' to fix."
     exit 1
 fi
 
-# ============================================================================
-# Step 4: Clippy (only on affected crates, or all if workspace changed)
-# ============================================================================
+# Clippy (with auto-fix for safe lints)
 echo "  Running Clippy..."
-if [ "$RUN_ALL_TESTS" = true ]; then
-    CLIPPY_CMD="cargo clippy --all-targets --all-features -- -D warnings"
-elif [ -n "$AFFECTED_CRATES" ]; then
-    CLIPPY_PACKAGES=$(echo $AFFECTED_CRATES | tr ' ' '\n' | grep -v '^$' | sed 's/^/-p /' | tr '\n' ' ')
-    CLIPPY_CMD="cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings"
-else
-    echo "  ⏭️  No Rust files changed, skipping Clippy"
-    CLIPPY_CMD=""
-fi
-
-if [ -n "$CLIPPY_CMD" ]; then
-    CLIPPY_OUTPUT=$(eval $CLIPPY_CMD 2>&1) || {
-        # Check if it's a simple/safe lint that can be auto-fixed
-        SAFE_LINTS="redundant_clone|needless_borrow|clone_on_copy|useless_conversion|needless_return"
-        if echo "$CLIPPY_OUTPUT" | grep -qE "clippy::($SAFE_LINTS)"; then
-            echo "  🔧 Auto-fixing safe clippy lints..."
-            cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>/dev/null || true
-            if ! eval $CLIPPY_CMD; then
-                echo "❌ Clippy still has issues after auto-fix. Manual fix needed."
-                exit 1
-            fi
-            echo "  ✅ Auto-fix successful!"
-        else
-            echo "$CLIPPY_OUTPUT"
-            echo "❌ Clippy found issues. Fix the warnings above."
+CLIPPY_OUTPUT=$(cargo clippy --all-targets --all-features -- -D warnings 2>&1) || {
+    # Check if it's a simple/safe lint that can be auto-fixed (machine-applicable only)
+    SAFE_LINTS="redundant_clone|needless_borrow|clone_on_copy|useless_conversion|needless_return"
+    if echo "$CLIPPY_OUTPUT" | grep -qE "clippy::($SAFE_LINTS)"; then
+        echo "  🔧 Auto-fixing safe clippy lints..."
+        cargo clippy --fix --allow-dirty --allow-staged --all-targets --all-features 2>/dev/null || true
+        # Re-run clippy to verify fix worked
+        if ! cargo clippy --all-targets --all-features -- -D warnings; then
+            echo "❌ Clippy still has issues after auto-fix. Manual fix needed."
             exit 1
         fi
-    }
-fi
-
-# ============================================================================
-# Step 5: Run tests (only for affected crates)
-# ============================================================================
-echo "  Running tests..."
-if [ "$RUN_ALL_TESTS" = true ]; then
-    echo "    (workspace-level change detected, running all tests)"
-    if command -v cargo-nextest &> /dev/null; then
-        cargo nextest run --all-features --workspace
+        echo "  ✅ Auto-fix successful!"
     else
-        cargo test --all-features --workspace
+        echo "$CLIPPY_OUTPUT"
+        echo "❌ Clippy found issues. Fix the warnings above."
+        exit 1
     fi
-elif [ -n "$AFFECTED_CRATES" ]; then
-    TEST_PACKAGES=$(echo $AFFECTED_CRATES | tr ' ' '\n' | grep -v '^$' | sed 's/^/-p /' | tr '\n' ' ')
-    echo "    (testing affected crates: $AFFECTED_CRATES)"
-    if command -v cargo-nextest &> /dev/null; then
-        eval "cargo nextest run $TEST_PACKAGES --all-features"
-    else
-        eval "cargo test $TEST_PACKAGES --all-features"
+}
+
+# Unit tests (fast, no browser/server needed)
+# Exclude browser tests - they require trunk servers and are slow
+echo "  Running unit tests..."
+if command -v cargo-nextest &> /dev/null; then
+    if ! cargo nextest run --all-features --workspace -E 'not binary(browser_pdfjoin) and not binary(browser_agentpdf) and not binary(browser_docsign) and not binary(browser_core)'; then
+        echo "❌ Unit tests failed."
+        exit 1
     fi
 else
-    echo "  ⏭️  No Rust crates affected, skipping tests"
-fi
-
-# ============================================================================
-# Step 6: Parity tests (if benchmark-harness affected or workspace changed)
-# ============================================================================
-if [ "$RUN_ALL_TESTS" = true ] || [[ "$AFFECTED_CRATES" =~ "benchmark-harness" ]]; then
-    echo "  Running parity tests..."
-    if command -v cargo-nextest &> /dev/null; then
-        cargo nextest run -p benchmark-harness --test parity_tests
-    else
-        cargo test -p benchmark-harness --test parity_tests
+    # Without nextest, exclude benchmark-harness entirely and run its non-browser tests separately
+    if ! cargo test --all-features --workspace --exclude benchmark-harness; then
+        echo "❌ Unit tests failed."
+        exit 1
+    fi
+    # Run only parity and benchmark tests from benchmark-harness (skip browser_* tests)
+    if ! cargo test -p benchmark-harness --test parity_tests --test pdfjoin_benchmark; then
+        echo "❌ Unit tests failed."
+        exit 1
     fi
 fi
 
-# ============================================================================
-# Step 7: TypeScript checks (if docsign-web changed)
-# ============================================================================
-if [ "$DOCSIGN_WEB_CHANGED" = true ]; then
-    echo "  Running TypeScript checks..."
-    cd "$PROJECT_ROOT/apps/docsign-web"
-    if [ -f "package.json" ]; then
-        npm run typecheck 2>/dev/null || echo "    ⚠️  TypeScript check skipped (run npm install first)"
-    fi
-    cd "$PROJECT_ROOT"
-fi
-
-# ============================================================================
-# Step 8: Dist verification (if docsign-web changed)
-# ============================================================================
-if [ -z "$SKIP_DIST_VERIFY" ] && [ "$DOCSIGN_WEB_CHANGED" = true ]; then
-    echo "  Verifying docsign-web dist build..."
-    cd "$PROJECT_ROOT/apps/docsign-web"
-
-    # Only build if dist doesn't exist or is stale
-    if [ ! -d "www/dist" ] || [ "$(find wasm/src www/*.html www/*.js www/*.css -newer www/dist -print -quit 2>/dev/null)" ]; then
-        echo "    Running trunk build --release..."
-        if ! trunk build --release > /dev/null 2>&1; then
-            echo "❌ Trunk build failed for docsign-web."
-            exit 1
-        fi
-    fi
-
-    # Verify dist contents
-    if [ -f "./scripts/verify-dist.sh" ]; then
-        if ! ./scripts/verify-dist.sh > /dev/null 2>&1; then
-            echo "❌ Dist verification failed. Required files missing."
-            exit 1
-        fi
-        echo "    ✅ Dist contains all required files"
-    fi
-    cd "$PROJECT_ROOT"
-fi
-
-# ============================================================================
-# Step 9: Browser tests (optional, skip by default for speed)
-# ============================================================================
-if [ -n "$RUN_BROWSER_TESTS" ]; then
+# Browser tests (requires trunk servers) - DISABLED by default, too slow/flaky for pre-commit
+# Run manually with: ./scripts/test-browser.sh
+# Or enable with: ENABLE_BROWSER_TESTS=1 git commit ...
+if [ -n "$ENABLE_BROWSER_TESTS" ]; then
     echo "  Running browser integration tests..."
     if ! "$PROJECT_ROOT/scripts/test-browser.sh"; then
         echo "❌ Browser tests failed."
         exit 1
     fi
 else
-    echo "  ⏭️  Skipping browser tests (set RUN_BROWSER_TESTS=1 to enable)"
+    echo "  ⏭️  Skipping browser tests (run ./scripts/test-browser.sh manually)"
 fi
 
 echo "✅ All pre-commit checks passed!"

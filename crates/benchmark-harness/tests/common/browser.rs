@@ -2,6 +2,8 @@
 
 use anyhow::Result;
 use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::cdp::browser_protocol::target::CreateTargetParams;
+use chromiumoxide::Page;
 use futures::StreamExt;
 use std::time::Duration;
 
@@ -127,4 +129,29 @@ pub async fn require_browser() -> Option<(Browser, tokio::task::JoinHandle<()>)>
             }
         }
     }
+}
+
+/// Create an isolated page using an incognito browser context.
+/// This ensures complete isolation between tests - no shared cookies, cache, or storage.
+#[allow(dead_code)]
+pub async fn create_isolated_page(browser: &Browser) -> Result<Page> {
+    use chromiumoxide::cdp::browser_protocol::target::CreateBrowserContextParams;
+
+    // Create a new incognito browser context for full isolation
+    let browser_context_id = browser
+        .create_browser_context(CreateBrowserContextParams::default())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create browser context: {}", e))?;
+
+    // Create a page within this isolated context
+    let page = browser
+        .new_page(CreateTargetParams {
+            url: "about:blank".to_string(),
+            browser_context_id: Some(browser_context_id),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create page: {}", e))?;
+
+    Ok(page)
 }
