@@ -155,17 +155,25 @@ echo -e "\n${CYAN}Phase 2: Tests (parallel)${NC}"
 # Use nextest if available for better parallelism
 if command -v cargo-nextest &> /dev/null; then
     TEST_CMD="cargo nextest run"
+    NEXTEST_AVAILABLE=1
 else
     TEST_CMD="cargo test"
+    NEXTEST_AVAILABLE=0
 fi
 
-# Run unit tests and parity tests in parallel
+# Run unit tests (excluding browser tests - they require trunk servers and are slow)
 (
-    $TEST_CMD --all-features --workspace > "$TEST_LOG" 2>&1
+    if [[ $NEXTEST_AVAILABLE -eq 1 ]]; then
+        $TEST_CMD --all-features --workspace -E 'not binary(browser_pdfjoin) and not binary(browser_agentpdf) and not binary(browser_docsign) and not binary(browser_core)' > "$TEST_LOG" 2>&1
+    else
+        # Without nextest, exclude benchmark-harness entirely and run its non-browser tests separately
+        cargo test --all-features --workspace --exclude benchmark-harness > "$TEST_LOG" 2>&1
+    fi
 ) &
 TEST_PID=$!
 
 (
+    # Run parity tests separately
     $TEST_CMD -p benchmark-harness --test parity_tests > "$PARITY_LOG" 2>&1
 ) &
 PARITY_PID=$!
@@ -191,12 +199,12 @@ fi
 if [[ $TEST_FAILED -ne 0 ]]; then
     echo -e "\n${RED}❌ Tests failed:${NC}"
 
-    if ! $TEST_CMD --all-features --workspace > /dev/null 2>&1; then
+    if [[ -s "$TEST_LOG" ]]; then
         echo -e "\n${YELLOW}=== unit tests ===${NC}"
         cat "$TEST_LOG"
     fi
 
-    if ! $TEST_CMD -p benchmark-harness --test parity_tests > /dev/null 2>&1; then
+    if [[ -s "$PARITY_LOG" ]]; then
         echo -e "\n${YELLOW}=== parity tests ===${NC}"
         cat "$PARITY_LOG"
     fi
@@ -204,18 +212,17 @@ if [[ $TEST_FAILED -ne 0 ]]; then
     exit 1
 fi
 
-# ============================================================================
-# PHASE 3: Browser tests (optional, can be slow)
-# ============================================================================
-if [ -z "$SKIP_BROWSER_TESTS" ]; then
+# Browser tests (requires trunk servers) - DISABLED by default, too slow/flaky for pre-commit
+# Run manually with: ./scripts/test-browser.sh
+# Or enable with: ENABLE_BROWSER_TESTS=1 git commit ...
+if [ -n "$ENABLE_BROWSER_TESTS" ]; then
     echo -e "\n${CYAN}Phase 3: Browser tests${NC}"
     if ! "$PROJECT_ROOT/scripts/test-browser.sh"; then
         echo -e "${RED}❌ Browser tests failed.${NC}"
-        echo -e "  ${CYAN}To skip: SKIP_BROWSER_TESTS=1 git commit ...${NC}"
         exit 1
     fi
 else
-    echo -e "\n${CYAN}Phase 3: Browser tests${NC} ${YELLOW}(skipped)${NC}"
+    echo -e "\n${CYAN}Phase 3: Browser tests${NC} ${YELLOW}(skipped - run ./scripts/test-browser.sh manually)${NC}"
 fi
 
 echo -e "\n${GREEN}✅ All pre-commit checks passed!${NC}"

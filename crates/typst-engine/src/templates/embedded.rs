@@ -98,6 +98,10 @@ const FLORIDA_BILL_OF_SALE_JETSKI_TEMPLATE: &str =
 const FLORIDA_BILL_OF_SALE_MOBILE_HOME_TEMPLATE: &str =
     include_str!("../../templates/florida_bill_of_sale_mobile_home.typ");
 
+/// CMA (Comparative Market Analysis) Report template - loaded from templates/cma.typ
+/// Professional property valuation report with comps and investment metrics
+const CMA_TEMPLATE: &str = include_str!("../../templates/cma.typ");
+
 /// Get an embedded template by name
 pub fn get_embedded_template(name: &str) -> Option<String> {
     match name {
@@ -131,6 +135,7 @@ pub fn get_embedded_template(name: &str) -> Option<String> {
         "florida_bill_of_sale_mobile_home" => {
             Some(FLORIDA_BILL_OF_SALE_MOBILE_HOME_TEMPLATE.to_string())
         }
+        "cma" => Some(CMA_TEMPLATE.to_string()),
         _ => None,
     }
 }
@@ -162,6 +167,7 @@ pub fn list_embedded_templates() -> Vec<&'static str> {
         "florida_bill_of_sale_trailer",
         "florida_bill_of_sale_jetski",
         "florida_bill_of_sale_mobile_home",
+        "cma",
     ]
 }
 
@@ -667,7 +673,7 @@ mod tests {
     #[test]
     fn test_list_embedded_templates() {
         let templates = list_embedded_templates();
-        assert_eq!(templates.len(), 24);
+        assert_eq!(templates.len(), 25); // 24 Florida templates + CMA
         assert!(templates.contains(&"invoice"));
         assert!(templates.contains(&"letter"));
         assert!(templates.contains(&"florida_lease"));
@@ -692,6 +698,28 @@ mod tests {
         assert!(templates.contains(&"florida_bill_of_sale_trailer"));
         assert!(templates.contains(&"florida_bill_of_sale_jetski"));
         assert!(templates.contains(&"florida_bill_of_sale_mobile_home"));
+        assert!(templates.contains(&"cma"));
+    }
+
+    #[test]
+    fn test_get_cma_template() {
+        let template = get_embedded_template("cma");
+        assert!(template.is_some(), "CMA template should exist");
+
+        let content = template.unwrap();
+        // Verify key CMA elements
+        assert!(
+            content.contains("Comparative Market Analysis") || content.contains("subject_address"),
+            "CMA template should have CMA-specific content"
+        );
+        assert!(
+            content.contains("estimated_value") || content.contains("ESTIMATED VALUE"),
+            "CMA template should have valuation section"
+        );
+        assert!(
+            content.contains("comps") || content.contains("Comparable"),
+            "CMA template should have comparables section"
+        );
     }
 
     // ========================================================================
