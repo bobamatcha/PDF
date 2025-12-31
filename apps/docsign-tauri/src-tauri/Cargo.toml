@@ -1,0 +1,51 @@
+[package]
+name = "docsign-tauri"
+version.workspace = true
+edition.workspace = true
+description = "GetSignatures desktop application for document signing"
+default-run = "docsign-tauri"
+
+[lib]
+name = "docsign_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri
+tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+
+# Internal crates
+docsign-core = { workspace = true }
+shared-pdf = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { version = "1", features = ["fs"] }
+
+# System utilities
+dirs = "5"
+tempfile = "3"
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

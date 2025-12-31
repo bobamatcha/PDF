@@ -5,13 +5,7 @@ compatibility_date = "2024-01-01"
 # Account ID - set via environment or wrangler login
 # account_id = "YOUR_ACCOUNT_ID"
 
-# Routes for getsignatures.org
-# Uncomment and configure for production:
-# routes = [
-#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
-# ]
-
-# For development, use workers.dev subdomain
+# For local development, use workers.dev subdomain
 workers_dev = true
 
 # Build configuration for Rust WASM worker
@@ -22,6 +16,7 @@ command = "cargo install -q worker-build && worker-build --release"
 # Create these in Cloudflare dashboard first, then add IDs:
 # wrangler kv:namespace create "SESSIONS"
 # wrangler kv:namespace create "RATE_LIMITS"
+# wrangler kv:namespace create "VERIFICATIONS"
 [[kv_namespaces]]
 binding = "SESSIONS"
 id = ""  # Add after creating: wrangler kv:namespace create "SESSIONS"
@@ -29,6 +24,10 @@ id = ""  # Add after creating: wrangler kv:namespace create "SESSIONS"
 [[kv_namespaces]]
 binding = "RATE_LIMITS"
 id = ""  # Add after creating: wrangler kv:namespace create "RATE_LIMITS"
+
+[[kv_namespaces]]
+binding = "VERIFICATIONS"
+id = ""  # Add after creating: wrangler kv:namespace create "VERIFICATIONS"
 
 # Environment variables (non-secret)
 [vars]
@@ -39,14 +38,62 @@ MONTHLY_LIMIT = "3000"
 # wrangler secret put RESEND_API_KEY
 # wrangler secret put DOCSIGN_API_KEY
 
+# =============================================================
 # Development environment
+# =============================================================
 [env.dev]
 workers_dev = true
 vars = { DAILY_LIMIT = "10", MONTHLY_LIMIT = "100" }
 
+[[env.dev.kv_namespaces]]
+binding = "SESSIONS"
+id = ""  # Add dev namespace ID
+
+[[env.dev.kv_namespaces]]
+binding = "RATE_LIMITS"
+id = ""  # Add dev namespace ID
+
+[[env.dev.kv_namespaces]]
+binding = "VERIFICATIONS"
+id = ""  # Add dev namespace ID
+
+# =============================================================
+# Staging environment
+# =============================================================
+[env.staging]
+workers_dev = true
+vars = { DAILY_LIMIT = "50", MONTHLY_LIMIT = "500" }
+
+[[env.staging.kv_namespaces]]
+binding = "SESSIONS"
+id = ""  # Add staging namespace ID
+
+[[env.staging.kv_namespaces]]
+binding = "RATE_LIMITS"
+id = ""  # Add staging namespace ID
+
+[[env.staging.kv_namespaces]]
+binding = "VERIFICATIONS"
+id = ""  # Add staging namespace ID
+
+# =============================================================
 # Production environment
+# =============================================================
 [env.production]
 workers_dev = false
-# routes = [
-#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
-# ]
+routes = [
+  { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
+]
+vars = { DAILY_LIMIT = "100", MONTHLY_LIMIT = "3000" }
+
+[[env.production.kv_namespaces]]
+binding = "SESSIONS"
+id = ""  # Add production namespace ID
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMITS"
+id = ""  # Add production namespace ID
+
+[[env.production.kv_namespaces]]
+binding = "VERIFICATIONS"
+id = ""  # Add production namespace ID

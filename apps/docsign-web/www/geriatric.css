@@ -18,9 +18,9 @@
    ========================================================================== */
 
 :root {
-    /* Typography - Larger than typical */
+    /* Typography - Larger than typical, 18px MINIMUM for all text */
     --font-size-base: 18px;
-    --font-size-sm: 16px;
+    --font-size-sm: 18px;  /* Geriatric UX: no text smaller than 18px */
     --font-size-lg: 22px;
     --font-size-xl: 28px;
     --font-size-action: 24px;
@@ -627,4 +627,23 @@ label {
 /* Ensure no content is cut off */
 .safe-area {
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* ==========================================================================
+   Mobile Signature Modal
+   Note: Primary styles are injected by mobile-signature-modal.ts
+   These are fallback/additional styles for integration
+   ========================================================================== */
+
+/* Prevent body scroll when modal is open */
+body.mobile-signature-modal-open {
+    overflow: hidden !important;
+    position: fixed !important;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Ensure modal appears above all other content */
+.mobile-signature-modal {
+    z-index: 10000;
 }

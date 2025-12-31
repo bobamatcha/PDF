@@ -34,6 +34,28 @@ struct SendResponse {
     remaining_month: Option<u32>,
 }
 
+/// Health check response for monitoring
+#[derive(Serialize)]
+struct HealthResponse {
+    status: String,
+    timestamp: String,
+    version: String,
+    dependencies: HealthDependencies,
+}
+
+#[derive(Serialize)]
+struct HealthDependencies {
+    kv_sessions: DependencyStatus,
+    kv_rate_limits: DependencyStatus,
+}
+
+#[derive(Serialize)]
+struct DependencyStatus {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 /// Request to create a signing session
 #[derive(Deserialize)]
 struct CreateSessionRequest {
@@ -633,6 +655,87 @@ fn format_all_signed_notification_email(
     )
 }
 
+/// Format notification email when a recipient declines to sign (UX-006)
+fn format_decline_notification_email(
+    recipient_name: &str,
+    recipient_email: &str,
+    document_name: &str,
+    reason: Option<&str>,
+    declined_at: &str,
+) -> String {
+    let formatted_time = format_timestamp(declined_at);
+    let reason_section = if let Some(r) = reason {
+        format!(
+            r#"<div style="background: #fef3c7; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Reason Provided</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-style: italic;">"{}"</p>
+        </div>"#,
+            r
+        )
+    } else {
+        "<p style=\"font-size: 14px; color: #6b7280; font-style: italic;\">No reason was provided.</p>"
+            .to_string()
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Document Declined</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            Unfortunately, a recipient has declined to sign your document.
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Recipient</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{recipient_name}</p>
+            <p style="margin: 5px 0 0 0; font-size: 14px; color: #6b7280;">{recipient_email}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Declined At</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{declined_time}</p>
+        </div>
+
+        {reason_section}
+
+        <div style="background: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 4px; margin-top: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #1e40af;">
+                <strong>What's next?</strong> You may want to contact the recipient directly to resolve any concerns, or resend the document request if needed.
+            </p>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            The original document remains securely stored. You can create a new signing request at any time.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        recipient_name = recipient_name,
+        recipient_email = recipient_email,
+        document_name = document_name,
+        declined_time = formatted_time,
+        reason_section = reason_section
+    )
+}
+
 /// Send notification email to sender when recipient signs
 async fn send_sender_notification(
     env: &Env,
@@ -721,8 +824,8 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     // Route requests
     match (method, path.as_str()) {
-        // Health check (public)
-        (Method::Get, "/health") => cors_response(Response::ok("OK")),
+        // Health check (public) - detailed monitoring endpoint
+        (Method::Get, "/health") => handle_health_check(env).await,
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
 
         // Protected endpoints - require API key
@@ -802,6 +905,82 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
         _ => cors_response(Response::error("Not found", 404)),
     }
+}
+
+/// Handle health check requests - returns service status and dependency health
+async fn handle_health_check(env: Env) -> Result<Response> {
+    let timestamp = Utc::now().to_rfc3339();
+
+    // Check KV Sessions availability
+    let kv_sessions_status = match env.kv("SESSIONS") {
+        Ok(kv) => {
+            // Try a simple operation to verify KV is working
+            match kv.get("__health_check__").text().await {
+                Ok(_) => DependencyStatus {
+                    status: "healthy".to_string(),
+                    error: None,
+                },
+                Err(e) => DependencyStatus {
+                    status: "degraded".to_string(),
+                    error: Some(format!("KV read error: {}", e)),
+                },
+            }
+        }
+        Err(_) => DependencyStatus {
+            status: "unavailable".to_string(),
+            error: Some("SESSIONS KV binding not configured".to_string()),
+        },
+    };
+
+    // Check KV Rate Limits availability
+    let kv_rate_limits_status = match env.kv("RATE_LIMITS") {
+        Ok(kv) => match kv.get("rate_state").text().await {
+            Ok(_) => DependencyStatus {
+                status: "healthy".to_string(),
+                error: None,
+            },
+            Err(e) => DependencyStatus {
+                status: "degraded".to_string(),
+                error: Some(format!("KV read error: {}", e)),
+            },
+        },
+        Err(_) => DependencyStatus {
+            status: "unavailable".to_string(),
+            error: Some("RATE_LIMITS KV binding not configured".to_string()),
+        },
+    };
+
+    // Determine overall status
+    let overall_status =
+        if kv_sessions_status.status == "healthy" && kv_rate_limits_status.status == "healthy" {
+            "healthy"
+        } else if kv_sessions_status.status == "unavailable"
+            || kv_rate_limits_status.status == "unavailable"
+        {
+            "unhealthy"
+        } else {
+            "degraded"
+        };
+
+    let response = HealthResponse {
+        status: overall_status.to_string(),
+        timestamp,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        dependencies: HealthDependencies {
+            kv_sessions: kv_sessions_status,
+            kv_rate_limits: kv_rate_limits_status,
+        },
+    };
+
+    // Return appropriate status code based on health
+    let status_code = match overall_status {
+        "healthy" => 200,
+        "degraded" => 200, // Still operational but with issues
+        _ => 503,          // Service unavailable
+    };
+
+    let resp = Response::from_json(&response)?.with_status(status_code);
+    cors_response(Ok(resp))
 }
 
 async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
@@ -1551,8 +1730,29 @@ async fn handle_decline(session_id: &str, mut req: Request, env: Env) -> Result<
             .execute()
             .await?;
 
-            // TODO: Send notification email to sender (UX-006 integration)
-            // For now, we just log it
+            // UX-006: Send decline notification email to sender
+            if let Some(sender_email) = s.metadata.sender_email.as_ref() {
+                if let Some(recipient) = s.recipients.iter().find(|r| r.id == body.recipient_id) {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let declined_at = recipient.declined_at.as_deref().unwrap_or(&now);
+
+                    let subject = format!("{} Declined: {}", recipient.name, s.metadata.filename);
+                    let html_body = format_decline_notification_email(
+                        &recipient.name,
+                        &recipient.email,
+                        &s.metadata.filename,
+                        body.reason.as_deref(),
+                        declined_at,
+                    );
+
+                    if let Err(e) =
+                        send_sender_notification(&env, sender_email, &subject, &html_body).await
+                    {
+                        console_log!("Failed to send decline notification: {:?}", e);
+                    }
+                }
+            }
+
             console_log!(
                 "Session {} declined by recipient {}: {:?}",
                 session_id,

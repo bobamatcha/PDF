@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b0d2373fb5697ffd1aff0f7ce5752e111169698a5d2ad1e02c6364223792be9d # shrinks to name = "\u{7f}"
+cc 62c5c4682528888092cc9fefba9f51a9909374b7ea61aa5ddd7dac34aa3f1cda # shrinks to name = "ࠀࠀ \0a𐀀A00a𐀀𐀀 ¡𐀀¡\0¡ AaA0a \u{b}ࠀ 𐀀0\u{b}¡ 𐀀0𐀀 𐀀aAࠀ000¡AAa\0𐀀𐀀 𐀀\u{b}¡0 𐀀   \0𐀀𐀀𐀇$;$\t�¬{缁\u{1b}\u{6}&\u{6cbd9}\u{60417}\r/\u{6}Ѩ䐌\u{1639d}r\u{1b}\0\u{f206c}I🕴碡\\\u{4add0}\rc\u{d2f05}¥(.\t\"=mqMQ\u{e9c19}"
+cc cd1b88a86714fbd7b5482a493550ede2c5374415dba2680e1b4cbfa0f14ba9b6 # shrinks to path = "/"
+cc fd5990900d8f17e727ec0fe5cff9f7377e411f2aee82c4fd0631f7076185bdcc # shrinks to name = "\u{80}"

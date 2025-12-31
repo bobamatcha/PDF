@@ -17,6 +17,8 @@ members = [
     "apps/agentpdf-web/wasm",
     "apps/docsign-web/wasm",
     "apps/docsign-web/worker",
+    "apps/docsign-tauri/src-tauri",
+    "apps/docsign-api",
     "apps/pdfjoin-web/wasm",
     # "apps/corpus-api",         # Blocked: depends on corpus-core
     "apps/mcp-server",

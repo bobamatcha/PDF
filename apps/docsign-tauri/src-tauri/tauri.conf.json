@@ -1,0 +1,68 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GetSignatures",
+  "version": "0.1.0",
+  "identifier": "org.getsignatures.app",
+  "build": {
+    "beforeDevCommand": "",
+    "devUrl": "http://localhost:8080",
+    "beforeBuildCommand": "",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "GetSignatures - Document Signing",
+        "width": 1200,
+        "height": 900,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "minWidth": 900,
+        "minHeight": 700,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://releases.getsignatures.org"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.13"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    },
+    "fs": {
+      "scope": {
+        "allow": ["$DOCUMENT/**", "$DOWNLOAD/**", "$DESKTOP/**", "$HOME/Documents/**", "$HOME/Downloads/**", "$HOME/Desktop/**"],
+        "deny": ["$HOME/.ssh/**", "$HOME/.gnupg/**", "$HOME/.config/**", "$HOME/.local/**", "$HOME/.*"]
+      }
+    },
+    "dialog": {
+      "open": true,
+      "save": true
+    },
+    "updater": {
+      "endpoints": [
+        "https://releases.getsignatures.org/updates/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCQkFCRTEwMkYxQjY0MkIKUldRclpCc3ZFTDY2VzFTTGl6cUU5eXpQeXRDamFuZVY1eWNqZDBvK1NnUnQxbysxSFVyT3RmUDEK"
+    }
+  }
+}

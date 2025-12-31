@@ -320,8 +320,8 @@ export class SignatureModal {
             this.typedSignature = new TypedSignature(this.preview);
         }
 
-        // Current mode
-        this.mode = 'draw';
+        // Current mode - default to 'type' for better accessibility (UX fix)
+        this.mode = 'type';
         this.currentFieldId = null;
 
         this._bindEvents();
@@ -411,7 +411,7 @@ export class SignatureModal {
     show(fieldId) {
         this.currentFieldId = fieldId;
         this.modal.classList.remove('hidden');
-        this._switchTab('draw');
+        this._switchTab('type'); // Default to type for better accessibility (UX fix)
         this.signaturePad?.clear();
         if (this.typedInput) this.typedInput.value = '';
         if (this.typedSignature) this.typedSignature.setText('');

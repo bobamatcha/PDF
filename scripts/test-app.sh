@@ -30,6 +30,11 @@ case "$APP" in
     cargo test -p docsign-core --all-features
     cargo test -p docsign-wasm --all-features
     ;;
+  docsign-tauri)
+    echo "Running tests for docsign-tauri..."
+    cargo test -p docsign-tauri --all-features
+    cd apps/docsign-tauri && npm test
+    ;;
   corpus)
     echo "Running tests for corpus..."
     cargo test -p corpus-core --all-features
@@ -57,15 +62,16 @@ case "$APP" in
     ;;
   list)
     echo "Available apps/crates:"
-    echo "  pdfjoin     - pdfjoin-core, pdfjoin-wasm"
-    echo "  agentpdf    - agentpdf-wasm"
-    echo "  docsign     - docsign-core, docsign-wasm"
-    echo "  corpus      - corpus-core, corpus-api"
-    echo "  shared-pdf  - shared-pdf"
-    echo "  shared-types- shared-types"
-    echo "  compliance  - compliance-engine"
-    echo "  typst       - typst-engine"
-    echo "  all         - all workspace crates"
+    echo "  pdfjoin      - pdfjoin-core, pdfjoin-wasm"
+    echo "  agentpdf     - agentpdf-wasm"
+    echo "  docsign      - docsign-core, docsign-wasm"
+    echo "  docsign-tauri- docsign-tauri (Rust + TypeScript tests)"
+    echo "  corpus       - corpus-core, corpus-api"
+    echo "  shared-pdf   - shared-pdf"
+    echo "  shared-types - shared-types"
+    echo "  compliance   - compliance-engine"
+    echo "  typst        - typst-engine"
+    echo "  all          - all workspace crates"
     ;;
   *)
     echo "Unknown app: $APP"

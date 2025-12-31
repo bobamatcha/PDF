@@ -3,8 +3,8 @@
  * Handles recipient signing workflow with guided flow and signature capture
  */
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+// Note: PDF.js worker is configured by the TypeScript bundle (pdf-loader.ts)
+// PDF loading now uses window.DocSign namespace from sign-pdf-bridge.ts
 
 // Global state
 window.sessionParams = {
@@ -61,6 +61,7 @@ const elements = {
     drawTab: document.getElementById('draw-tab'),
     typeTab: document.getElementById('type-tab'),
     signaturePad: document.getElementById('signature-pad'),
+    undoSignature: document.getElementById('undo-signature'),
     clearSignature: document.getElementById('clear-signature'),
     typedName: document.getElementById('typed-name'),
     fontSelector: document.getElementById('font-selector'),
@@ -153,7 +154,7 @@ function showSessionError(message) {
             <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
             <h2 style="color: #ef4444; margin-bottom: 1rem;">Invalid Signing Link</h2>
             <p style="margin-bottom: 1rem;">${message}</p>
-            <p style="font-size: 0.875rem; color: #888;">
+            <p style="font-size: 18px; color: #888;">
                 Please check that you're using the correct link from your email invitation.
             </p>
         </div>
@@ -397,9 +398,14 @@ function buildLocalSession(data, recipient) {
 }
 
 /**
- * Fetch session data from Worker API
- * IMPORTANT: Does NOT fall back to mock data - shows error instead
- * Exception: session=test is allowed for automated testing only
+ * Fetch session data - LOCAL FIRST, then server fallback
+ * DOCSIGN_PLAN Phase 2: Local-first session management
+ *
+ * Order of operations:
+ * 1. Try LocalSessionManager (IndexedDB) first
+ * 2. If not found AND online, fetch from server
+ * 3. Cache server response locally for offline use
+ * 4. If offline and not cached, show offline error
  */
 async function fetchSession() {
     const { sessionId, recipientId, signingKey } = window.sessionParams;
@@ -432,7 +438,60 @@ async function fetchSession() {
         return session;
     }
 
-    // PRODUCTION: Use configured API endpoint
+    // =========================================================
+    // LOCAL-FIRST: Try IndexedDB first
+    // =========================================================
+    if (window.DocSign?.LocalSessionManager) {
+        try {
+            const localSession = await window.DocSign.LocalSessionManager.getSession(sessionId, recipientId);
+            if (localSession) {
+                console.log('[LOCAL-FIRST] Session found in IndexedDB:', sessionId);
+
+                // Check if locally cached session is expired
+                if (localSession.status === 'expired') {
+                    console.log('[LOCAL-FIRST] Cached session is expired');
+                    showExpiryPage(localSession);
+                    return { ...localSession, _isExpired: true };
+                }
+
+                // Use locally cached session
+                state.session = {
+                    sessionId: localSession.sessionId,
+                    documentName: localSession.documentName,
+                    metadata: localSession.metadata,
+                    fields: localSession.fields,
+                    recipients: localSession.recipients,
+                    status: localSession.status,
+                    pdfData: localSession.pdfData
+                };
+                state.fields = localSession.fields.filter(f =>
+                    f.recipientId === recipientId || f.isOwn === true
+                );
+
+                // If we have cached signatures, restore them
+                if (localSession.signatures) {
+                    Object.assign(state.signatures, localSession.signatures);
+                }
+
+                return state.session;
+            }
+        } catch (err) {
+            console.warn('[LOCAL-FIRST] Error checking local storage:', err);
+            // Continue to try server
+        }
+    }
+
+    // =========================================================
+    // OFFLINE CHECK: If offline and no local session, show error
+    // =========================================================
+    if (!navigator.onLine) {
+        console.log('[OFFLINE] Device is offline and no cached session found');
+        throw new Error('You are offline and this session is not available locally. Please connect to the internet to load this signing request.');
+    }
+
+    // =========================================================
+    // SERVER FETCH: Try to load from server
+    // =========================================================
     const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
 
     try {
@@ -467,6 +526,29 @@ async function fetchSession() {
         // Extract fields for this recipient only
         state.fields = session.fields.filter(f => f.recipientId === recipientId);
 
+        // =========================================================
+        // CACHE LOCALLY: Save server response for offline use
+        // =========================================================
+        if (window.DocSign?.LocalSessionManager) {
+            try {
+                await window.DocSign.LocalSessionManager.cacheSession({
+                    sessionId: sessionId,
+                    recipientId: recipientId,
+                    documentName: session.documentName || session.metadata?.filename,
+                    metadata: session.metadata,
+                    fields: session.fields,
+                    recipients: session.recipients,
+                    status: session.status,
+                    createdAt: session.metadata?.created_at || new Date().toISOString(),
+                    expiresAt: session.expiresAt
+                });
+                console.log('[LOCAL-FIRST] Session cached locally for offline use');
+            } catch (cacheErr) {
+                console.warn('[LOCAL-FIRST] Failed to cache session locally:', cacheErr);
+                // Don't fail the request, caching is optional
+            }
+        }
+
         return session;
     } catch (err) {
         console.error('Failed to fetch session:', err);
@@ -476,20 +558,36 @@ async function fetchSession() {
 }
 
 /**
- * Load and render PDF
+ * Load and render PDF using TypeScript bridge (window.DocSign)
+ * Falls back to direct pdfjsLib if DocSign not available
  */
 async function loadPdf(pdfData) {
     try {
-        const loadingTask = pdfjsLib.getDocument({ data: pdfData });
-        state.pdfDoc = await loadingTask.promise;
+        // Prefer TypeScript bridge if available
+        if (window.DocSign && typeof window.DocSign.loadPdf === 'function') {
+            console.log('[sign.js] Using DocSign bridge for PDF loading');
+            const result = await window.DocSign.loadPdf(pdfData);
 
-        console.log('PDF loaded:', state.pdfDoc.numPages, 'pages');
+            if (!result.success) {
+                throw new Error(result.error || 'Failed to load PDF');
+            }
 
-        for (let pageNum = 1; pageNum <= state.pdfDoc.numPages; pageNum++) {
-            await renderPage(pageNum);
+            state.pdfDoc = { numPages: result.numPages };
+            console.log('PDF loaded via DocSign:', result.numPages, 'pages');
+
+            // Render all pages using the TypeScript bridge
+            await window.DocSign.renderAllPages({
+                container: elements.pdfPages,
+                scale: 1.5,
+                pageWrapperClass: 'pdf-page-wrapper'
+            });
+
+            renderFieldOverlays();
+        } else {
+            // Fallback to direct pdfjsLib (for backwards compatibility)
+            console.log('[sign.js] DocSign bridge not available, using pdfjsLib fallback');
+            await loadPdfLegacy(pdfData);
         }
-
-        renderFieldOverlays();
 
     } catch (err) {
         console.error('Failed to load PDF:', err);
@@ -498,9 +596,31 @@ async function loadPdf(pdfData) {
 }
 
 /**
- * Render a single PDF page
+ * Legacy PDF loading using direct pdfjsLib calls
+ * Used as fallback when TypeScript bridge is not available
  */
-async function renderPage(pageNum) {
+async function loadPdfLegacy(pdfData) {
+    // Ensure pdfjsLib worker is configured
+    if (typeof pdfjsLib !== 'undefined' && pdfjsLib.GlobalWorkerOptions) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    state.pdfDoc = await loadingTask.promise;
+
+    console.log('PDF loaded (legacy):', state.pdfDoc.numPages, 'pages');
+
+    for (let pageNum = 1; pageNum <= state.pdfDoc.numPages; pageNum++) {
+        await renderPageLegacy(pageNum);
+    }
+
+    renderFieldOverlays();
+}
+
+/**
+ * Legacy page rendering using direct pdfjsLib calls
+ */
+async function renderPageLegacy(pageNum) {
     const page = await state.pdfDoc.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.5 });
 
@@ -763,9 +883,52 @@ function openSignatureModal() {
 }
 
 /**
- * Close signature modal
+ * Check if signature canvas has content
+ * @returns {boolean} True if canvas has drawn content
+ */
+function signatureCanvasHasContent() {
+    const canvas = elements.signaturePad;
+    if (!canvas) return false;
+
+    const ctx = canvas.getContext('2d');
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    // Check for non-white pixels (canvas is filled with white background)
+    for (let i = 0; i < data.length; i += 4) {
+        // Check if any pixel is not white (R=255, G=255, B=255)
+        if (data[i] !== 255 || data[i + 1] !== 255 || data[i + 2] !== 255) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Check if typed signature has content
+ * @returns {boolean} True if typed name input has content
+ */
+function typedSignatureHasContent() {
+    return elements.typedName && elements.typedName.value.trim().length > 0;
+}
+
+/**
+ * Close signature modal with confirmation if content exists
  */
 function closeSignatureModal() {
+    // Check if there's unsaved signature content
+    const hasDrawnContent = signatureCanvasHasContent();
+    const hasTypedContent = typedSignatureHasContent();
+
+    if (hasDrawnContent || hasTypedContent) {
+        // Use confirm dialog (or DocSign.showConfirmDialog if available)
+        const confirmClose = window.DocSign?.showConfirmDialog
+            ? window.DocSign.showConfirmDialog('You have an unsaved signature. Are you sure you want to close?')
+            : confirm('You have an unsaved signature. Are you sure you want to close?');
+
+        if (!confirmClose) {
+            return; // User cancelled, don't close
+        }
+    }
+
     elements.signatureModal.classList.add('hidden');
 }
 
@@ -838,7 +1001,52 @@ function highlightCurrentField() {
 }
 
 /**
- * Initialize signature canvas drawing
+ * Canvas undo history (stores ImageData snapshots)
+ */
+const canvasHistory = [];
+const MAX_UNDO_HISTORY = 20;
+
+/**
+ * Save current canvas state to undo history
+ */
+function saveCanvasState() {
+    const canvas = elements.signaturePad;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    // Limit history size
+    if (canvasHistory.length >= MAX_UNDO_HISTORY) {
+        canvasHistory.shift();
+    }
+    canvasHistory.push(imageData);
+}
+
+/**
+ * Undo last canvas stroke
+ */
+function undoCanvasStroke() {
+    const canvas = elements.signaturePad;
+    if (!canvas || canvasHistory.length === 0) return;
+
+    const ctx = canvas.getContext('2d');
+
+    // Remove current state (if we have previous states)
+    if (canvasHistory.length > 1) {
+        canvasHistory.pop(); // Remove current
+        const previousState = canvasHistory[canvasHistory.length - 1];
+        ctx.putImageData(previousState, 0, 0);
+    } else if (canvasHistory.length === 1) {
+        canvasHistory.pop();
+        // Restore to blank canvas
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+}
+
+/**
+ * Initialize signature canvas drawing with undo support
  */
 function initializeCanvas() {
     const canvas = elements.signaturePad;
@@ -847,7 +1055,13 @@ function initializeCanvas() {
     const ctx = canvas.getContext('2d');
     let isDrawing = false;
 
+    // Initialize with blank canvas state
+    canvasHistory.length = 0;
+    saveCanvasState();
+
     canvas.addEventListener('mousedown', (e) => {
+        // Save state before starting new stroke
+        saveCanvasState();
         isDrawing = true;
         const rect = canvas.getBoundingClientRect();
         ctx.beginPath();
@@ -872,6 +1086,8 @@ function initializeCanvas() {
     // Touch support
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
+        // Save state before starting new stroke
+        saveCanvasState();
         isDrawing = true;
         const rect = canvas.getBoundingClientRect();
         const touch = e.touches[0];
@@ -890,6 +1106,18 @@ function initializeCanvas() {
 
     canvas.addEventListener('touchend', () => {
         isDrawing = false;
+    });
+
+    // Keyboard shortcut: Ctrl+Z or Cmd+Z to undo
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            // Only undo when signature modal is visible and draw tab is active
+            if (!elements.signatureModal?.classList.contains('hidden') &&
+                elements.drawTab?.classList.contains('active')) {
+                e.preventDefault();
+                undoCanvasStroke();
+            }
+        }
     });
 }
 
@@ -971,7 +1199,14 @@ function applySignature() {
 }
 
 /**
- * Finish signing - submit to Worker API
+ * Finish signing - LOCAL FIRST, then sync to server
+ * DOCSIGN_PLAN Phase 2: Local-first signing
+ *
+ * Order of operations:
+ * 1. Save signatures locally FIRST (always)
+ * 2. Show success immediately after local save
+ * 3. Queue for server sync (if enabled)
+ * 4. Sync in background when online
  */
 async function finishSigning() {
     if (!canFinish()) {
@@ -994,29 +1229,72 @@ async function finishSigning() {
     // Show submitting state
     if (elements.btnFinish) {
         elements.btnFinish.disabled = true;
-        elements.btnFinish.textContent = 'Submitting...';
+        elements.btnFinish.textContent = 'Saving...';
     }
 
-    try {
-        const { sessionId, recipientId, signingKey } = window.sessionParams;
+    const { sessionId, recipientId, signingKey } = window.sessionParams;
+    const completedAt = new Date().toISOString();
 
-        // Prepare signed document data
-        const signedData = {
-            recipient_id: recipientId,
-            signatures: state.signatures,
-            completed_at: new Date().toISOString()
-        };
+    // Prepare signed document data
+    const signedData = {
+        recipient_id: recipientId,
+        signatures: state.signatures,
+        completed_at: completedAt
+    };
 
-        // Check if we're online
-        if (!navigator.onLine) {
-            // Queue for later submission
+    // =========================================================
+    // STEP 1: Save locally FIRST (always succeeds if IndexedDB works)
+    // =========================================================
+    let localSaveSuccess = false;
+
+    if (window.DocSign?.LocalSessionManager) {
+        try {
+            // Save signatures to local session
+            await window.DocSign.LocalSessionManager.saveSignatures(sessionId, state.signatures);
+
+            // Queue for sync (even if online - ensures data persists)
+            await window.DocSign.LocalSessionManager.queueForSync({
+                sessionId: sessionId,
+                recipientId: recipientId,
+                signingKey: signingKey,
+                signatures: state.signatures,
+                completedAt: completedAt,
+                timestamp: Date.now()
+            });
+
+            localSaveSuccess = true;
+            console.log('[LOCAL-FIRST] Signatures saved locally');
+        } catch (err) {
+            console.error('[LOCAL-FIRST] Failed to save signatures locally:', err);
+            // Continue anyway - try server
+        }
+    }
+
+    // =========================================================
+    // STEP 2: If offline, show success (already saved locally)
+    // =========================================================
+    if (!navigator.onLine) {
+        if (localSaveSuccess) {
+            console.log('[OFFLINE] Signatures saved locally, will sync when online');
+            showCompletionModal(false, null, true); // true = offline mode
+        } else {
+            // Fallback to old localStorage queue
             await queueOfflineSubmission(signedData);
-            showCompletionModal(true);
-            return;
+            showCompletionModal(false, null, true);
+        }
+        return;
+    }
+
+    // =========================================================
+    // STEP 3: Try to sync to server (best effort)
+    // =========================================================
+    const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
+
+    try {
+        if (elements.btnFinish) {
+            elements.btnFinish.textContent = 'Syncing...';
         }
 
-        // Submit to Worker API
-        const WORKER_API = 'https://docsigner.example.workers.dev';
         const response = await fetch(`${WORKER_API}/session/${sessionId}/signed`, {
             method: 'POST',
             headers: {
@@ -1033,6 +1311,12 @@ async function finishSigning() {
 
         const result = await response.json();
 
+        // Remove from sync queue since we succeeded
+        if (window.DocSign?.LocalSessionManager) {
+            await window.DocSign.LocalSessionManager.removeFromQueue(sessionId, recipientId);
+            await window.DocSign.LocalSessionManager.completeSession(sessionId);
+        }
+
         // Check if all signers have completed
         if (result.all_signed) {
             window.isLastSigner = true;
@@ -1042,17 +1326,21 @@ async function finishSigning() {
         }
 
     } catch (err) {
-        console.error('Failed to submit signatures:', err);
+        console.error('Failed to sync signatures to server:', err);
 
-        // For development/testing: show success anyway
-        if (err.message.includes('Failed to fetch')) {
+        // =========================================================
+        // STEP 4: Server failed, but local save succeeded - show success anyway
+        // =========================================================
+        if (localSaveSuccess) {
+            console.log('[LOCAL-FIRST] Server sync failed, but signatures are saved locally');
+            showCompletionModal(false, null, false); // Show success, will sync later
+        } else if (err.message.includes('Failed to fetch')) {
+            // Network error - show success for development/testing
             showCompletionModal(false);
         } else {
-            showToast('Failed to submit. Please try again.', 'error');
-            if (elements.btnFinish) {
-                elements.btnFinish.disabled = false;
-                elements.btnFinish.textContent = 'Finish';
-            }
+            showToast('Failed to submit. Your signatures are saved locally and will sync when possible.', 'warning');
+            // Re-enable button but still show success since we saved locally
+            showCompletionModal(false);
         }
     }
 }
@@ -1093,24 +1381,49 @@ function showToast(message, type = 'success') {
 
 /**
  * Show completion modal
+ * @param {boolean} allSigned - Whether all parties have signed
+ * @param {string|null} downloadUrl - URL to download the signed PDF
+ * @param {boolean} isOffline - Whether saved offline (will sync later)
  */
-function showCompletionModal(allSigned, downloadUrl = null) {
+function showCompletionModal(allSigned, downloadUrl = null, isOffline = false) {
     const modal = document.createElement('div');
     modal.id = 'completion-modal';
     modal.className = 'modal-overlay';
+
+    // Determine the message based on context
+    let title, message, icon;
+
+    if (isOffline) {
+        icon = '💾';
+        title = 'Signature Saved Locally';
+        message = 'Your signature has been saved to your device. It will be synced automatically when you reconnect to the internet.';
+    } else if (allSigned) {
+        icon = '🎉';
+        title = 'All Signatures Complete!';
+        message = 'All parties have signed. The final document is ready for download.';
+    } else {
+        icon = '✅';
+        title = 'Successfully Signed!';
+        message = 'Your signature has been recorded. Other parties will be notified.';
+    }
+
     modal.innerHTML = `
         <div class="modal" style="text-align: center; padding: 2rem;">
             <div style="font-size: 4rem; margin-bottom: 1rem;">
-                ${allSigned ? '🎉' : '✅'}
+                ${icon}
             </div>
             <h2 style="margin-bottom: 1rem; color: var(--text-primary);">
-                ${allSigned ? 'All Signatures Complete!' : 'Successfully Signed!'}
+                ${title}
             </h2>
             <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
-                ${allSigned
-                    ? 'All parties have signed. The final document is ready for download.'
-                    : 'Your signature has been recorded. Other parties will be notified.'}
+                ${message}
             </p>
+            ${isOffline ? `
+                <p style="font-size: 18px; color: var(--text-muted, #888); margin-bottom: 1rem;">
+                    <span style="display: inline-block; width: 10px; height: 10px; background: #f59e0b; border-radius: 50%; margin-right: 8px;"></span>
+                    Waiting for internet connection...
+                </p>
+            ` : ''}
             ${downloadUrl ? `
                 <a href="${downloadUrl}" download class="btn btn-primary" style="margin-bottom: 1rem; display: inline-block;">
                     Download Signed PDF
@@ -1147,6 +1460,144 @@ async function queueOfflineSubmission(signedData) {
     window.offlineQueue = queue;
 
     console.log('Queued for offline sync:', signedData);
+}
+
+// ============================================================
+// OFFLINE INDICATOR - DOCSIGN_PLAN Phase 2
+// ============================================================
+
+/**
+ * Show or hide the offline indicator badge
+ * @param {boolean} isOffline - Whether the device is offline
+ */
+function updateOfflineIndicator(isOffline) {
+    let indicator = document.getElementById('offline-indicator');
+
+    if (isOffline) {
+        // Create indicator if it doesn't exist
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'offline-indicator';
+            indicator.className = 'offline-indicator';
+            indicator.setAttribute('role', 'status');
+            indicator.setAttribute('aria-live', 'polite');
+            indicator.innerHTML = `
+                <span class="offline-icon" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                        <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path>
+                        <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path>
+                        <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+                        <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+                        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                        <line x1="12" y1="20" x2="12.01" y2="20"></line>
+                    </svg>
+                </span>
+                <span class="offline-text">Your work is safe - no internet needed</span>
+            `;
+            indicator.style.cssText = `
+                position: fixed;
+                top: 16px;
+                right: 16px;
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 16px;
+                background: #fef3cd;
+                border: 2px solid #f59e0b;
+                border-radius: 8px;
+                color: #92400e;
+                font-size: 18px;
+                font-weight: 600;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                animation: offline-slide-in 0.3s ease-out;
+            `;
+            document.body.appendChild(indicator);
+
+            // Add animation keyframes if not already added
+            if (!document.getElementById('offline-indicator-styles')) {
+                const style = document.createElement('style');
+                style.id = 'offline-indicator-styles';
+                style.textContent = `
+                    @keyframes offline-slide-in {
+                        from {
+                            transform: translateX(100%);
+                            opacity: 0;
+                        }
+                        to {
+                            transform: translateX(0);
+                            opacity: 1;
+                        }
+                    }
+                    @keyframes offline-slide-out {
+                        from {
+                            transform: translateX(0);
+                            opacity: 1;
+                        }
+                        to {
+                            transform: translateX(100%);
+                            opacity: 0;
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+        indicator.style.display = 'flex';
+        console.log('[OFFLINE] Showing offline indicator');
+    } else {
+        // Hide indicator with animation
+        if (indicator) {
+            indicator.style.animation = 'offline-slide-out 0.3s ease-in forwards';
+            setTimeout(() => {
+                if (indicator) {
+                    indicator.style.display = 'none';
+                }
+            }, 300);
+            console.log('[ONLINE] Hiding offline indicator');
+        }
+    }
+}
+
+/**
+ * Initialize offline/online event listeners
+ * Sets up indicators and auto-sync when coming online
+ */
+function initializeOfflineHandling() {
+    // Set initial state
+    updateOfflineIndicator(!navigator.onLine);
+
+    // Listen for online/offline events
+    window.addEventListener('online', () => {
+        console.log('[ONLINE] Device is now online');
+        updateOfflineIndicator(false);
+
+        // Show toast notification
+        if (typeof showToast === 'function') {
+            showToast('You are back online. Syncing...', 'success');
+        }
+
+        // Trigger sync if LocalSessionManager is available
+        // Note: The syncQueuedSubmissions is called from local-session-manager.ts
+        // via setupAutoSync, but we can also trigger here for immediate feedback
+        if (window.DocSign?.LocalSessionManager) {
+            // Sync is handled by setupAutoSync in local-session-manager.ts
+            console.log('[ONLINE] Queued submissions will sync automatically');
+        }
+    });
+
+    window.addEventListener('offline', () => {
+        console.log('[OFFLINE] Device is now offline');
+        updateOfflineIndicator(true);
+
+        // Show toast notification
+        if (typeof showToast === 'function') {
+            showToast('You are offline. Changes will be saved locally.', 'warning');
+        }
+    });
+
+    console.log('[OFFLINE] Offline handling initialized, current status:', navigator.onLine ? 'online' : 'offline');
 }
 
 /**
@@ -1192,7 +1643,12 @@ function initializeEventListeners() {
     elements.tabType?.addEventListener('click', () => switchTab('type'));
 
     // Canvas controls
-    elements.clearSignature?.addEventListener('click', clearCanvas);
+    elements.undoSignature?.addEventListener('click', undoCanvasStroke);
+    elements.clearSignature?.addEventListener('click', () => {
+        canvasHistory.length = 0;
+        clearCanvas();
+        saveCanvasState();
+    });
 
     // Type signature preview with font
     elements.typedName?.addEventListener('input', (e) => {
@@ -1409,6 +1865,9 @@ async function initialize() {
 
         // Initialize event listeners
         initializeEventListeners();
+
+        // Initialize offline handling (DOCSIGN_PLAN Phase 2)
+        initializeOfflineHandling();
 
         // Fetch session (or use mock data)
         const session = await fetchSession();

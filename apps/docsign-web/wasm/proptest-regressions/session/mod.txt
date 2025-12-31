@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5a6924232233e70ae01b0a8692039f2e09f11fc03eabfdf735e0fdf8604b3997 # shrinks to session_id = "_A_", recipient_id = "0", key = "aAA", timestamp = 266178073884536.78
+cc 2ef6eeab32aee1d15215417de7660693dacc3c62f1e1ff92b62b5b05155b2ac1 # shrinks to id = "A", field_type = "signature", page = 1, x = 0.0, y = 0.0, width = 10.0, height = 99.07162858078965, required = false, recipient_id = "a"
+cc f32c0688269ebd952c71317ca61793f4e2171be20b4f53728a98555fd271685b # shrinks to session_id = "a--", field_ids = ["b", "a", "A", "b"]
