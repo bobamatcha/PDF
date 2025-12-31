@@ -544,8 +544,8 @@ After deploying the docsign worker, set secrets:
 ```bash
 cd apps/docsign-web/worker
 
-# Required: Resend API key for email sending
-wrangler secret put RESEND_API_KEY
+# Required: email-proxy API key for email sending (AWS SES Lambda backend)
+wrangler secret put EMAIL_PROXY_API_KEY
 
 # Optional: API key for endpoint protection
 # Leave unset for open access (rate limiting still applies)

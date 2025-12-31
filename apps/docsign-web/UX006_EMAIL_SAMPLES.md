@@ -166,13 +166,13 @@ Sent via GetSignatures - Secure Document Signing
 
 ## Implementation Details
 
-### Email Sending API (Resend)
+### Email Sending API (email-proxy Lambda)
 
-**Endpoint**: `https://api.resend.com/emails`
+**Endpoint**: `https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws`
 
 **Request Headers**:
 ```
-Authorization: Bearer {RESEND_API_KEY}
+Authorization: Bearer {EMAIL_PROXY_API_KEY}
 Content-Type: application/json
 ```
 
@@ -360,7 +360,7 @@ Open `email_preview.html` in a browser to see the rendered email.
 ```
 INFO: Sending notification to sender@example.com
 INFO: Notification sent successfully
-WARN: Cannot send notification: RESEND_API_KEY not configured
+WARN: Cannot send notification: EMAIL_PROXY_API_KEY not configured
 ERROR: Failed to send notification email: {error}
 ```
 
@@ -372,9 +372,9 @@ ERROR: Failed to send notification email: {error}
 - Email bounce rate
 
 ### Debugging Tips
-1. Check RESEND_API_KEY is set in Cloudflare secrets
+1. Check EMAIL_PROXY_API_KEY is set in Cloudflare secrets
 2. Verify sender_email is populated in session metadata
-3. Check Resend dashboard for delivery status
+3. Check AWS SES delivery status and bounce notifications
 4. Verify email HTML renders in multiple clients
 5. Test with real email addresses
 6. Check spam folder if emails not arriving

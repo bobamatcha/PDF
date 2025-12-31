@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="agentPDF - Sign your documents securely">
+    <title>Sign Document - agentPDF</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Allura&family=Dancing+Script&family=Great+Vibes&family=Pacifico&family=Sacramento&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /**
+         * agentPDF Signing Page - Geriatric UX Foundation
+         *
+         * Design for users 65+ with:
+         * - Vision impairments (cataracts, macular degeneration)
+         * - Reduced fine motor control
+         * - Technology anxiety
+         *
+         * Standards:
+         * - WCAG 2.1 AAA compliance (7:1 contrast)
+         * - 60px minimum touch targets
+         * - 18px base font size
+         * - No time-limited actions
+         */
+
+        :root {
+            /* agentPDF - Florida Trust Palette */
+            --gulf-stream-blue: #005163;
+            --gulf-stream-dark: #003d4a;
+            --gulf-stream-light: #00758a;
+            --sunset-gold: #AB946C;
+            --document-grey: #F5F5F7;
+            --paper-white: #FFFFFF;
+            --critical-red: #DC2626;
+            --warning-orange: #F59E0B;
+            --success-green: #10B981;
+            --text-primary: #1F2937;
+            --text-secondary: #6B7280;
+            --text-tertiary: #9CA3AF;
+            --border-primary: #E5E7EB;
+            --border-secondary: #D1D5DB;
+            --shadow-sm: rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+
+            /* Geriatric UX - 60px minimum touch targets, 18px base font */
+            --touch-target-min: 60px;
+            --touch-target-comfortable: 72px;
+            --font-size-base: 18px;
+            --font-size-lg: 20px;
+            --font-size-xl: 24px;
+            --font-size-heading: 28px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: var(--font-size-base);
+            line-height: 1.6;
+            background: var(--document-grey);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Skip Link for Keyboard Navigation */
+        .skip-link {
+            position: absolute;
+            top: -100px;
+            left: 0;
+            padding: 1rem 1.5rem;
+            background: var(--gulf-stream-blue);
+            color: white;
+            font-size: var(--font-size-lg);
+            z-index: 10000;
+            text-decoration: none;
+        }
+
+        .skip-link:focus {
+            top: 0;
+        }
+
+        /* Header - agentPDF branding with Geriatric UX */
+        .header {
+            background: var(--gulf-stream-blue);
+            color: white;
+            padding: 20px 24px;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .header h1 {
+            font-size: var(--font-size-heading);
+            font-weight: 700;
+        }
+
+        .header .badge {
+            background: var(--sunset-gold);
+            color: white;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        /* Offline Indicator */
+        .offline-indicator {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: #fef3cd;
+            border: 2px solid var(--warning-orange);
+            border-radius: 8px;
+            color: #92400e;
+            font-size: var(--font-size-base);
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .offline-indicator.hidden {
+            display: none;
+        }
+
+        /* Loading Indicator - Geriatric UX: larger, clearer text */
+        #loading-indicator {
+            padding: 3rem 2rem;
+            text-align: center;
+            color: var(--text-secondary);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #loading-indicator.hidden {
+            display: none;
+        }
+
+        #loading-indicator p {
+            font-size: 22px;
+            font-weight: 500;
+            margin-top: 1rem;
+        }
+
+        .spinner {
+            border: 5px solid var(--border-primary);
+            border-top: 5px solid var(--gulf-stream-blue);
+            border-radius: 50%;
+            width: 64px;
+            height: 64px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1.5rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Signing Toolbar - Geriatric UX: 60px buttons */
+        .signing-toolbar {
+            background: var(--paper-white);
+            border-bottom: 1px solid var(--border-primary);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .toolbar-left, .toolbar-right {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        /* Signing Progress Bar */
+        .signing-progress {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px 24px;
+            background: var(--document-grey);
+            border-radius: 12px;
+            margin-bottom: 16px;
+            width: 100%;
+        }
+
+        .signing-progress-bar {
+            flex: 1;
+            height: 12px;
+            background: var(--border-primary);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .signing-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--gulf-stream-blue), var(--success-green));
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        .signing-progress-text {
+            font-size: var(--font-size-lg);
+            font-weight: 700;
+            color: var(--text-primary);
+            min-width: 80px;
+            text-align: right;
+        }
+
+        /* Buttons - Geriatric UX: 60px min touch targets, 20px+ font */
+        .btn {
+            min-height: var(--touch-target-min);
+            min-width: var(--touch-target-min);
+            padding: 16px 24px;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: var(--font-size-lg);
+            font-weight: 600;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--gulf-stream-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--gulf-stream-dark);
+        }
+
+        .btn-secondary {
+            background: var(--paper-white);
+            color: var(--text-primary);
+            border: 2px solid var(--border-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--document-grey);
+        }
+
+        .btn-success {
+            background: var(--success-green);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn.hidden {
+            display: none !important;
+        }
+
+        /* Large buttons for critical actions - Geriatric UX: 72px height */
+        .btn-large {
+            font-size: var(--font-size-xl);
+            padding: 20px 32px;
+            min-height: var(--touch-target-comfortable);
+            min-width: 200px;
+        }
+
+        /* Document Viewer */
+        .viewer-container {
+            flex: 1;
+            overflow: auto;
+            background: #E5E7EB;
+            padding: 1.5rem;
+        }
+
+        .pdf-pages-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .pdf-page-wrapper {
+            position: relative;
+            box-shadow: var(--shadow-md);
+            background: var(--paper-white);
+        }
+
+        .pdf-page-wrapper canvas {
+            display: block;
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1100;
+        }
+
+        .modal-overlay.hidden {
+            display: none;
+        }
+
+        .modal {
+            background: var(--paper-white);
+            border-radius: 12px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: var(--font-size-xl);
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Modal close button - Geriatric UX: 60px touch target */
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 32px;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            min-width: 60px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            border-radius: 8px;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+            background: var(--document-grey);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-primary);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        /* Tab Navigation - Geriatric UX: larger touch targets */
+        .tab-nav {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 2px solid var(--border-primary);
+        }
+
+        .tab-btn {
+            min-height: 60px;
+            padding: 16px 24px;
+            border: none;
+            background: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: var(--font-size-lg);
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab-btn.active {
+            color: var(--gulf-stream-blue);
+            border-bottom-color: var(--gulf-stream-blue);
+        }
+
+        .tab-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Signature Canvas - Geriatric UX: larger pad, clearer border */
+        #signature-pad {
+            border: 3px solid var(--border-secondary);
+            border-radius: 12px;
+            cursor: crosshair;
+            display: block;
+            width: 100%;
+            max-width: 550px;
+            height: 250px;
+            background: #ffffff;
+        }
+
+        .canvas-controls {
+            margin-top: 1rem;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Signature Type Input - Geriatric UX: 60px height, larger text */
+        #typed-name {
+            width: 100%;
+            min-height: 60px;
+            padding: 16px;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            font-size: var(--font-size-lg);
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .font-select {
+            width: 100%;
+            min-height: 60px;
+            padding: 16px;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            font-size: var(--font-size-base);
+            margin-bottom: 1rem;
+        }
+
+        #cursive-preview {
+            margin-top: 1rem;
+            padding: 1.5rem;
+            border: 1px solid var(--border-primary);
+            border-radius: 8px;
+            min-height: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            font-family: 'Dancing Script', cursive;
+            background: var(--document-grey);
+        }
+
+        /* Consent Landing Page */
+        .consent-landing {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background: var(--document-grey);
+        }
+
+        .consent-container {
+            background: var(--paper-white);
+            border-radius: 12px;
+            box-shadow: var(--shadow-md);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .consent-header {
+            padding: 2rem;
+            border-bottom: 1px solid var(--border-primary);
+            text-align: center;
+            background: var(--gulf-stream-blue);
+            color: white;
+            border-radius: 12px 12px 0 0;
+        }
+
+        .consent-header h2 {
+            margin: 0;
+            font-size: var(--font-size-heading);
+            font-weight: 700;
+        }
+
+        .consent-body {
+            padding: 2rem;
+        }
+
+        .document-info {
+            background: var(--document-grey);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .info-row {
+            display: flex;
+            margin-bottom: 0.75rem;
+        }
+
+        .info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: var(--text-secondary);
+            min-width: 120px;
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .consent-text {
+            margin-bottom: 2rem;
+        }
+
+        .consent-text h3 {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .consent-text p {
+            color: var(--text-secondary);
+            font-size: var(--font-size-base);
+            line-height: 1.7;
+            margin-bottom: 1rem;
+        }
+
+        .consent-text ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .consent-text li {
+            color: var(--text-secondary);
+            font-size: var(--font-size-base);
+            line-height: 1.8;
+            margin-bottom: 0.75rem;
+        }
+
+        .consent-note {
+            font-size: 14px;
+            color: var(--text-tertiary);
+            font-style: italic;
+        }
+
+        .consent-actions {
+            text-align: center;
+        }
+
+        .link-decline {
+            display: block;
+            margin-top: 1.5rem;
+            color: var(--text-tertiary);
+            text-decoration: none;
+            font-size: var(--font-size-base);
+            transition: color 0.2s;
+        }
+
+        .link-decline:hover {
+            color: var(--text-secondary);
+            text-decoration: underline;
+        }
+
+        /* Expiry Page Styles */
+        .expiry-page {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background: var(--document-grey);
+        }
+
+        .expiry-container {
+            background: var(--paper-white);
+            border-radius: 12px;
+            box-shadow: var(--shadow-md);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .expiry-header {
+            padding: 2rem 2rem 1rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .expiry-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1rem;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--warning-orange) 0%, #d97706 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .expiry-icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+
+        .expiry-header h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--text-primary);
+        }
+
+        .expiry-body {
+            padding: 2rem;
+        }
+
+        .expiry-message {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+        }
+
+        .expiry-document-info {
+            background: var(--document-grey);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .expiry-actions {
+            margin-top: 1.5rem;
+        }
+
+        .request-sent-message {
+            background: #dcfce7;
+            color: #166534;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+
+        /* Field Overlays */
+        .field-overlay {
+            position: absolute;
+            border: 2px dashed var(--gulf-stream-blue);
+            background: rgba(0, 81, 99, 0.1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: var(--gulf-stream-blue);
+            border-radius: 4px;
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        .field-overlay.current {
+            border-color: var(--gulf-stream-blue);
+            border-width: 3px;
+            background: rgba(0, 81, 99, 0.2);
+            box-shadow: 0 0 0 4px rgba(0, 81, 99, 0.1);
+        }
+
+        .field-overlay.completed,
+        .field-overlay[data-signed="true"] {
+            border-color: var(--success-green);
+            border-style: solid;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .field-overlay.other-field {
+            border-color: var(--text-tertiary);
+            background: rgba(156, 163, 175, 0.15);
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        /* Nav buttons container */
+        .nav-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Progress text */
+        .progress {
+            font-size: var(--font-size-lg);
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        /* Hidden class */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Visually hidden for screen readers */
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .header {
+                padding: 0.75rem 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.25rem;
+            }
+
+            .signing-toolbar {
+                padding: 0.75rem 1rem;
+                flex-direction: column;
+            }
+
+            .toolbar-left, .toolbar-right {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .btn {
+                min-height: 50px;
+                padding: 12px 20px;
+                font-size: 1rem;
+            }
+
+            .btn-large {
+                width: 100%;
+                min-width: auto;
+            }
+
+            .viewer-container {
+                padding: 1rem 0.5rem;
+            }
+
+            .pdf-pages-wrapper {
+                align-items: flex-start;
+            }
+
+            .consent-landing {
+                padding: 1rem;
+            }
+
+            .consent-header h2 {
+                font-size: 1.5rem;
+            }
+
+            .modal {
+                max-width: 100%;
+                max-height: 100vh;
+                width: 100%;
+                height: auto;
+                border-radius: 16px 16px 0 0;
+            }
+
+            .modal-overlay {
+                align-items: flex-end;
+            }
+
+            #signature-pad {
+                height: 200px;
+            }
+
+            /* Prevent zoom on input focus (iOS) */
+            input, select, textarea {
+                font-size: 16px !important;
+            }
+        }
+
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .btn:active {
+                transform: scale(0.97);
+                transition: transform 0.1s;
+            }
+
+            .field-overlay:active {
+                background: rgba(0, 81, 99, 0.25);
+            }
+        }
+
+        /* Prevent text selection on touch UI elements */
+        .btn, .tab-btn, .field-overlay, .modal-close {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Smooth scrolling */
+        html {
+            scroll-behavior: smooth;
+        }
+    </style>
+</head>
+<body>
+    <!-- Skip Link for Keyboard Navigation -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <!-- Offline Indicator -->
+    <div id="offline-indicator" class="offline-indicator hidden" role="status" aria-live="polite">
+        <span>You're offline. Changes will sync when you reconnect.</span>
+    </div>
+
+    <!-- Header - agentPDF branding -->
+    <header class="header" role="banner">
+        <div class="header-content">
+            <div class="header-brand">
+                <h1>agentPDF</h1>
+                <span class="badge">Sign</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Loading Indicator - Geriatric UX: reassuring message -->
+    <div id="loading-indicator" role="status" aria-live="polite" aria-busy="true">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Loading your document...</p>
+        <p style="font-size: 16px; color: var(--text-tertiary); margin-top: 8px;">This may take a moment. Please wait.</p>
+    </div>
+
+    <!-- Consent Landing Page -->
+    <div id="consent-landing" class="consent-landing hidden">
+        <div class="consent-container">
+            <div class="consent-header">
+                <h2>Document Signature Request</h2>
+            </div>
+
+            <div class="consent-body">
+                <div class="document-info">
+                    <div class="info-row">
+                        <span class="info-label">From:</span>
+                        <span id="sender-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Email:</span>
+                        <span id="sender-email" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Document:</span>
+                        <span id="document-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Date Sent:</span>
+                        <span id="date-sent" class="info-value">-</span>
+                    </div>
+                </div>
+
+                <div class="consent-text">
+                    <h3>Electronic Signature Consent</h3>
+                    <p>By clicking "Review Document" below, I acknowledge and agree that:</p>
+                    <ul>
+                        <li>I consent to sign this document electronically pursuant to the Florida Uniform Electronic Transactions Act (F.S. 668.50)</li>
+                        <li>My electronic signature shall have the same legal force and effect as a handwritten signature</li>
+                        <li>I have received a copy of this consent disclosure and may withdraw consent at any time prior to signing</li>
+                    </ul>
+                    <p class="consent-note">
+                        <strong>Service Availability:</strong> This service is provided for use within the State of Florida, excluding Miami-Dade County.
+                        This service does not provide legal advice. Users are solely responsible for ensuring compliance with applicable laws.
+                    </p>
+                </div>
+
+                <div class="consent-actions">
+                    <button id="btn-review-document" class="btn btn-primary btn-large">
+                        Review Document
+                    </button>
+                    <a href="#" id="link-decline" class="link-decline">Decline to Sign</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Expiry Page -->
+    <div id="expiry-page" class="expiry-page hidden">
+        <div class="expiry-container">
+            <div class="expiry-header">
+                <div class="expiry-icon clock-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                </div>
+                <h2>Signing Link Expired</h2>
+            </div>
+
+            <div class="expiry-body">
+                <p class="expiry-message">
+                    This signing link has expired. Don't worry - you can request a new link
+                    from the sender to complete your signature.
+                </p>
+
+                <div class="expiry-document-info">
+                    <div class="info-row">
+                        <span class="info-label">Document:</span>
+                        <span id="expired-document-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">From:</span>
+                        <span id="expired-sender-name" class="info-value">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Sender Email:</span>
+                        <span id="expired-sender-email" class="info-value">-</span>
+                    </div>
+                </div>
+
+                <div class="expiry-actions">
+                    <button id="btn-request-new-link" class="btn btn-primary">
+                        Request New Link
+                    </button>
+                    <div id="request-sent-success" class="request-sent-message hidden">
+                        Your request has been sent. The sender will receive an email
+                        and can send you a new signing link.
+                    </div>
+                </div>
+
+                <div class="expiry-contact">
+                    <p>Or contact the sender directly at
+                        <a id="expired-sender-email-link" href="mailto:"></a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signing Toolbar - Geriatric UX: clear progress and large buttons -->
+    <div class="signing-toolbar" style="display: none;">
+        <!-- Progress Bar (shown during signing) -->
+        <div id="signing-progress-container" class="signing-progress hidden">
+            <div class="signing-progress-bar">
+                <div id="signing-progress-fill" class="signing-progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="signing-progress-text">
+                <span id="current">0</span> of <span id="total">0</span>
+            </div>
+        </div>
+
+        <div class="toolbar-left">
+            <button id="btn-start" class="btn btn-primary btn-large">Start Signing</button>
+            <div class="nav-buttons hidden">
+                <button id="btn-prev" class="btn btn-secondary" disabled>Back</button>
+                <button id="btn-next" class="btn btn-primary">Next</button>
+            </div>
+        </div>
+        <div class="toolbar-right">
+            <span class="progress hidden">
+                Field <span id="current-alt">0</span> of <span id="total-alt">0</span>
+            </span>
+            <button id="btn-decline" class="btn btn-secondary">Decline to Sign</button>
+            <button id="btn-finish" class="btn btn-success btn-large hidden">Finish Signing</button>
+        </div>
+    </div>
+
+    <!-- Document Viewer -->
+    <main id="main-content" class="viewer-container" style="display: none;" role="main" aria-label="Document viewer">
+        <div id="pdf-pages" class="pdf-pages-wrapper" role="document" aria-label="PDF document pages">
+            <!-- PDF pages will be rendered here -->
+        </div>
+    </main>
+
+    <!-- Signature Modal -->
+    <div id="signature-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="signature-modal-title">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="signature-modal-title">Add Signature</h3>
+                <button class="modal-close" id="close-signature-modal" aria-label="Close signature dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="tab-nav" role="tablist" aria-label="Signature method">
+                    <button id="tab-type" class="tab-btn active" data-tab="type" role="tab" aria-selected="true" aria-controls="type-tab">Type</button>
+                    <button id="tab-draw" class="tab-btn" data-tab="draw" role="tab" aria-selected="false" aria-controls="draw-tab">Draw</button>
+                </div>
+
+                <div id="type-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-type">
+                    <label for="typed-name" class="visually-hidden">Type your full name for signature</label>
+                    <input type="text" id="typed-name" placeholder="Type your name" aria-label="Type your full name for signature" autocomplete="name">
+                    <label for="font-selector" class="visually-hidden">Choose signature style</label>
+                    <select id="font-selector" class="font-select" aria-label="Choose signature style">
+                        <option value="Dancing Script">Dancing Script</option>
+                        <option value="Great Vibes">Great Vibes</option>
+                        <option value="Allura">Allura</option>
+                        <option value="Sacramento">Sacramento</option>
+                        <option value="Pacifico">Pacifico</option>
+                    </select>
+                    <div class="signature-preview" id="cursive-preview" aria-live="polite" aria-label="Signature preview"></div>
+                </div>
+
+                <div id="draw-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-draw" hidden>
+                    <canvas id="signature-pad" role="img" tabindex="0" aria-label="Signature drawing area. Use mouse or touch to draw your signature."></canvas>
+                    <div class="canvas-controls">
+                        <button id="undo-signature" class="btn btn-secondary" aria-label="Undo last stroke (Ctrl+Z)" title="Undo (Ctrl+Z)">
+                            Undo
+                        </button>
+                        <button id="clear-signature" class="btn btn-secondary" aria-label="Clear signature and start over">Clear</button>
+                    </div>
+                    <p style="font-size: 14px; color: var(--text-tertiary); margin-top: 0.5rem; text-align: center;">
+                        Tip: Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-signature" class="btn btn-secondary">Cancel</button>
+                <button id="apply-signature" class="btn btn-primary">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Decline Modal -->
+    <div id="decline-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="decline-modal-title" aria-describedby="decline-modal-desc">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="decline-modal-title">Decline to Sign</h3>
+                <button class="modal-close" id="close-decline-modal" aria-label="Close decline dialog">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="decline-modal-desc" style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    Are you sure you want to decline this document? The sender will be notified.
+                </p>
+                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
+                    Reason (optional):
+                </label>
+                <textarea
+                    id="decline-reason"
+                    rows="4"
+                    placeholder="Provide a reason for declining (optional)"
+                    aria-label="Reason for declining document (optional)"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical;"
+                ></textarea>
+            </div>
+            <div class="modal-footer">
+                <button id="cancel-decline" class="btn btn-secondary">Cancel</button>
+                <button id="confirm-decline" class="btn btn-primary" style="background: #ef4444;">Decline Document</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript bundle from agentpdf-web -->
+    <script type="module" src="js/bundle.js"></script>
+    <script type="module" src="js/sign.js"></script>
+</body>
+</html>

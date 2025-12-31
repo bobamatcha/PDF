@@ -14,6 +14,7 @@ pub mod page_ranges;
 pub mod pdf_renderer;
 pub mod pdf_text;
 pub mod pdf_viewer;
+pub mod rate_limit;
 pub mod storage;
 
 // Re-export commonly used items

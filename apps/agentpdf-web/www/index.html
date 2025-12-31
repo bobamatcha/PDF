@@ -14,6 +14,7 @@
     <link data-trunk rel="copy-dir" href="styles" />
     <!-- Trunk: Copy additional HTML pages -->
     <link data-trunk rel="copy-file" href="tampa.html" />
+    <link data-trunk rel="copy-file" href="sign.html" />
     <!-- PDF.js is lazy-loaded via js/pdf-loader.js to avoid bloating main bundle -->
     <!-- The js/vendor/ directory contains pdf.min.js and pdf.worker.min.js -->
     <style>
@@ -135,6 +136,26 @@
         .btn-success {
             background: var(--success-green);
             color: white;
+        }
+
+        /* Primary action button - Geriatric UX: more prominent, larger */
+        .btn-primary-action {
+            min-height: 44px;
+            padding: 0.625rem 1.25rem;
+            font-size: 1rem;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+            animation: subtle-pulse 2s ease-in-out infinite;
+        }
+
+        .btn-primary-action:hover {
+            box-shadow: 0 4px 8px rgba(16, 185, 129, 0.4);
+            transform: translateY(-1px);
+        }
+
+        @keyframes subtle-pulse {
+            0%, 100% { box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3); }
+            50% { box-shadow: 0 2px 8px rgba(16, 185, 129, 0.5); }
         }
 
         .btn-icon {
@@ -845,12 +866,14 @@
             <button id="btn-new" class="btn-icon" title="New Document" style="display: none;">
                 <span>📄</span>
             </button>
-            <button id="btn-download" class="btn btn-secondary" style="display: none;">
-                <span>⬇️</span> Download
+            <!-- Send for Signatures is the PRIMARY action after field placement -->
+            <button id="btn-send-sign" class="btn btn-success btn-primary-action" style="display: none;">
+                <span>✍️</span> Send for Signatures
             </button>
-            <button id="btn-send-sign" class="btn btn-success" style="display: none;">
-                <span>✍️</span> Send to DocSign
-            </button>
+            <!-- Download PDF Only is secondary -->
+            <a id="btn-download" class="btn btn-secondary" href="#" style="display: none; text-decoration: none;">
+                Download PDF Only
+            </a>
         </div>
     </header>
 
@@ -966,15 +989,18 @@
                             </div>
                         </div>
 
-                        <!-- DocSign Integration -->
+                        <!-- Signature Collection - Primary CTA -->
                         <div class="docsign-section">
                             <h4>Ready to collect signatures?</h4>
-                            <button id="btn-open-docsign" class="btn btn-primary" style="width: 100%;">
-                                <span>✍️</span> Open in DocSign
+                            <button id="btn-open-docsign" class="btn btn-success" style="width: 100%; font-weight: 600;">
+                                <span>✍️</span> Send for Signatures
                             </button>
                             <p style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-tertiary);">
-                                Send this document for digital signatures
+                                Recipients will receive a link to sign online
                             </p>
+                            <a href="#" id="sidebar-download-link" class="sidebar-secondary-link" style="display: block; margin-top: 0.75rem; font-size: 0.75rem; color: var(--text-secondary); text-align: center;">
+                                or download PDF only
+                            </a>
                         </div>
                     </div>
 
@@ -1923,8 +1949,9 @@
             }
         });
 
-        // Download PDF
-        btnDownload.addEventListener('click', () => {
+        // Download PDF - now an anchor element
+        function handleDownload(e) {
+            e.preventDefault();
             if (state.pdfBytes) {
                 const blob = new Blob([state.pdfBytes], { type: 'application/pdf' });
                 const url = URL.createObjectURL(blob);
@@ -1934,9 +1961,14 @@
                 a.click();
                 URL.revokeObjectURL(url);
             }
-        });
+        }
+        btnDownload.addEventListener('click', handleDownload);
 
-        // Send to DocSign
+        // Sidebar download link
+        const sidebarDownloadLink = document.getElementById('sidebar-download-link');
+        sidebarDownloadLink?.addEventListener('click', handleDownload);
+
+        // Send for Signatures - PRIMARY action
         btnSendSign.addEventListener('click', openInDocSign);
         document.getElementById('btn-open-docsign').addEventListener('click', openInDocSign);
 

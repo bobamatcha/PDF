@@ -11,12 +11,17 @@ export * from './pdf-loader';
 export * from './coord-utils';
 export * from './template-editor';
 export * from './page-operations';
+export * from './recipient-manager';
+export * from './dispatch-modal';
+export * from './security-utils';
 
 // Import for side effects (window assignments)
 import './pdf-bridge';
 import './pdf-loader';
 import './template-editor';
 import './page-operations';
+import './recipient-manager';
+import './dispatch-modal';
 
 // Export types
 export type * from './types/pdf-types';

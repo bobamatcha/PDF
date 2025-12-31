@@ -79,8 +79,8 @@ struct SessionMetadata {
   - Professional gradient header design
 
 #### f) `send_sender_notification(...) -> Result<()>`
-- Sends emails via Resend API
-- Uses RESEND_API_KEY from Cloudflare secrets
+- Sends emails via email-proxy Lambda (AWS SES backend)
+- Uses EMAIL_PROXY_API_KEY from Cloudflare secrets
 - Creates both HTML and plain text versions
 - Gracefully handles missing API key (logs but doesn't fail)
 - From address: `GetSignatures <noreply@mail.getsignatures.org>`
@@ -182,12 +182,12 @@ After recording a signature, the handler:
 ## Configuration
 
 ### Environment Variables Required
-- **RESEND_API_KEY**: Cloudflare secret for Resend API authentication
+- **EMAIL_PROXY_API_KEY**: Cloudflare secret for email-proxy Lambda authentication
 - If not configured, notifications are logged but signing still succeeds
 
 ### Constants
 ```rust
-const RESEND_API_URL: &str = "https://api.resend.com/emails";
+const EMAIL_PROXY_URL: &str = "https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws";
 const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
 ```
 
@@ -232,7 +232,7 @@ const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
 
 ### Backend (COMPLETE)
 - Worker endpoint: `/api/session/{id}/submit-signed` ✓
-- Email sending via Resend API ✓
+- Email sending via email-proxy Lambda ✓
 - Download link generation ✓
 - Notification logic in handle_submit_signed() ✓
 

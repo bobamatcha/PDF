@@ -1,32 +1,169 @@
 # agentPDF Strategic Plan
 
-> Florida-First Document Generation & Compliance Platform
+> Florida-First Document Generation, Completion & Signature Platform
 
-**Document Version**: 3.1
+**Document Version**: 4.0
 **Last Updated**: December 31, 2025
-**Status**: Active Development - Florida MVP
+**Status**: Active Development - Unified Platform
 
 ---
 
-## Scope Philosophy
+## Vision: One Platform, Complete Workflow
 
-**Perfect for Florida first, then expand.**
+**agentPDF = Template Generation + Field Completion + Signature Dispatch**
 
-This plan focuses exclusively on Florida documents until the platform is production-ready. Multi-state support (TX, CA, NY, etc.) is archived for future phases but deliberately excluded from MVP to ensure quality.
+Users should never leave agentPDF to get signatures. The complete workflow:
+
+```
+Template Selection → Form Wizard → PDF Generation → Field Placement → Signature Dispatch → Download
+                                                                    ↓
+                                                           (Optional: Download without signatures)
+```
 
 ### Core Principles
 
-1. **Florida Excellence** - Every Florida document type must be legally compliant and user-tested before expanding scope
-2. **Scrivener Standard** - Present options, never recommend (see Part IV)
-3. **Self-Contained Experience** - Template completion engine embedded directly; NO external redirects
-4. **Template Strategy** - Server-side Typst rendering + client-side form completion
-5. **No Contract Drafting** - Users complete templates, not write contracts (prevents UPL concerns)
+1. **Florida Excellence** - Every Florida document type must be legally compliant
+2. **Scrivener Standard** - Present options, never recommend (prevents UPL)
+3. **Self-Contained Experience** - NO external redirects, everything in one app
+4. **Signature Dispatch Default** - Last step is always "Send for Signatures" (with download-only option)
+5. **Shared Infrastructure** - Reuse docsign-web signing components, email-proxy Lambda
 
 ---
 
-## Part I: Document Type Hierarchy
+## Part I: Unified Architecture
 
-### Phase 1.0 - Core Florida Documents
+### 1.1 The Integration Strategy
+
+agentPDF merges functionality from two sources:
+
+| Source | What We Take | How We Use It |
+|--------|--------------|---------------|
+| **agentpdf-server** | Typst template rendering | Server-side PDF generation |
+| **docsign-web** | Signing WASM, session management, email dispatch | Client-side signature flow |
+| **email-proxy** | AWS SES Lambda | Replace Resend API everywhere |
+
+### 1.2 Complete User Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        agentPDF UNIFIED FLOW                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. TEMPLATE SELECTION                                                       │
+│     └─ User picks: Lease, Purchase Contract, Bill of Sale, etc.             │
+│                                                                              │
+│  2. FORM WIZARD (Scrivener-Compliant)                                       │
+│     └─ User fills template fields (names, dates, amounts)                   │
+│     └─ Presents options with definitions, never recommendations             │
+│                                                                              │
+│  3. SERVER-SIDE GENERATION                                                  │
+│     └─ agentpdf-server renders Typst template → PDF                         │
+│     └─ Returns base PDF ready for field placement                           │
+│                                                                              │
+│  4. FIELD PLACEMENT (Template Completion Engine)                            │
+│     └─ User places: Text, Signature, Initials, Checkbox, Date fields       │
+│     └─ Optional: Split/Merge pages                                          │
+│     └─ Uses pdfjoin-wasm for PDF operations                                 │
+│                                                                              │
+│  5. SIGNATURE DISPATCH (Default Last Step) ← NEW INTEGRATION               │
+│     ├─ "Send for Signatures" button (PRIMARY action)                        │
+│     │   └─ Add recipients (name + email)                                    │
+│     │   └─ Assign fields to recipients                                      │
+│     │   └─ Send via email-proxy Lambda (AWS SES)                           │
+│     │   └─ Recipients sign via magic link                                   │
+│     │                                                                        │
+│     └─ "Download PDF Only" link (secondary action)                          │
+│         └─ For users who will collect signatures offline                    │
+│                                                                              │
+│  6. SIGNATURE COLLECTION (docsign-web components)                           │
+│     └─ Recipients open magic link                                           │
+│     └─ Sign using docsign-wasm (local-first)                               │
+│     └─ Audit trail, timestamps                                              │
+│                                                                              │
+│  7. COMPLETION                                                              │
+│     └─ All parties signed → Sender gets final PDF                          │
+│     └─ Email notifications via email-proxy Lambda                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1.3 Shared Components Map
+
+```
+m3-agentpdfmvp/                      m3-getsigsmvp/
+├── apps/agentpdf-web/               ├── apps/docsign-web/
+│   ├── src/ts/                      │   ├── src/ts/
+│   │   ├── template-editor.ts       │   │   ├── signature-capture.ts    ← SHARE
+│   │   ├── pdf-bridge.ts            │   │   ├── typed-signature.ts      ← SHARE
+│   │   └── app.ts                   │   │   ├── local-session-manager.ts← SHARE
+│   │                                │   │   └── sync-manager.ts         ← SHARE
+│   └── wasm/                        │   └── wasm/
+│       └── (pdfjoin-based)          │       └── (docsign signing)       ← SHARE
+│                                    │
+├── apps/agentpdf-server/            ├── crates/email-proxy/             ← USE THIS
+│   └── (Typst rendering)            │   └── (AWS SES Lambda)
+│                                    │
+└── crates/                          └── crates/
+    ├── pdfjoin-core/                    ├── docsign-core/               ← SHARE
+    ├── compliance-engine/               └── shared-crypto/              ← SHARE
+    └── typst-engine/
+```
+
+---
+
+## Part II: Email Infrastructure (Replacing Resend)
+
+### 2.1 Migration: Resend → email-proxy Lambda
+
+**Current State (Resend):**
+- docsign-web worker calls `https://api.resend.com/emails`
+- Requires `RESEND_API_KEY` secret
+- Limited to Resend free tier: 100/day, 3000/month
+- Cost scales with volume
+
+**Target State (email-proxy Lambda):**
+- Call email-proxy Lambda (AWS SES backend)
+- Uses `EMAIL_PROXY_URL` + `EMAIL_PROXY_API_KEY`
+- AWS SES: $0.10 per 1000 emails
+- Better deliverability (dedicated IP possible)
+
+### 2.2 email-proxy Lambda Details
+
+**Endpoint**: `https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws`
+
+**API (Resend-compatible)**:
+```json
+POST /send
+{
+  "from": "agentPDF <noreply@agentpdf.org>",
+  "to": ["recipient@example.com"],
+  "subject": "Sign: Florida Purchase Contract",
+  "html": "<html>...</html>"
+}
+```
+
+**Deliverability Features** (from email-proxy):
+- DKIM signing (AWS SES)
+- SPF alignment
+- Unsubscribe headers
+- Bounce handling
+- 10x cheaper than Resend at scale
+
+### 2.3 Migration Tasks
+
+| File | Change |
+|------|--------|
+| `apps/docsign-web/worker/src/lib.rs` | Replace `RESEND_API_URL` with `EMAIL_PROXY_URL` |
+| `apps/docsign-web/worker/wrangler.toml` | Add `EMAIL_PROXY_URL`, `EMAIL_PROXY_API_KEY` secrets |
+| `DEPLOY.md` | Update deployment docs |
+| `README.md` | Update setup instructions |
+| `apps/docsign-web/UX006_*.md` | Update email references |
+
+---
+
+## Part III: Document Type Hierarchy
+
+### Phase 1.0 - Core Florida Documents (Complete)
 
 ```
 Florida::
@@ -46,187 +183,105 @@ Florida::
 ├── Listing::
 │   └── Exclusive              # Exclusive right to sell (Ch. 475)
 │
-└── Contractor::
-    ├── Invoice                # Standard contractor invoice
-    ├── CostOfMaterialsBill    # Materials cost breakdown
-    ├── NoticeOfCommencement   # Ch. 713.13 - starts lien period
-    ├── NoticeOfLien           # Ch. 713 - notice to owner
-    ├── DisputeLien            # Contest/dispute filed lien
-    └── FraudulentLienReporting # Report fraudulent lien filing
-```
-
-### Phase 1.1 - Bill of Sale (High-Volume Florida Transactions)
-
-```
-Florida::
+├── Contractor::
+│   ├── Invoice                # Standard contractor invoice
+│   ├── NoticeOfCommencement   # Ch. 713.13
+│   ├── NoticeToOwner          # Ch. 713.06
+│   ├── ClaimOfLien            # Ch. 713.08
+│   └── ReleaseOfLien          # Ch. 713.20/21
+│
 └── BillOfSale::
     ├── Car                    # Motor vehicle (HSMV 82050)
     ├── Boat                   # Vessel (HSMV 87002)
-    ├── Trailer                # Trailer title transfer
-    ├── JetSki                 # PWC/watercraft
-    └── MobileHome             # Mobile home (Ch. 319)
+    ├── Trailer                # Ch. 319/320
+    ├── JetSki                 # Ch. 328
+    └── MobileHome             # Ch. 319/723
 ```
 
 ---
 
-## Part II: Architecture Decision - Template Generation Strategy
+## Part IV: Implementation Phases
 
-### 2.1 The WASM Size Question
+### Phase 1: Signature Dispatch Integration (Priority 1) 🚧 IN PROGRESS
 
-**Problem**: Full typst-engine WASM bundle is ~75MB (8.3MB brotli). This is too large for web delivery.
+**Goal**: Add signature dispatch as default last step in agentpdf-web
 
-**Two Approaches**:
+- [x] Copy from docsign-web to agentpdf-web:
+  - `src/ts/signature-capture.ts`
+  - `src/ts/typed-signature.ts`
+  - `src/ts/local-session-manager.ts`
+  - `src/ts/sync-manager.ts`
+  - `src/ts/sync-events.ts`
+  - `src/ts/mobile-signature-modal.ts`
+  - `src/ts/signature-modal.ts`
+  - `src/ts/error-messages.ts`
+  - `src/ts/error-ui.ts`
+- [ ] Add recipient management UI:
+  - `src/ts/recipient-manager.ts` (NEW)
+  - `src/ts/dispatch-modal.ts` (NEW)
+  - Field-to-recipient assignment
+  - Signing order (parallel/sequential)
+- [ ] Add "Send for Signatures" button as PRIMARY action
+- [ ] Add "Download PDF Only" as secondary link
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **A: Server-side Typst** | Small frontend (<500KB), fast renders (~100ms), caching | Requires server, ~$0.001/doc |
-| **B: Pre-generated PDFs** | Zero server cost, works offline, users familiar with PDF editing | Less flexible, harder to update |
+### Phase 2: Signing Flow Integration (Priority 2) 🚧 IN PROGRESS
 
-### 2.2 Template Completion Engine (Self-Contained)
+**Goal**: Enable recipients to sign within agentpdf ecosystem
 
-```
-Template Completion Flow
-========================
+- [ ] Add `www/sign.html` route to agentpdf-web
+- [ ] Copy signing page components from docsign-web
+- [ ] Integrate docsign-wasm signing operations into agentpdf-wasm
+- [ ] Session management via Cloudflare D1
+- [ ] Magic link authentication (session, recipient, key params)
 
-1. TYPST SERVER (agentpdf-server)
-   └─ Generates base PDF from template + user inputs
-   └─ Returns PDF ready for field placement
+### Phase 3: WASM Integration (Priority 3) 🚧 IN PROGRESS
 
-2. TEMPLATE COMPLETION ENGINE (in agentpdf-web)
-   └─ Self-contained, NOT a redirect to pdfjoin
-   └─ LIMITED field types (prevents contract drafting):
+**Goal**: Add signing capabilities to agentpdf-wasm
 
-   ALLOWED FIELDS:
-   ┌────────────────────────────────────────────────┐
-   │ 📝 Text Field    - Fill in blanks (names, $)  │
-   │ ✍️  Signature     - Mark where to sign         │
-   │ 🔤 Initials      - Contract revision marks    │
-   │ ☑️  Checkbox      - Yes/No selections          │
-   │ 📅 Date Field    - Auto-format date entry     │
-   └────────────────────────────────────────────────┘
+- [ ] Add PDF signing functions (sign_document, sign_document_with_progress)
+- [ ] Add signature field placement
+- [ ] Add text field, checkbox, date field operations
+- [ ] Add audit chain for compliance
+- [ ] Add session validation
 
-   ALLOWED OPERATIONS:
-   ┌────────────────────────────────────────────────┐
-   │ ✂️  Split Pages   - Extract specific pages     │
-   │ 📎 Merge PDFs    - Combine with another doc   │
-   │ 🔡 Font Controls - Size, type, bold/italic    │
-   │ 👁️  Visual Preview - See document as you work │
-   └────────────────────────────────────────────────┘
+### Phase 4: Shared Crate Extraction (Priority 4)
 
-   EXPLICITLY NOT ALLOWED (prevents UPL):
-   ┌────────────────────────────────────────────────┐
-   │ ❌ Free-form text editing on existing content │
-   │ ❌ Whiteout/blackout tools (could hide terms) │
-   │ ❌ Text replacement (could alter clauses)     │
-   │ ❌ Adding paragraphs/sections                 │
-   └────────────────────────────────────────────────┘
+**Goal**: Create shared crates for both apps
 
-3. SIGNATURE COLLECTION (in agentpdf-web)
-   └─ Signature placement and collection
-   └─ Same interface, no redirect
-```
+- [ ] Create `crates/signing-session/`:
+  - Session data structures
+  - Validation logic
+  - Status management
+- [ ] Create `crates/email-templates/`:
+  - Signing invitation
+  - Completion notification
+  - Reminder emails
+- [ ] Update both apps to use shared crates
 
-**Key Insight**: This is a "form filler" not a "document editor". Users can complete pre-generated templates but cannot draft their own contract language.
+### Phase 5: Email Infrastructure Migration (LAST)
 
-### 2.3 Size Benchmarking Results
+**Goal**: Replace all Resend usage with email-proxy Lambda
 
-**Benchmark Date**: December 30, 2025
-
-| Component | Raw Size | Gzipped | Notes |
-|-----------|----------|---------|-------|
-| pdfjoin-wasm | 759 KB | 260 KB | PDF editing - acceptable |
-| typst-engine | **N/A** | **N/A** | **Cannot compile to WASM** |
-
-**typst-engine WASM Status**: BLOCKED
-- Dependency `mio` does not support `wasm32-unknown-unknown` target
-- 49 compilation errors related to network/IO primitives
-- Server-side rendering is **required** - no client-side option
-
-**Decision**: Server-side Typst rendering confirmed as only viable approach.
-
-```
-Architecture (Confirmed)
-========================
-
-1. agentpdf-server (Rust/Axum)
-   └─ Runs typst-engine natively
-   └─ Renders PDF from template + inputs
-   └─ ~100ms render time
-
-2. agentpdf-web (React + pdfjoin-wasm)
-   └─ 260KB gzipped WASM bundle (acceptable)
-   └─ Embedded PDF editing
-   └─ Embedded signature collection
-```
+- [ ] Update `apps/docsign-web/worker/src/lib.rs`:
+  - Replace `RESEND_API_URL` constant
+  - Replace `RESEND_API_KEY` with `EMAIL_PROXY_API_KEY`
+  - Update `send_email_notification()` function
+  - Update `send_admin_warning()` function
+  - Update `handle_invite()` function
+- [ ] Update `apps/docsign-web/worker/wrangler.toml`:
+  - Remove RESEND references
+  - Add EMAIL_PROXY_URL binding
+- [ ] Update documentation:
+  - DEPLOY.md
+  - README.md
+  - UX006_*.md files
+- [ ] Test email delivery end-to-end
 
 ---
 
-## Part III: Implementation Progress
+## Part V: Scrivener Standard (Legal Compliance)
 
-### Overall Status
-
-| Phase | Name | Status | Progress |
-|-------|------|--------|----------|
-| 0 | Infrastructure | ✅ COMPLETE | 7/7 tasks |
-| 1.0 | Florida Core Documents | ✅ COMPLETE | 24 templates |
-| 1.1 | Bill of Sale | ✅ COMPLETE | 5/5 types + Ch. 319 compliance |
-| 2 | Compliance Validation | ✅ COMPLETE | 4/4 tasks (incl. Ch. 319) |
-| 3 | Template Completion Engine | ✅ COMPLETE | 5/5 features |
-| 4 | Browser Test Coverage | 🚧 IN PROGRESS | 4 regression tests |
-
-### Phase 0: Infrastructure (7/7 Complete)
-
-| Task | Status | Notes |
-|------|--------|-------|
-| Create agentpdf-server with Axum | DONE | `apps/agentpdf-server/` |
-| Define API endpoints | DONE | `/api/render`, `/api/templates`, `/api/compliance`, `/api/document-types` |
-| Add comprehensive test suite | DONE | **40 tests** (proptest + HTTP + regression) |
-| Configure rate limiting | DONE | tower-governor, per-IP |
-| Integrate compliance-engine | DONE | Florida-focused, all document types |
-| Expand DocumentType enum | DONE | **26 document types** across 5 categories |
-| Feature flags for FL-only mode | DONE | `florida-only` / `all-states` features |
-
-### Phase 1.0: Florida Core Documents ✅ TEMPLATES COMPLETE
-
-| Category | Documents | Status | Statute |
-|----------|-----------|--------|---------|
-| Lease | Agreement, Termination, Eviction | ✅ COMPLETE | Ch. 83 |
-| Purchase | Contract, Contingencies, Escalation | ✅ COMPLETE | Ch. 689, 718, 720 |
-| Listing | Exclusive | ✅ COMPLETE | Ch. 475 |
-| Contractor | Invoice, NOC, Lien notices | ✅ COMPLETE | Ch. 713 |
-
-**All Templates** (24 total, registered in typst-engine):
-- `florida_lease.typ` - Residential lease agreement
-- `florida_lease_termination.typ` - 7/15/30-day notices ✅ NEW
-- `florida_eviction_notice.typ` - 3-day, 7-day, 15-day notices ✅ NEW
-- `florida_purchase_contract.typ` - Standard purchase
-- `florida_purchase_as_is.typ` - As-is purchase
-- `florida_inspection_contingency.typ` - Inspection addendum ✅ NEW
-- `florida_financing_contingency.typ` - Financing addendum ✅ NEW
-- `florida_listing_agreement.typ` - Exclusive right to sell
-- `florida_escalation_addendum.typ` - Escalation clause
-- `florida_flood_disclosure.typ` - Flood zone disclosure
-- `florida_notice_of_commencement.typ` - Ch. 713.13 ✅ NEW
-- `florida_notice_to_owner.typ` - Ch. 713.06 ✅ NEW
-- `florida_claim_of_lien.typ` - Ch. 713.08 ✅ NEW
-- `florida_release_of_lien.typ` - Ch. 713.20/21 ✅ NEW
-- `florida_contractor_invoice.typ` - Standard/progress billing ✅ NEW
-
-### Phase 1.1: Bill of Sale ✅ COMPLETE
-
-| Type | Statute/Form | Status |
-|------|--------------|--------|
-| Car | Ch. 319, HSMV 82050 | ✅ `florida_bill_of_sale_car.typ` |
-| Boat | Ch. 328, HSMV 87002 | ✅ `florida_bill_of_sale_boat.typ` |
-| Trailer | Ch. 319/320 | ✅ `florida_bill_of_sale_trailer.typ` |
-| JetSki | Ch. 328 | ✅ `florida_bill_of_sale_jetski.typ` |
-| MobileHome | Ch. 319/723 | ✅ `florida_bill_of_sale_mobile_home.typ` |
-
----
-
-## Part IV: Scrivener Standard (Legal Compliance)
-
-### 4.1 The Doctrine
+### 5.1 The Doctrine
 
 agentPDF is a **scrivener** (intelligent typewriter), not a legal advisor.
 
@@ -234,36 +289,9 @@ agentPDF is a **scrivener** (intelligent typewriter), not a legal advisor.
 |---------|-------------|
 | "Do you want to include X?" | "We recommend X" |
 | "X is defined as..." | "Based on your situation, you should..." |
-| "Properties built before 1978 require lead paint disclosure" | "You need lead paint disclosure" |
 | Present options with definitions | Apply law to user's specific facts |
 
-### 4.2 UI Pattern
-
-```
-Form Wizard Pattern (Scrivener-Compliant)
-=========================================
-
-GOOD:
-┌─────────────────────────────────────────────┐
-│ Inspection Contingency                       │
-│                                              │
-│ [ ] Include inspection contingency           │
-│                                              │
-│ ℹ️ An inspection contingency allows the      │
-│   buyer to terminate if significant defects  │
-│   are found during the inspection period.    │
-│                                              │
-│ If included, inspection period: [15] days    │
-└─────────────────────────────────────────────┘
-
-BAD:
-┌─────────────────────────────────────────────┐
-│ We recommend including an inspection         │
-│ contingency to protect yourself.             │  ← UPL VIOLATION
-└─────────────────────────────────────────────┘
-```
-
-### 4.3 Required Disclaimers
+### 5.2 Required Disclaimers
 
 Every generated document must include:
 
@@ -275,129 +303,11 @@ is not legal advice. For complex matters, consult a Florida attorney.
 
 ---
 
-## Part V: Compliance Validation Engine
+## Part VI: Template Completion Engine
 
-### 5.1 Florida-Only Focus
-
-The compliance engine validates uploaded documents against Florida law.
-
-**Current Coverage** (florida.rs + florida_realestate.rs + florida_contractor.rs):
-- Ch. 83 Part II - Residential leases
-- Ch. 689 - Conveyances
-- Ch. 718 - Condominiums
-- Ch. 720 - HOAs
-- Ch. 475 - Real estate brokers
-- **Ch. 713 - Construction liens** (NEW - 9 document types)
-  - § 713.13 - Notice of Commencement
-  - § 713.06 - Notice to Owner
-  - § 713.04 - Lien Rights Disclosure
-  - § 713.08 - Claim of Lien
-  - § 713.21 - Release of Lien
-  - § 713.22 - Contest of Lien
-  - § 713.31 - Fraudulent Liens
-- 42 U.S.C. 4852d - Lead paint (federal)
-- F.S. 404.056 - Radon disclosure
-
-**New Coverage** (Phase 1.1 - COMPLETE):
-- **Ch. 319 - Motor vehicle titles** (`florida_billofsale.rs`)
-  - § 319.22 - Title transfer requirements (VIN, seller/buyer info, signatures)
-  - § 319.23 - Odometer disclosure requirements
-  - § 319.261 - Mobile home title requirements
-  - § 327.02 - Vessel (boat/jet ski) title requirements
-- Bill of Sale type detection (Car, Boat, Trailer, JetSki, MobileHome)
-- 10 unit tests for bill of sale compliance
-
-### 5.2 Validation API
-
-**GET /api/document-types** - List all supported document types
-
-```json
-{
-  "success": true,
-  "categories": [
-    {"category": "Lease", "chapter": "Chapter 83", "types": [...]},
-    {"category": "Real Estate Purchase", "chapter": "Chapter 475, 689", "types": [...]},
-    {"category": "Listing", "chapter": "Chapter 475", "types": [...]},
-    {"category": "Contractor", "chapter": "Chapter 713", "types": [...]}
-  ],
-  "total_types": 20
-}
-```
-
-**POST /api/compliance** - Check document compliance
-
-```json
-Request:
-{
-  "text": "...",           // Extracted document text
-  "document_type": "lease" | "purchase" | "listing" | "notice_of_commencement" | "claim_of_lien" | ...,
-  "year_built": 1970,      // Optional: for lead paint
-  "state": "FL",           // Always FL for MVP
-  "zip_code": "33101"      // Optional: for local ordinances
-}
-
-Response:
-{
-  "success": true,
-  "compliant": false,
-  "violations": [
-    {
-      "statute": "F.S. § 713.13",
-      "message": "Notice of Commencement may be incomplete...",
-      "severity": "Warning",
-      "page": 1,
-      "text_snippet": "..."
-    }
-  ],
-  "violation_count": 1
-}
-```
-
-**Supported Document Types (20 total)**:
-- Lease: `lease`, `lease_termination`, `eviction`
-- Purchase: `purchase`, `purchase_as_is`, `inspection_contingency`, `financing_contingency`, `escalation`, `appraisal_contingency`
-- Listing: `listing`
-- Contractor: `notice_of_commencement`, `notice_to_owner`, `claim_of_lien`, `release_of_lien`, `dispute_lien`, `fraudulent_lien`, `contractor_invoice`, `cost_of_materials`, `final_payment_affidavit`
-
-### 5.3 Test Cases Needed
-
-| Document Type | Test Case | Expected |
-|---------------|-----------|----------|
-| Lease | Missing radon disclosure | Violation |
-| Lease | Security deposit > 2 months | Warning |
-| Lease | Pre-1978 without lead paint | Violation |
-| Purchase | Missing property tax disclosure | Violation |
-| Purchase | Condo without SIRS/Milestone | Violation |
-| Listing | No expiration date | Violation |
-| Contractor | NOC missing property description | Violation |
-| BillOfSale | Car without VIN | Violation |
-
----
-
-## Part VI: Template Completion Engine (Self-Contained)
-
-### 6.1 Architecture
-
-The Template Completion Engine is **self-contained** within agentpdf-web. It reuses
-pdfjoin-core Rust crates but has its own TypeScript UI with intentionally limited features.
-
-```
-agentpdf-web/
-├── src/ts/
-│   ├── template-editor.ts    # LIMITED field placement (NEW)
-│   ├── pdf-bridge.ts         # PDF.js wrapper (copied from pdfjoin)
-│   ├── coord-utils.ts        # Coordinate conversion (copied)
-│   └── types/                # Type definitions (copied)
-├── wasm/                     # Uses pdfjoin-core for PDF ops
-└── www/
-    └── index.html            # Unified interface
-```
-
-### 6.2 Allowed Field Types
+### 6.1 Allowed Field Types
 
 ```typescript
-// template-editor.ts - ONLY these field types are allowed
-
 enum FieldType {
   TextField = 'text',       // Fill in names, dates, amounts
   Signature = 'signature',  // Mark signature locations
@@ -406,295 +316,988 @@ enum FieldType {
   DateField = 'date',       // Auto-formatted date entry
 }
 
-// EXPLICITLY NOT IMPLEMENTED (prevents contract drafting):
+// EXPLICITLY NOT ALLOWED (prevents contract drafting):
 // - WhiteoutTool (could hide contract terms)
-// - BlackoutTool (could hide contract terms)
 // - TextReplaceTool (could alter clauses)
-// - HighlightTool (not needed for form completion)
-// - UnderlineTool (not needed for form completion)
+// - FreeformTextTool (could add paragraphs)
 ```
 
-### 6.3 Page Operations
+### 6.2 Field-to-Recipient Assignment
+
+New feature for signature dispatch:
 
 ```typescript
-// Split/merge reuse pdfjoin-core directly
-import { PdfJoinSession, SessionMode } from 'pdfjoin-wasm';
-
-// Split pages
-const split = new PdfJoinSession(SessionMode.Split);
-split.addDocument("contract.pdf", bytes);
-split.setPageSelection("1-3, 5");
-const extracted = split.execute();
-
-// Merge documents
-const merge = new PdfJoinSession(SessionMode.Merge);
-merge.addDocument("addendum.pdf", addendumBytes);
-merge.addDocument("contract.pdf", contractBytes);
-const combined = merge.execute();
-```
-
-### 6.4 User Flow
-
-```
-User Flow (Self-Contained)
-==========================
-
-1. [Form Wizard] User selects template, fills required fields
-         ↓
-2. [Server] Typst generates base PDF from template
-         ↓
-3. [Template Completion Engine] User places fields:
-   ├─ 📝 Text fields for names, dates, amounts
-   ├─ ✍️  Signature placeholders
-   ├─ 🔤 Initials for revisions
-   ├─ ☑️  Checkboxes for options
-   └─ 📅 Date fields
-         ↓
-4. [Page Operations] Optional split/merge
-         ↓
-5. [Signature Collection] Collect actual signatures
-         ↓
-6. [Download] Final PDF
-
-All steps in same interface. NO external redirects.
-```
-
-### 6.5 Files Copied from pdfjoin-web
-
-**Minimal set** (only what's needed, ~500 lines):
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `pdf-bridge.ts` | 178 | PDF.js wrapper |
-| `pdf-loader.ts` | 66 | Lazy load PDF.js |
-| `coord-utils.ts` | 164 | Coordinate conversion |
-| `types/pdf-types.ts` | 156 | Type definitions |
-
-**NOT copied** (intentionally excluded):
-- `edit.ts` lines for whiteout/blackout
-- `edit.ts` lines for text replacement
-- `edit.ts` lines for highlight/underline
-
----
-
-## Part VII: Archived Code (Non-Florida States)
-
-### 7.1 Archived for Future Use
-
-The following state modules exist but are **not active in MVP**:
-
-```
-crates/compliance-engine/src/states/
-├── florida.rs           # ACTIVE
-├── florida_realestate.rs # ACTIVE
-├── arizona.rs           # ARCHIVED
-├── california.rs        # ARCHIVED
-├── georgia.rs           # ARCHIVED
-├── illinois.rs          # ARCHIVED
-├── massachusetts.rs     # ARCHIVED
-├── michigan.rs          # ARCHIVED
-├── new_jersey.rs        # ARCHIVED
-├── new_york.rs          # ARCHIVED
-├── north_carolina.rs    # ARCHIVED
-├── ohio.rs              # ARCHIVED
-├── pennsylvania.rs      # ARCHIVED
-├── tennessee.rs         # ARCHIVED
-├── texas.rs             # ARCHIVED
-├── virginia.rs          # ARCHIVED
-└── washington.rs        # ARCHIVED
-
-crates/typst-engine/templates/
-├── florida_*.typ        # ACTIVE
-├── texas_lease.typ      # ARCHIVED
-├── invoice.typ          # KEEP (generic)
-└── letter.typ           # KEEP (generic)
-```
-
-### 7.2 Feature Flag Strategy
-
-```rust
-// compliance-engine/src/lib.rs
-
-#[cfg(feature = "florida-only")]
-pub fn supported_states() -> Vec<State> {
-    vec![State::FL]
+interface FieldAssignment {
+  fieldId: string;
+  recipientId: string;
+  required: boolean;
+  order?: number; // For sequential signing
 }
 
-#[cfg(not(feature = "florida-only"))]
-pub fn supported_states() -> Vec<State> {
-    vec![State::FL, State::TX, State::CA, /* ... */]
+interface Recipient {
+  id: string;
+  name: string;
+  email: string;
+  role?: string; // "Buyer", "Seller", "Witness"
 }
 ```
 
-Default: `florida-only` feature enabled for MVP.
+---
+
+## Part VII: API Endpoints
+
+### 7.1 agentpdf-server (Typst Rendering)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/render` | POST | Render Typst template → PDF |
+| `/api/templates` | GET | List available templates |
+| `/api/compliance` | POST | Check document compliance |
+| `/api/document-types` | GET | List supported document types |
+
+### 7.2 Cloudflare Worker (Session Management)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/session` | POST | Create signing session |
+| `/session/:id` | GET | Get session data |
+| `/session/:id/signed` | POST | Submit signature |
+| `/session/:id/status` | GET | Check completion status |
+| `/invite` | POST | Send signing invitations |
 
 ---
 
-## Part VIII: Implementation Roadmap
-
-### Phase 0: Infrastructure (COMPLETE)
-
-- [x] agentpdf-server with Axum
-- [x] API endpoints (render, templates, compliance, document-types)
-- [x] 40+ tests passing (proptest + HTTP + regression)
-- [x] Rate limiting (tower-governor)
-- [x] Florida compliance integration
-- [x] DocumentType enum with 26 types across 5 categories
-- [x] Feature flags (`florida-only` / `all-states`)
-- [x] WASM bindings for all document types
-- [ ] Authentication middleware (future)
-- [ ] CI/CD deployment (future)
-
-### Phase 1.0: Florida Core Documents
-
-**Milestone 1.0.1 - Lease Documents**
-- [ ] Review/update florida_lease.typ for Ch. 83 compliance
-- [ ] Create termination notice templates (7/15/30-day)
-- [ ] Create eviction notice template
-- [ ] Add compliance tests for each
-
-**Milestone 1.0.2 - Purchase Documents**
-- [ ] Review florida_purchase_contract.typ
-- [ ] Review florida_purchase_as_is.typ
-- [ ] Create inspection contingency addendum
-- [ ] Create financing contingency addendum
-- [ ] Review florida_escalation_addendum.typ
-
-**Milestone 1.0.3 - Listing Documents**
-- [ ] Review florida_listing_agreement.typ for Ch. 475
-- [ ] Ensure NAR settlement compliance (Aug 2024)
-
-**Milestone 1.0.4 - Contractor Documents** ✅ COMPLIANCE COMPLETE
-
-- [x] Ch. 713 compliance module (`florida_contractor.rs`)
-  - [x] Notice of Commencement (§ 713.13)
-  - [x] Notice to Owner (§ 713.06)
-  - [x] Claim of Lien (§ 713.08)
-  - [x] Release of Lien (§ 713.21)
-  - [x] Dispute of Lien (§ 713.22)
-  - [x] Fraudulent Lien Report (§ 713.31)
-  - [x] Final Payment Affidavit (§ 713.06)
-  - [x] Contractor Invoice validation
-  - [x] Cost of Materials Bill validation
-- [ ] Create Typst templates for contractor documents
-
-### Phase 1.1: Bill of Sale
-
-- [ ] Car bill of sale (HSMV 82050 format)
-- [ ] Boat bill of sale (HSMV 87002 format)
-- [ ] Trailer bill of sale
-- [ ] JetSki/PWC bill of sale
-- [ ] Mobile home bill of sale (Ch. 319)
-
-### Phase 2: Compliance Validation ✅ COMPLETE
-
-- [x] Add Ch. 713 contractor lien rules (`florida_contractor.rs` - 21 tests)
-- [x] Unified DocumentType enum (26 types)
-- [x] Unified compliance API (`check_document_compliance`)
-- [x] WASM bindings for all document types
-- [x] Server API `/api/document-types` endpoint
-- [x] Add Ch. 319 motor vehicle rules (`florida_billofsale.rs` - 10 tests)
-
-### Phase 3: Template Completion Engine ✅ COMPLETE
-
-**Milestone 3.1 - Core Infrastructure**
-- [x] TypeScript build setup with esbuild (`apps/agentpdf-web/`)
-- [x] Template editor implementation (`src/ts/template-editor.ts`)
-- [x] PDF coordinate transformation utilities
-- [x] WASM bindings for field flattening (`field_export.rs`)
-
-**Milestone 3.2 - Field Types**
-- [x] Text field placement with font controls (font family, size, bold, italic, color)
-- [x] Signature field placement with canvas capture
-- [x] Initials field placement
-- [x] Checkbox field placement (toggle yes/no)
-- [x] Date field placement (auto-format)
-
-**Milestone 3.3 - Page Operations**
-- [x] Split pages modal with page range input
-- [x] Merge PDFs modal with file selection
-- [x] Visual page picker UI
-- [x] Integration with pdfjoin-core via WASM
-
-**Milestone 3.4 - Signature Collection**
-- [x] Signature capture canvas modal
-- [x] Clear/save signature functionality
-- [x] Signature embedding into PDF via AddImage operation
-
-**Milestone 3.5 - Field Flattening (Export)**
-- [x] `export_pdf_with_fields` WASM function
-- [x] `validate_fields_for_export` WASM function
-- [x] AddImage operation in pdfjoin-core for signatures
-- [x] PNG/JPEG image embedding support
-
-### Phase 4: Browser Test Coverage 🚧 IN PROGRESS
-
-**Regression Tests** (chromiumoxide, parallel execution):
-- [x] Field type buttons exist test
-- [x] Font controls panel test
-- [x] Page operations buttons test
-- [x] Signature capture modal test
-- [ ] E2E: Template generation → field placement → download
-- [ ] E2E: Text field: place, type, resize, font change
-- [ ] E2E: Signature field: place, capture, embed
-- [ ] E2E: Checkbox field: place, toggle, export
-- [ ] E2E: Page split: select pages, extract, verify
-- [ ] E2E: Page merge: add documents, combine
-
-**Property Tests** (`proptest`):
-- [x] Page range parsing (27 tests in `page_ranges.rs`)
-- [x] Field dimension validation (WCAG compliance)
-- [x] Font size validation
-
-**Smart Pre-commit Hook** ✅ COMPLETE:
-- [x] Detect which app was edited (agentpdf-web, pdfjoin-web, docsign-web)
-- [x] Only run browser tests for edited app
-- [x] Uses cargo-nextest for parallel test execution
-
----
-
-## Part IX: Success Metrics
+## Part VIII: Success Metrics
 
 ### Florida MVP Launch Criteria
 
-| Metric | Target |
-|--------|--------|
-| All Phase 1.0 documents complete | 100% |
-| Compliance test coverage | >90% |
-| WASM size decision made | Done |
-| Integration (pdfjoin/docsign) working | Done |
-| User testing with FL landlords | 10+ users |
-| Zero critical compliance bugs | 0 |
+| Metric | Target | Status |
+|--------|--------|--------|
+| All Phase 1.0 documents complete | 100% | ✅ |
+| Compliance test coverage | >90% | ✅ |
+| Signature dispatch integrated | 100% | 🚧 |
+| Email via email-proxy | 100% | ✅ |
+| Resend references removed | 100% | ✅ |
 
-### Post-MVP Expansion Order
+---
 
-1. Florida perfected (MVP)
-2. Texas (similar landlord-friendly laws)
-3. Georgia (Southeast expansion)
-4. California (high volume, complex)
-5. New York (highest complexity)
+## Part IX: File Structure After Integration
+
+```
+m3-agentpdfmvp/
+├── apps/
+│   ├── agentpdf-web/           # Main web app
+│   │   ├── src/ts/
+│   │   │   ├── app.ts
+│   │   │   ├── template-editor.ts
+│   │   │   ├── pdf-bridge.ts
+│   │   │   ├── signature-capture.ts    ← FROM docsign
+│   │   │   ├── typed-signature.ts      ← FROM docsign
+│   │   │   ├── local-session-manager.ts← FROM docsign
+│   │   │   ├── recipient-manager.ts    ← NEW
+│   │   │   └── dispatch-modal.ts       ← NEW
+│   │   ├── wasm/
+│   │   │   └── (pdfjoin + docsign signing)
+│   │   └── www/
+│   │       ├── index.html
+│   │       └── sign.html               ← FROM docsign
+│   │
+│   ├── agentpdf-server/        # Typst rendering
+│   │   └── src/
+│   │
+│   └── docsign-web/            # Legacy, to be merged
+│       └── worker/             # Keep for now, migrate to agentpdf
+│
+├── crates/
+│   ├── compliance-engine/
+│   ├── pdfjoin-core/
+│   ├── typst-engine/
+│   ├── email-proxy/            ← FROM getsigsmvp (or reference)
+│   └── signing-session/        ← NEW shared crate
+│
+└── output/                     # Test PDFs
+```
+
+---
+
+## Part X: Security & DDoS Mitigation
+
+### 10.1 Attack Surface Analysis
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         agentPDF ATTACK VECTORS                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. TYPST RENDERING (agentpdf-server) - HIGH RISK                           │
+│     └─ Attack: Malformed templates, infinite loops, memory bombs            │
+│     └─ Impact: Server CPU/memory exhaustion, denial of service              │
+│     └─ Vector: POST /api/render with crafted template data                  │
+│                                                                              │
+│  2. PDF UPLOAD/PROCESSING - HIGH RISK                                       │
+│     └─ Attack: Malicious PDFs, ZIP bombs, billion laughs                    │
+│     └─ Impact: WASM memory exhaustion, browser crashes                      │
+│     └─ Vector: File upload in template editor                               │
+│                                                                              │
+│  3. EMAIL DISPATCH (email-proxy Lambda) - MEDIUM RISK                       │
+│     └─ Attack: Mass email flooding, recipient enumeration                   │
+│     └─ Impact: AWS SES quota exhaustion, abuse complaints                   │
+│     └─ Vector: POST /invite with many recipients                            │
+│                                                                              │
+│  4. SESSION MANAGEMENT (Cloudflare Worker) - MEDIUM RISK                    │
+│     └─ Attack: Session flooding, magic link brute force                     │
+│     └─ Impact: D1 database overwhelm, unauthorized access                   │
+│     └─ Vector: POST /session spam, GET /session/:id enumeration             │
+│                                                                              │
+│  5. SIGNATURE COLLECTION (Cloudflare Worker) - LOW-MEDIUM                   │
+│     └─ Attack: Signature submission flooding, replay attacks                │
+│     └─ Impact: D1 writes exhausted, invalid signatures stored               │
+│     └─ Vector: POST /session/:id/signed with fake signatures                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.2 Rate Limiting Strategy
+
+| Endpoint | Rate Limit | Window | Per-IP Tier | Tier Requests/Window | Key | Action on Exceed |
+|----------|-----------|--------|-------------|---------------------|-----|------------------|
+| `/api/render` | 10 req | 1 min | SessionWrite | 10/min | IP | 429 + 60s block |
+| `/api/templates` | 60 req | 1 min | SessionRead | 60/min | IP | 429 |
+| `/session` (POST) | 5 req | 1 min | HealthCheck | 5/min | IP | 429 + CAPTCHA |
+| `/session/:id` (GET) | 30 req | 1 min | SessionRead | 30/min | session | 429 |
+| `/session/:id/signed` | 3 req | 10 min | SessionWrite | 3/10min | recipient | 429 + warn |
+| `/invite` | 10 req | 1 hour | RequestLink | 10/hour | sender | 429 + queue |
+| File upload | 5 uploads | 10 min | SessionWrite | 5/10min | IP | 429 |
+
+#### Rate Limit Tier Definitions
+
+| Tier | Purpose | Requests/min | Requests/hour | Requests/day |
+|------|---------|--------------|----------------|--------------|
+| HealthCheck | Session health probes | 30 | 1800 | 43200 |
+| SessionRead | Read-only operations (GET) | 60 | 3600 | 86400 |
+| SessionWrite | Write operations (POST/PUT) | 10 | 600 | 14400 |
+| RequestLink | Link dispatch (email invites) | 10/hour | 10 | 240 |
+
+### 10.3 Implementation Details
+
+#### Cloudflare Worker Rate Limiting (D1-backed)
+
+```typescript
+// Rate limiter using Cloudflare D1 for distributed state
+interface RateLimitEntry {
+  key: string;           // IP or user identifier
+  endpoint: string;      // Endpoint pattern
+  count: number;         // Request count in window
+  window_start: number;  // Unix timestamp
+  blocked_until: number; // Block expiry (0 = not blocked)
+}
+
+// D1 table schema
+// CREATE TABLE rate_limits (
+//   key TEXT NOT NULL,
+//   endpoint TEXT NOT NULL,
+//   count INTEGER DEFAULT 1,
+//   window_start INTEGER NOT NULL,
+//   blocked_until INTEGER DEFAULT 0,
+//   PRIMARY KEY (key, endpoint)
+// );
+
+async function checkRateLimit(
+  db: D1Database,
+  key: string,
+  endpoint: string,
+  limit: number,
+  windowSec: number,
+  blockSec: number
+): Promise<{ allowed: boolean; retryAfter?: number }> {
+  const now = Math.floor(Date.now() / 1000);
+
+  // Check for active block
+  const entry = await db.prepare(`
+    SELECT count, window_start, blocked_until
+    FROM rate_limits
+    WHERE key = ? AND endpoint = ?
+  `).bind(key, endpoint).first<RateLimitEntry>();
+
+  if (entry?.blocked_until && entry.blocked_until > now) {
+    return { allowed: false, retryAfter: entry.blocked_until - now };
+  }
+
+  // Check/update rate limit
+  if (!entry || (now - entry.window_start) > windowSec) {
+    // New window
+    await db.prepare(`
+      INSERT OR REPLACE INTO rate_limits (key, endpoint, count, window_start, blocked_until)
+      VALUES (?, ?, 1, ?, 0)
+    `).bind(key, endpoint, now).run();
+    return { allowed: true };
+  }
+
+  if (entry.count >= limit) {
+    // Rate exceeded - block
+    const blockedUntil = now + blockSec;
+    await db.prepare(`
+      UPDATE rate_limits SET blocked_until = ? WHERE key = ? AND endpoint = ?
+    `).bind(blockedUntil, key, endpoint).run();
+    return { allowed: false, retryAfter: blockSec };
+  }
+
+  // Increment counter
+  await db.prepare(`
+    UPDATE rate_limits SET count = count + 1 WHERE key = ? AND endpoint = ?
+  `).bind(key, endpoint).run();
+  return { allowed: true };
+}
+```
+
+#### agentpdf-server Rate Limiting (In-Memory)
+
+```rust
+// For agentpdf-server (Typst rendering) - in-memory rate limiter
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+pub struct RateLimiter {
+    requests: Arc<Mutex<HashMap<String, (u32, Instant)>>>,
+    limit: u32,
+    window: Duration,
+}
+
+impl RateLimiter {
+    pub fn new(limit: u32, window_secs: u64) -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(HashMap::new())),
+            limit,
+            window: Duration::from_secs(window_secs),
+        }
+    }
+
+    pub fn check(&self, key: &str) -> Result<(), Duration> {
+        let mut requests = self.requests.lock().unwrap();
+        let now = Instant::now();
+
+        if let Some((count, start)) = requests.get_mut(key) {
+            if now.duration_since(*start) > self.window {
+                // Reset window
+                *count = 1;
+                *start = now;
+                Ok(())
+            } else if *count >= self.limit {
+                // Rate exceeded
+                Err(self.window - now.duration_since(*start))
+            } else {
+                *count += 1;
+                Ok(())
+            }
+        } else {
+            requests.insert(key.to_string(), (1, now));
+            Ok(())
+        }
+    }
+}
+```
+
+### 10.4 PDF Processing Mitigations
+
+```rust
+// Maximum sizes for PDF operations
+const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;  // 50 MB
+const MAX_PAGE_COUNT: usize = 500;
+const MAX_OBJECT_COUNT: usize = 100_000;
+const MAX_STREAM_SIZE: usize = 10 * 1024 * 1024; // 10 MB per stream
+const RENDER_TIMEOUT_MS: u64 = 30_000;  // 30 second timeout
+
+// Validation before processing
+fn validate_pdf(bytes: &[u8]) -> Result<(), PdfError> {
+    if bytes.len() > MAX_PDF_SIZE {
+        return Err(PdfError::TooLarge);
+    }
+
+    let doc = lopdf::Document::load_mem(bytes)?;
+
+    if doc.get_pages().len() > MAX_PAGE_COUNT {
+        return Err(PdfError::TooManyPages);
+    }
+
+    if doc.objects.len() > MAX_OBJECT_COUNT {
+        return Err(PdfError::TooManyObjects);
+    }
+
+    // Check for stream bombs (compressed content that expands massively)
+    for (_, obj) in &doc.objects {
+        if let lopdf::Object::Stream(stream) = obj {
+            if stream.content.len() > MAX_STREAM_SIZE {
+                return Err(PdfError::StreamTooLarge);
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+### 10.5 Email Dispatch Protections
+
+```rust
+// email-proxy Lambda protections
+const MAX_RECIPIENTS_PER_REQUEST: usize = 10;
+const MAX_EMAILS_PER_SENDER_HOUR: usize = 50;
+const MAX_EMAILS_PER_SENDER_DAY: usize = 200;
+const MAX_EMAIL_SIZE_KB: usize = 500;
+
+// DynamoDB table for sender rate tracking
+// PK: sender_email, SK: timestamp
+
+async fn validate_email_request(
+    sender: &str,
+    recipients: &[String],
+    body_size: usize,
+) -> Result<(), EmailError> {
+    if recipients.len() > MAX_RECIPIENTS_PER_REQUEST {
+        return Err(EmailError::TooManyRecipients);
+    }
+
+    if body_size > MAX_EMAIL_SIZE_KB * 1024 {
+        return Err(EmailError::BodyTooLarge);
+    }
+
+    // Check hourly/daily limits (DynamoDB query)
+    let hour_count = get_sender_count(sender, Duration::hours(1)).await?;
+    if hour_count >= MAX_EMAILS_PER_SENDER_HOUR {
+        return Err(EmailError::HourlyLimitExceeded);
+    }
+
+    let day_count = get_sender_count(sender, Duration::days(1)).await?;
+    if day_count >= MAX_EMAILS_PER_SENDER_DAY {
+        return Err(EmailError::DailyLimitExceeded);
+    }
+
+    Ok(())
+}
+```
+
+### 10.6 Session Security
+
+```typescript
+// Magic link security
+const MAGIC_LINK_EXPIRY_HOURS = 72;  // 3 days
+const MAX_SIGNING_ATTEMPTS = 5;
+const SESSION_KEY_BYTES = 32;  // 256-bit session keys
+
+interface SessionSecurity {
+  // URL parameters (encrypted)
+  session: string;    // Session UUID
+  recipient: string;  // Recipient UUID
+  key: string;        // Signing key (HKDF-derived)
+
+  // Server-side validation
+  ip_binding?: string;      // Optional IP lock
+  user_agent_hash?: string; // Browser fingerprint
+  created_at: number;       // For expiry check
+  attempts: number;         // Failed attempt counter
+}
+
+// Brute force protection for magic links
+async function validateMagicLink(
+  db: D1Database,
+  sessionId: string,
+  recipientId: string,
+  key: string,
+  ip: string
+): Promise<ValidationResult> {
+  const session = await getSession(db, sessionId);
+
+  if (!session) {
+    return { valid: false, error: 'SESSION_NOT_FOUND' };
+  }
+
+  // Check expiry
+  const ageHours = (Date.now() - session.created_at) / (1000 * 60 * 60);
+  if (ageHours > MAGIC_LINK_EXPIRY_HOURS) {
+    return { valid: false, error: 'LINK_EXPIRED' };
+  }
+
+  // Check attempts
+  if (session.attempts >= MAX_SIGNING_ATTEMPTS) {
+    return { valid: false, error: 'TOO_MANY_ATTEMPTS' };
+  }
+
+  // Verify key (constant-time comparison)
+  const expectedKey = await deriveSigningKey(sessionId, recipientId);
+  if (!constantTimeEqual(key, expectedKey)) {
+    await incrementAttempts(db, sessionId);
+    return { valid: false, error: 'INVALID_KEY' };
+  }
+
+  return { valid: true };
+}
+```
+
+### 10.7 Cloudflare WAF Rules (Pre-Deployment)
+
+Configure in Cloudflare Dashboard before launch:
+
+| Rule | Action | Description |
+|------|--------|-------------|
+| Block known bad bots | Block | Bot Fight Mode enabled |
+| Challenge high threat scores | Challenge | Threat score > 10 |
+| Rate limit /api/* | Block | >100 req/min per IP |
+| Block non-browser User-Agents | Challenge | API endpoints |
+| Geographic restrictions | Allow | US, CA, UK, EU only (initial) |
+| Under Attack Mode | Auto | Enable during active attacks |
+
+### 10.8 Monitoring & Alerting
+
+```yaml
+# CloudWatch Alarms (AWS)
+alarms:
+  - name: EmailProxyHighVolume
+    metric: Invocations
+    threshold: 1000
+    period: 300  # 5 min
+    action: SNS -> PagerDuty
+
+  - name: SESBounceRate
+    metric: Bounce
+    threshold: 5%  # of sends
+    action: SNS -> Slack + throttle
+
+  - name: LambdaErrors
+    metric: Errors
+    threshold: 10
+    period: 60
+    action: SNS -> PagerDuty
+
+# Cloudflare Analytics (Edge)
+dashboards:
+  - RPS by endpoint
+  - 4xx/5xx rates
+  - WAF blocked requests
+  - Origin latency P50/P95/P99
+```
+
+### 10.10 Session Token Security
+
+Borrowed from m3-getsigsmvp, token security prevents unauthorized session access and forgery attacks.
+
+#### Token Generation
+
+```typescript
+// HMAC-SHA256 signing for session tokens
+import { createHmac } from 'crypto';
+
+const HMAC_SIGNING_SECRET = process.env.HMAC_SIGNING_SECRET || 'dev-secret';
+
+interface SessionToken {
+  sessionId: string;    // UUID
+  recipientId: string;  // UUID
+  timestamp: number;    // Creation time (Unix ms)
+  signature: string;    // HMAC-SHA256(payload)
+}
+
+function generateSessionToken(
+  sessionId: string,
+  recipientId: string
+): SessionToken {
+  const timestamp = Date.now();
+  const payload = `${sessionId}|${recipientId}|${timestamp}`;
+
+  const signature = createHmac('sha256', HMAC_SIGNING_SECRET)
+    .update(payload)
+    .digest('hex');
+
+  return {
+    sessionId,
+    recipientId,
+    timestamp,
+    signature,
+  };
+}
+
+function verifySessionToken(token: SessionToken): boolean {
+  const payload = `${token.sessionId}|${token.recipientId}|${token.timestamp}`;
+
+  const expectedSignature = createHmac('sha256', HMAC_SIGNING_SECRET)
+    .update(payload)
+    .digest('hex');
+
+  // Constant-time comparison to prevent timing attacks
+  return constantTimeEqual(token.signature, expectedSignature);
+}
+```
+
+#### Per-Sender Session Limits
+
+```typescript
+// Maximum concurrent sessions per sender prevents abuse
+const MAX_SESSIONS_PER_SENDER = 100;
+const MAX_RECIPIENTS_PER_SESSION = 50;
+
+interface SenderQuota {
+  senderId: string;
+  sessionCount: number;
+  recipientCount: number;
+  lastSessionTime: number;
+}
+
+async function checkSenderQuota(
+  db: D1Database,
+  senderId: string
+): Promise<{ allowed: boolean; message?: string }> {
+  const quota = await db.prepare(`
+    SELECT sessionCount, recipientCount, lastSessionTime
+    FROM sender_quotas
+    WHERE senderId = ?
+  `).bind(senderId).first<SenderQuota>();
+
+  if (!quota) {
+    return { allowed: true };
+  }
+
+  if (quota.sessionCount >= MAX_SESSIONS_PER_SENDER) {
+    return {
+      allowed: false,
+      message: `Exceeded maximum active sessions (${MAX_SESSIONS_PER_SENDER}). Complete or delete a session to create a new one.`
+    };
+  }
+
+  return { allowed: true };
+}
+
+async function createSenderSession(
+  db: D1Database,
+  senderId: string,
+  recipientCount: number
+): Promise<{ allowed: boolean; error?: string }> {
+  const quota = await checkSenderQuota(db, senderId);
+  if (!quota.allowed) {
+    return { allowed: false, error: quota.message };
+  }
+
+  if (recipientCount > MAX_RECIPIENTS_PER_SESSION) {
+    return {
+      allowed: false,
+      error: `Too many recipients (${recipientCount}). Maximum is ${MAX_RECIPIENTS_PER_SESSION}.`
+    };
+  }
+
+  // Increment session counter
+  await db.prepare(`
+    INSERT INTO sender_quotas (senderId, sessionCount, recipientCount, lastSessionTime)
+    VALUES (?, 1, ?, ?)
+    ON CONFLICT(senderId) DO UPDATE SET
+      sessionCount = sessionCount + 1,
+      recipientCount = recipientCount + ?,
+      lastSessionTime = ?
+  `).bind(senderId, recipientCount, Date.now(), recipientCount, Date.now()).run();
+
+  return { allowed: true };
+}
+```
+
+### 10.11 Input Validation
+
+All user inputs must be validated before processing to prevent injection attacks, buffer overflows, and resource exhaustion.
+
+#### File Size Limits
+
+```rust
+// Maximum sizes for various file operations
+pub const MAX_PDF_SIZE: usize = 50 * 1024 * 1024;           // 50 MB
+pub const MAX_SIGNATURE_SIZE: usize = 20 * 1024;             // 20 KB
+pub const MAX_INITIALS_SIZE: usize = 10 * 1024;              // 10 KB
+pub const MAX_METADATA_SIZE: usize = 100 * 1024;             // 100 KB
+pub const MAX_FIELD_COUNT: usize = 1000;                     // 1000 fields per document
+pub const MAX_FIELD_NAME_LEN: usize = 255;
+pub const MAX_RECIPIENT_NAME_LEN: usize = 255;
+pub const MAX_EMAIL_LEN: usize = 254;
+pub const MAX_FILENAME_LEN: usize = 255;
+
+pub fn validate_pdf_upload(bytes: &[u8]) -> Result<(), ValidationError> {
+    if bytes.len() > MAX_PDF_SIZE {
+        return Err(ValidationError::FileTooLarge {
+            size: bytes.len(),
+            max: MAX_PDF_SIZE,
+        });
+    }
+    if bytes.len() == 0 {
+        return Err(ValidationError::EmptyFile);
+    }
+    if !bytes.starts_with(b"%PDF") {
+        return Err(ValidationError::InvalidPdfHeader);
+    }
+    Ok(())
+}
+
+pub fn validate_signature(bytes: &[u8]) -> Result<(), ValidationError> {
+    if bytes.len() > MAX_SIGNATURE_SIZE {
+        return Err(ValidationError::SignatureTooLarge {
+            size: bytes.len(),
+            max: MAX_SIGNATURE_SIZE,
+        });
+    }
+    Ok(())
+}
+```
+
+#### Session Parameter Validation
+
+```typescript
+// Validate session parameters on the server
+interface SessionParams {
+  sessionId: string;
+  recipientId: string;
+  key: string;
+  senderId?: string;
+}
+
+function validateSessionParams(params: SessionParams): ValidationResult {
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!uuidPattern.test(params.sessionId)) {
+    return { valid: false, error: 'Invalid sessionId format' };
+  }
+
+  if (!uuidPattern.test(params.recipientId)) {
+    return { valid: false, error: 'Invalid recipientId format' };
+  }
+
+  if (!/^[a-f0-9]{64}$/.test(params.key)) {
+    return { valid: false, error: 'Invalid signing key format' };
+  }
+
+  if (params.senderId && !uuidPattern.test(params.senderId)) {
+    return { valid: false, error: 'Invalid senderId format' };
+  }
+
+  return { valid: true };
+}
+
+function validateEmail(email: string): ValidationResult {
+  if (email.length > MAX_EMAIL_LEN) {
+    return { valid: false, error: 'Email too long' };
+  }
+
+  // Simple email validation
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailPattern.test(email)) {
+    return { valid: false, error: 'Invalid email format' };
+  }
+
+  return { valid: true };
+}
+
+function validateFieldName(name: string): ValidationResult {
+  if (name.length === 0 || name.length > MAX_FIELD_NAME_LEN) {
+    return { valid: false, error: 'Field name length invalid' };
+  }
+
+  // Allow alphanumeric, underscores, hyphens
+  if (!/^[a-zA-Z0-9_\-]+$/.test(name)) {
+    return { valid: false, error: 'Field name contains invalid characters' };
+  }
+
+  return { valid: true };
+}
+```
+
+#### Filename Sanitization
+
+```typescript
+// Prevent path traversal and other filename attacks
+function sanitizeFilename(filename: string): string {
+  // Remove null bytes
+  let sanitized = filename.replace(/\0/g, '');
+
+  // Remove path traversal patterns
+  sanitized = sanitized.replace(/\.\./g, '');
+  sanitized = sanitized.replace(/[\/\\]/g, '_');
+
+  // Remove control characters
+  sanitized = sanitized.replace(/[\x00-\x1f]/g, '');
+
+  // Limit length
+  if (sanitized.length > MAX_FILENAME_LEN) {
+    sanitized = sanitized.substring(0, MAX_FILENAME_LEN - 4) + '.pdf';
+  }
+
+  // Ensure .pdf extension
+  if (!sanitized.toLowerCase().endsWith('.pdf')) {
+    sanitized += '.pdf';
+  }
+
+  return sanitized;
+}
+
+function validateFilename(filename: string): ValidationResult {
+  const original = filename;
+  const sanitized = sanitizeFilename(filename);
+
+  if (sanitized.length === 0) {
+    return { valid: false, error: 'Filename is empty after sanitization' };
+  }
+
+  // Check for suspicious patterns
+  if (sanitized.includes('..') || sanitized.includes('/') || sanitized.includes('\\')) {
+    return { valid: false, error: 'Filename contains path traversal patterns' };
+  }
+
+  return { valid: true, sanitized };
+}
+```
+
+#### XSS Prevention
+
+```typescript
+// Escape HTML content to prevent XSS attacks
+function escapeHtml(text: string): string {
+  const map: { [key: string]: string } = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return text.replace(/[&<>"']/g, (char) => map[char]);
+}
+
+// Sanitize user-provided HTML (email templates, notifications)
+function sanitizeHtmlContent(html: string): string {
+  // Remove script tags and event handlers
+  let sanitized = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  sanitized = sanitized.replace(/on\w+\s*=\s*"[^"]*"/gi, '');
+  sanitized = sanitized.replace(/on\w+\s*=\s*'[^']*'/gi, '');
+
+  return sanitized;
+}
+
+// Render recipient names safely
+function renderRecipientName(name: string): string {
+  return escapeHtml(name);
+}
+
+// Render email safely in templates
+function renderEmail(email: string): string {
+  return escapeHtml(email);
+}
+```
+
+### 10.12 Client-Side Security
+
+Client-side UI must provide clear feedback on rate limiting and resource usage to prevent poor user experience.
+
+#### Rate Limit Visibility
+
+```typescript
+// Show rate limit headers from server
+interface RateLimitInfo {
+  remaining: number;
+  limit: number;
+  resetTime: number;  // Unix seconds
+  threshold: 'warning' | 'critical' | 'normal';
+}
+
+function getRateLimitInfo(response: Response): RateLimitInfo | null {
+  const remaining = parseInt(response.headers.get('X-RateLimit-Remaining') || '-1');
+  const limit = parseInt(response.headers.get('X-RateLimit-Limit') || '-1');
+  const reset = parseInt(response.headers.get('X-RateLimit-Reset') || '0');
+
+  if (remaining === -1 || limit === -1) {
+    return null;
+  }
+
+  const ratio = remaining / limit;
+  let threshold: 'warning' | 'critical' | 'normal' = 'normal';
+
+  if (ratio < 0.1) threshold = 'critical';
+  else if (ratio < 0.3) threshold = 'warning';
+
+  return { remaining, limit, resetTime: reset, threshold };
+}
+
+function displayRateLimitWarning(info: RateLimitInfo): void {
+  const message = `${info.remaining} of ${info.limit} requests remaining`;
+
+  if (info.threshold === 'critical') {
+    console.warn(`CRITICAL: ${message}`);
+    showUIWarning('You are near your request limit. Please wait before trying again.', 'critical');
+  } else if (info.threshold === 'warning') {
+    console.warn(`WARNING: ${message}`);
+    showUIWarning(`You have used ${info.limit - info.remaining} of ${info.limit} requests.`, 'warning');
+  }
+}
+```
+
+#### Warning Thresholds
+
+```typescript
+// User feedback thresholds for rate limiting
+const RATE_LIMIT_THRESHOLDS = {
+  // Daily email sending limits
+  emailDaily: {
+    warning: 10,     // Show warning at 10 emails/day
+    critical: 3,     // Show critical at 3 remaining
+    max: 200,
+  },
+  // Monthly sending limits
+  emailMonthly: {
+    warning: 100,    // Show warning at 100 emails/month
+    critical: 20,    // Show critical at 20 remaining
+    max: 2000,
+  },
+  // API request limits
+  apiDaily: {
+    warning: 100,
+    critical: 10,
+    max: 1000,
+  },
+};
+
+function shouldShowWarning(
+  current: number,
+  threshold: 'warning' | 'critical'
+): boolean {
+  return current <= RATE_LIMIT_THRESHOLDS[threshold];
+}
+
+function getWarningMessage(
+  endpoint: string,
+  remaining: number,
+  threshold: 'warning' | 'critical'
+): string {
+  if (threshold === 'critical') {
+    return `⚠️ CRITICAL: You have only ${remaining} requests remaining today.`;
+  } else {
+    return `⚠️ You have ${remaining} requests remaining today.`;
+  }
+}
+```
+
+#### User Feedback UI
+
+```typescript
+// Display rate limit feedback in UI
+class RateLimitFeedback {
+  private warningElement: HTMLElement | null = null;
+
+  constructor() {
+    this.createWarningElement();
+  }
+
+  private createWarningElement(): void {
+    const div = document.createElement('div');
+    div.id = 'rate-limit-warning';
+    div.className = 'rate-limit-warning hidden';
+    div.style.cssText = `
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 600;
+      max-width: 300px;
+      z-index: 9999;
+    `;
+    document.body.appendChild(div);
+    this.warningElement = div;
+  }
+
+  showWarning(message: string, severity: 'warning' | 'critical' = 'warning'): void {
+    if (!this.warningElement) return;
+
+    this.warningElement.textContent = message;
+    this.warningElement.className = `rate-limit-warning ${severity}`;
+
+    if (severity === 'critical') {
+      this.warningElement.style.backgroundColor = '#fee';
+      this.warningElement.style.color = '#a00';
+      this.warningElement.style.border = '1px solid #fcc';
+    } else {
+      this.warningElement.style.backgroundColor = '#ffc';
+      this.warningElement.style.color = '#880';
+      this.warningElement.style.border = '1px solid #ff9';
+    }
+  }
+
+  hideWarning(): void {
+    if (this.warningElement) {
+      this.warningElement.className = 'rate-limit-warning hidden';
+    }
+  }
+}
+```
+
+### 10.9 Pre-Deployment Checklist
+
+#### Core Security Infrastructure
+- [ ] Cloudflare WAF rules configured
+- [ ] Rate limit D1 table created
+- [ ] DynamoDB sender tracking table created
+- [ ] CloudWatch alarms configured
+- [ ] Bot Fight Mode enabled
+- [ ] Under Attack Mode tested
+
+#### Session Token Security
+- [ ] HMAC signing secret configured (HMAC_SIGNING_SECRET env var)
+- [ ] Per-IP rate limit KV namespace created
+- [ ] Session token generation verified
+- [ ] Per-sender session limits enforced (max 100 sessions/sender)
+- [ ] Session quota database schema created
+- [ ] Token verification with timing attack protection
+
+#### Input Validation
+- [ ] File size limits enforced in WASM (MAX_PDF_SIZE = 50MB)
+- [ ] File header validation (PDF %PDF signature check)
+- [ ] Session parameter validation implemented
+- [ ] Email format validation on all recipient inputs
+- [ ] Field name validation (alphanumeric + underscore/hyphen only)
+- [ ] Filename sanitization prevents path traversal
+
+#### Email & PDF Protections
+- [ ] Magic link expiry implemented (72 hours)
+- [ ] Email dispatch limits in Lambda (50/hour, 200/day per sender)
+- [ ] PDF processing timeouts configured (30s timeout)
+- [ ] Stream validation prevents zip bombs (MAX_STREAM_SIZE = 10MB)
+- [ ] Brute force protection on magic links (MAX_SIGNING_ATTEMPTS = 5)
+
+#### XSS & Content Security
+- [ ] XSS prevention via HTML escaping on all user inputs
+- [ ] Script tag removal in email templates
+- [ ] Event handler stripping (onload, onclick, etc.)
+- [ ] Recipient names escaped in all outputs
+- [ ] Email addresses escaped in all templates
+- [ ] Content-Security-Policy headers configured
+
+#### Client-Side Security
+- [ ] Rate limit visibility implemented (X-RateLimit-* headers)
+- [ ] Warning thresholds configured (daily < 10, monthly < 100)
+- [ ] Critical thresholds configured (daily < 3, monthly < 20)
+- [ ] UI feedback for rate limit warnings
+- [ ] Color-coded severity indicators (warning yellow, critical red)
+- [ ] Rate limit status displayed prominently before actions
+
+#### Testing & Validation
+- [ ] Security test suite passes (rate limiting, validation, XSS)
+- [ ] CAPTCHA integration tested on rate limit exceeded
+- [ ] Magic link brute force protection verified
+- [ ] Filename sanitization tested with path traversal attempts
+- [ ] HTML escaping verified with special character payloads
+- [ ] PDF bomb detection tested with malicious files
 
 ---
 
 ## References
 
 ### Florida Statutes
-
 - [Chapter 83 - Landlord and Tenant](https://www.flsenate.gov/Laws/Statutes/2025/Chapter83)
 - [Chapter 475 - Real Estate Brokers](https://www.flsenate.gov/Laws/Statutes/2025/Chapter475)
 - [Chapter 689 - Conveyances](https://www.flsenate.gov/Laws/Statutes/2025/Chapter689)
 - [Chapter 713 - Construction Liens](https://www.flsenate.gov/Laws/Statutes/2025/Chapter713)
 - [Chapter 319 - Motor Vehicle Titles](https://www.flsenate.gov/Laws/Statutes/2025/Chapter319)
-- [Chapter 718 - Condominiums](https://www.flsenate.gov/Laws/Statutes/2025/Chapter718)
-- [Chapter 720 - HOAs](https://www.flsenate.gov/Laws/Statutes/2025/Chapter720)
 
-### HSMV Forms
-
-- [HSMV 82050 - Certificate of Title](https://www.flhsmv.gov/pdf/forms/82050.pdf)
-- [HSMV 87002 - Vessel Registration](https://www.flhsmv.gov/pdf/forms/87002.pdf)
-
-### Related Plan Documents
-
-- `FL_LEASE.md` - Detailed Florida lease law analysis
-- `FL_PURCHASE.md` - Purchase contract architecture
-- `FL_LIST.md` - Listing agreement compliance
+### Related Documents
+- `DOCSIGN_PLAN.md` (in m3-getsigsmvp) - Signing platform details
+- `crates/email-proxy/README.md` - AWS SES Lambda docs
+- `FL_LEASE.md`, `FL_PURCHASE.md` - Florida law research

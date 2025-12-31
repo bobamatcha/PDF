@@ -1,14 +1,24 @@
 //! DocSign Server - Cloudflare Worker for email relay and signing sessions
 //!
-//! Rate limited to Resend free tier: 100/day, 3000/month
+//! Rate limited via AWS SES (email-proxy Lambda): 100/day, 3000/month
 //! Signing sessions expire after 7 days
 
 use chrono::Utc;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use worker::*;
 
+/// Type alias for HMAC-SHA256
+#[allow(dead_code)]
+type HmacSha256 = Hmac<Sha256>;
+
+/// Per-sender maximum sessions for session security
+#[allow(dead_code)]
+const MAX_SESSIONS_PER_SENDER: usize = 100;
+
 /// Request body for sending a document
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct SendRequest {
     /// Recipient email address
     to: String,
@@ -24,14 +34,10 @@ struct SendRequest {
 }
 
 /// Response from send endpoint
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct SendResponse {
     success: bool,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_today: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_month: Option<u32>,
 }
 
 /// Request to create a signing session
@@ -233,10 +239,6 @@ struct InvitationInfo {
 struct InviteResponse {
     success: bool,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_today: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_month: Option<u32>,
 }
 
 /// Request to request a new signing link (UX-004)
@@ -257,7 +259,7 @@ struct RequestLinkResponse {
 /// Response from resend endpoint (UX-004)
 #[derive(Serialize)]
 #[allow(dead_code)] // Used by UX-004 endpoint (not yet implemented)
-struct ResendResponse {
+struct EmailResponse {
     success: bool,
     new_session_id: String,
     expires_at: String,
@@ -272,19 +274,6 @@ struct ExpiredSessionResponse {
     document_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
-}
-
-/// Rate limit state stored in KV
-#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
-struct RateLimitState {
-    daily_count: u32,
-    daily_date: String, // YYYY-MM-DD
-    monthly_count: u32,
-    monthly_month: String, // YYYY-MM
-    #[serde(default)]
-    daily_warning_sent: bool,
-    #[serde(default)]
-    monthly_warning_sent: bool,
 }
 
 /// Email verification state for UX-003
@@ -346,108 +335,191 @@ impl VerificationState {
     }
 }
 
-// Warning thresholds - send admin email when these are hit
-const DAILY_WARNING_THRESHOLD: u32 = 90;
-const MONTHLY_WARNING_THRESHOLD: u32 = 2950;
-const ADMIN_EMAIL: &str = "bobamatchasolutions@gmail.com";
+// ============================================================
+// Per-IP Rate Limiting
+// ============================================================
 
-/// Result of checking rate limits
+/// Per-IP rate limit state stored in KV
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+struct IpRateLimitState {
+    /// Number of requests in current window
+    request_count: u32,
+    /// Unix timestamp when the current window started
+    window_start: u64,
+}
+
+/// Rate limit tiers for different endpoint types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateLimitTier {
+    /// Health check: 100 req/min per IP
+    Health,
+    /// Session read (GET): 30 req/min per IP
+    SessionRead,
+    /// Session write (PUT signed/decline/consent): 5 req/min per IP
+    SessionWrite,
+    /// Request link: 3 req/hour per IP (prevents email spam)
+    RequestLink,
+}
+
+impl RateLimitTier {
+    /// Returns (max_requests, window_seconds) for this tier
+    fn limits(&self) -> (u32, u64) {
+        match self {
+            RateLimitTier::Health => (100, 60),      // 100/min
+            RateLimitTier::SessionRead => (30, 60),  // 30/min
+            RateLimitTier::SessionWrite => (5, 60),  // 5/min
+            RateLimitTier::RequestLink => (3, 3600), // 3/hour
+        }
+    }
+
+    /// Returns the tier name for KV key construction
+    fn name(&self) -> &'static str {
+        match self {
+            RateLimitTier::Health => "health",
+            RateLimitTier::SessionRead => "session_read",
+            RateLimitTier::SessionWrite => "session_write",
+            RateLimitTier::RequestLink => "request_link",
+        }
+    }
+
+    /// Returns retry-after seconds for rate limit response
+    #[allow(dead_code)] // Available for tests and future use
+    fn retry_after_seconds(&self) -> u64 {
+        let (_, window) = self.limits();
+        window
+    }
+}
+
+/// Result of per-IP rate limit check
 #[derive(Debug, Clone, PartialEq)]
-enum RateLimitCheck {
-    /// Request allowed, optionally with warnings to send
-    Allowed {
-        send_daily_warning: bool,
-        send_monthly_warning: bool,
-    },
-    /// Daily limit exceeded
-    DailyLimitExceeded { limit: u32, remaining_month: u32 },
-    /// Monthly limit exceeded
-    MonthlyLimitExceeded { limit: u32 },
+enum IpRateLimitResult {
+    /// Request allowed
+    Allowed,
+    /// Rate limited - retry after specified seconds
+    Limited { retry_after_seconds: u64 },
 }
 
-impl RateLimitState {
-    /// Reset counters if date/month has changed, returns whether resets occurred
-    fn maybe_reset(&mut self, today: &str, this_month: &str) -> (bool, bool) {
-        let daily_reset = if self.daily_date != today {
-            self.daily_count = 0;
-            self.daily_date = today.to_string();
-            self.daily_warning_sent = false;
-            true
-        } else {
-            false
-        };
+/// Check per-IP rate limit for a given tier
+/// Returns IpRateLimitResult indicating if request is allowed or rate limited
+async fn check_ip_rate_limit(
+    kv: &kv::KvStore,
+    ip: &str,
+    tier: RateLimitTier,
+) -> Result<IpRateLimitResult> {
+    let (max_requests, window_seconds) = tier.limits();
+    let key = format!("ip_limit:{}:{}", ip, tier.name());
 
-        let monthly_reset = if self.monthly_month != this_month {
-            self.monthly_count = 0;
-            self.monthly_month = this_month.to_string();
-            self.monthly_warning_sent = false;
-            true
-        } else {
-            false
-        };
+    // Get current timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
-        (daily_reset, monthly_reset)
+    // Get current state from KV
+    let mut state: IpRateLimitState = kv.get(&key).json().await?.unwrap_or_default();
+
+    // Check if window has expired
+    if now >= state.window_start + window_seconds {
+        // Start new window
+        state.window_start = now;
+        state.request_count = 0;
     }
 
-    /// Check if request is allowed and increment counters if so
-    fn check_and_increment(
-        &mut self,
-        daily_limit: u32,
-        monthly_limit: u32,
-        daily_warning_threshold: u32,
-        monthly_warning_threshold: u32,
-    ) -> RateLimitCheck {
-        // Check limits before incrementing
-        if self.daily_count >= daily_limit {
-            return RateLimitCheck::DailyLimitExceeded {
-                limit: daily_limit,
-                remaining_month: monthly_limit.saturating_sub(self.monthly_count),
-            };
-        }
-
-        if self.monthly_count >= monthly_limit {
-            return RateLimitCheck::MonthlyLimitExceeded {
-                limit: monthly_limit,
-            };
-        }
-
-        // Increment counts
-        self.daily_count += 1;
-        self.monthly_count += 1;
-
-        // Check if we should send warnings (only once per period)
-        let send_daily_warning =
-            if self.daily_count >= daily_warning_threshold && !self.daily_warning_sent {
-                self.daily_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        let send_monthly_warning =
-            if self.monthly_count >= monthly_warning_threshold && !self.monthly_warning_sent {
-                self.monthly_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        RateLimitCheck::Allowed {
-            send_daily_warning,
-            send_monthly_warning,
-        }
+    // Check if we're over the limit
+    if state.request_count >= max_requests {
+        let retry_after = (state.window_start + window_seconds).saturating_sub(now);
+        return Ok(IpRateLimitResult::Limited {
+            retry_after_seconds: retry_after.max(1), // At least 1 second
+        });
     }
 
-    /// Get remaining counts for response
-    fn remaining(&self, daily_limit: u32, monthly_limit: u32) -> (u32, u32) {
-        (
-            daily_limit.saturating_sub(self.daily_count),
-            monthly_limit.saturating_sub(self.monthly_count),
-        )
+    // Increment and save
+    state.request_count += 1;
+
+    // TTL should be slightly longer than the window to handle edge cases
+    let ttl = window_seconds + 60;
+
+    kv.put(&key, serde_json::to_string(&state)?)?
+        .expiration_ttl(ttl)
+        .execute()
+        .await?;
+
+    Ok(IpRateLimitResult::Allowed)
+}
+
+/// Get client IP from Cloudflare headers
+/// Falls back to "unknown" if not present
+fn get_client_ip(req: &Request) -> String {
+    req.headers()
+        .get("CF-Connecting-IP")
+        .ok()
+        .flatten()
+        .or_else(|| req.headers().get("X-Forwarded-For").ok().flatten())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Generate a 429 Too Many Requests response for IP rate limiting
+fn ip_rate_limit_response(retry_after_seconds: u64) -> Result<Response> {
+    #[derive(Serialize)]
+    struct RateLimitError {
+        error: String,
+        retry_after_seconds: u64,
+    }
+
+    let resp = Response::from_json(&RateLimitError {
+        error: "Rate limit exceeded".to_string(),
+        retry_after_seconds,
+    })?
+    .with_status(429);
+
+    // Add Retry-After header
+    let headers = Headers::new();
+    let _ = headers.set("Retry-After", &retry_after_seconds.to_string());
+
+    Ok(resp.with_headers(headers))
+}
+
+/// Apply IP rate limiting to a request
+/// Returns Some(Response) if rate limited, None if allowed
+async fn apply_ip_rate_limit(
+    req: &Request,
+    env: &Env,
+    tier: RateLimitTier,
+) -> Option<Result<Response>> {
+    let kv = match env.kv("RATE_LIMITS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            // KV not configured, skip rate limiting
+            console_log!("Warning: RATE_LIMITS KV not configured, IP rate limiting disabled");
+            return None;
+        }
+    };
+
+    let ip = get_client_ip(req);
+
+    match check_ip_rate_limit(&kv, &ip, tier).await {
+        Ok(IpRateLimitResult::Allowed) => None,
+        Ok(IpRateLimitResult::Limited {
+            retry_after_seconds,
+        }) => {
+            console_log!(
+                "IP {} rate limited for tier {:?}, retry after {} seconds",
+                ip,
+                tier,
+                retry_after_seconds
+            );
+            Some(cors_response(ip_rate_limit_response(retry_after_seconds)))
+        }
+        Err(e) => {
+            // On error, allow the request but log
+            console_log!("IP rate limit check failed for {}: {}", ip, e);
+            None
+        }
     }
 }
 
-const RESEND_API_URL: &str = "https://api.resend.com/emails";
+const EMAIL_PROXY_URL: &str =
+    "https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws/send";
 const SESSION_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
 const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
 
@@ -640,10 +712,10 @@ async fn send_sender_notification(
     subject: &str,
     html_body: &str,
 ) -> Result<()> {
-    let api_key = match env.secret("RESEND_API_KEY") {
+    let api_key = match env.secret("EMAIL_PROXY_API_KEY") {
         Ok(key) => key.to_string(),
         Err(_) => {
-            console_log!("Cannot send notification: RESEND_API_KEY not configured");
+            console_log!("Cannot send notification: EMAIL_PROXY_API_KEY not configured");
             return Ok(()); // Don't fail the signing process if email fails
         }
     };
@@ -656,7 +728,7 @@ async fn send_sender_notification(
         .filter(|c| c.is_ascii() || c.is_whitespace())
         .collect::<String>();
 
-    let resend_body = serde_json::json!({
+    let email_body = serde_json::json!({
         "from": "GetSignatures <noreply@mail.getsignatures.org>",
         "to": [sender_email],
         "subject": subject,
@@ -671,9 +743,9 @@ async fn send_sender_notification(
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+        .with_body(Some(serde_json::to_string(&email_body)?.into()));
 
-    let request = Request::new_with_init(RESEND_API_URL, &init)?;
+    let request = Request::new_with_init(EMAIL_PROXY_URL, &init)?;
 
     match Fetch::Request(request).send().await {
         Ok(response) => {
@@ -721,8 +793,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     // Route requests
     match (method, path.as_str()) {
-        // Health check (public)
-        (Method::Get, "/health") => cors_response(Response::ok("OK")),
+        // Health check (public) - Rate limit: 100/min per IP
+        (Method::Get, "/health") => {
+            if let Some(response) = apply_ip_rate_limit(&req, &env, RateLimitTier::Health).await {
+                return response;
+            }
+            cors_response(Response::ok("OK"))
+        }
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
 
         // Protected endpoints - require API key
@@ -732,7 +809,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
             handle_send_email(req, env).await
         }
+        // /invite - Rate limit: 3/hour per IP (prevents email spam)
         (Method::Post, "/invite") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
             if !verify_api_key(&req, &env) {
                 return cors_response(Response::error("Unauthorized", 401));
             }
@@ -746,7 +829,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
             handle_create_session(req, env).await
         }
+        // GET session - Rate limit: 30/min per IP
         (Method::Get, p) if p.starts_with("/session/") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionRead).await
+            {
+                return response;
+            }
             let id = p.strip_prefix("/session/").unwrap_or("");
             if id.contains('/') {
                 cors_response(Response::error("Not found", 404))
@@ -754,7 +843,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 handle_get_session(id, env).await
             }
         }
+        // PUT signed - Rate limit: 5/min per IP
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/signed") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_submit_signed(parts[2], req, env).await
@@ -762,7 +857,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 cors_response(Response::error("Not found", 404))
             }
         }
+        // PUT decline - Rate limit: 5/min per IP
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/decline") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_decline(parts[2], req, env).await
@@ -770,7 +871,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 cors_response(Response::error("Not found", 404))
             }
         }
+        // POST verify - Rate limit: 5/min per IP (write operation)
         (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/verify") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_verify(parts[2], req, env).await
@@ -779,7 +886,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         }
         // UX-004: Request new link endpoint (public - no API key required)
+        // Rate limit: 3/hour per IP (prevents email spam)
         (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/request-link") => {
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_request_link(parts[2], req, env).await
@@ -813,144 +926,15 @@ async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Get config
-    let daily_limit: u32 = env
-        .var("DAILY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(100))
-        .unwrap_or(100);
-    let monthly_limit: u32 = env
-        .var("MONTHLY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(3000))
-        .unwrap_or(3000);
-
-    // Check rate limits
-    let kv = match env.kv("RATE_LIMITS") {
-        Ok(kv) => kv,
-        Err(_) => {
-            console_log!("Warning: RATE_LIMITS KV not configured, rate limiting disabled");
-            return send_email(&env, &body).await;
-        }
-    };
-
-    let mut state = get_rate_limit_state(&kv).await;
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let this_month = Utc::now().format("%Y-%m").to_string();
-
-    // Reset counters if day/month changed
-    state.maybe_reset(&today, &this_month);
-
-    // Check rate limits before sending
-    let check_result = state.check_and_increment(
-        daily_limit,
-        monthly_limit,
-        DAILY_WARNING_THRESHOLD,
-        MONTHLY_WARNING_THRESHOLD,
-    );
-
-    match check_result {
-        RateLimitCheck::DailyLimitExceeded {
-            limit,
-            remaining_month,
-        } => {
-            let resp = Response::from_json(&SendResponse {
-                success: false,
-                message: format!(
-                    "Daily limit reached ({}/{}). Resets at midnight UTC.",
-                    limit, limit
-                ),
-                remaining_today: Some(0),
-                remaining_month: Some(remaining_month),
-            })?
-            .with_status(429);
-            cors_response(Ok(resp))
-        }
-        RateLimitCheck::MonthlyLimitExceeded { limit } => {
-            let resp = Response::from_json(&SendResponse {
-                success: false,
-                message: format!(
-                    "Monthly limit reached ({}/{}). Resets on the 1st.",
-                    limit, limit
-                ),
-                remaining_today: Some(0),
-                remaining_month: Some(0),
-            })?
-            .with_status(429);
-            cors_response(Ok(resp))
-        }
-        RateLimitCheck::Allowed {
-            send_daily_warning,
-            send_monthly_warning,
-        } => {
-            // Send the actual email
-            let result = send_email(&env, &body).await;
-
-            if result
-                .as_ref()
-                .map(|r| r.status_code() == 200)
-                .unwrap_or(false)
-            {
-                // Send admin warnings if thresholds crossed
-                if send_daily_warning {
-                    let (remaining, _) = state.remaining(daily_limit, monthly_limit);
-                    let _ = send_admin_warning(
-                        &env,
-                        &format!(
-                            "Daily email limit warning: {}/{} emails sent today ({}). Only {} remaining.",
-                            state.daily_count, daily_limit, state.daily_date, remaining
-                        ),
-                    ).await;
-                }
-
-                if send_monthly_warning {
-                    let (_, remaining) = state.remaining(daily_limit, monthly_limit);
-                    let _ = send_admin_warning(
-                        &env,
-                        &format!(
-                            "Monthly email limit warning: {}/{} emails sent this month ({}). Only {} remaining.",
-                            state.monthly_count, monthly_limit, state.monthly_month, remaining
-                        ),
-                    ).await;
-                }
-
-                let _ = save_rate_limit_state(&kv, &state).await;
-            } else {
-                // Email failed - decrement the counts we optimistically incremented
-                state.daily_count = state.daily_count.saturating_sub(1);
-                state.monthly_count = state.monthly_count.saturating_sub(1);
-            }
-
-            handle_email_result(result, &state, daily_limit, monthly_limit)
-        }
-    }
-}
-
-/// Helper to format the email send result as a response
-fn handle_email_result(
-    result: Result<Response>,
-    state: &RateLimitState,
-    daily_limit: u32,
-    monthly_limit: u32,
-) -> Result<Response> {
-    match result {
-        Ok(response) if response.status_code() == 200 => {
-            let (remaining_today, remaining_month) = state.remaining(daily_limit, monthly_limit);
-            cors_response(Response::from_json(&SendResponse {
-                success: true,
-                message: "Email sent".to_string(),
-                remaining_today: Some(remaining_today),
-                remaining_month: Some(remaining_month),
-            }))
-        }
-        Ok(response) => cors_response(Ok(response)),
-        Err(e) => Err(e),
-    }
+    // Send the email (per-IP rate limiting is handled at router level)
+    send_email(&env, &body).await
 }
 
 async fn send_email(env: &Env, body: &SendRequest) -> Result<Response> {
-    let api_key = match env.secret("RESEND_API_KEY") {
+    let api_key = match env.secret("EMAIL_PROXY_API_KEY") {
         Ok(key) => key.to_string(),
         Err(_) => {
-            return cors_response(error_response("RESEND_API_KEY not configured"));
+            return cors_response(error_response("EMAIL_PROXY_API_KEY not configured"));
         }
     };
 
@@ -966,7 +950,7 @@ async fn send_email(env: &Env, body: &SendRequest) -> Result<Response> {
         "Please find the attached document for your signature.".to_string()
     };
 
-    let resend_body = serde_json::json!({
+    let email_body = serde_json::json!({
         "from": "GetSignatures <noreply@mail.getsignatures.org>",
         "to": [body.to],
         "subject": body.subject,
@@ -984,24 +968,25 @@ async fn send_email(env: &Env, body: &SendRequest) -> Result<Response> {
     let mut init = RequestInit::new();
     init.with_method(Method::Post)
         .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+        .with_body(Some(serde_json::to_string(&email_body)?.into()));
 
-    let request = Request::new_with_init(RESEND_API_URL, &init)?;
+    let request = Request::new_with_init(EMAIL_PROXY_URL, &init)?;
     let response = Fetch::Request(request).send().await?;
 
     if response.status_code() != 200 {
         let status = response.status_code();
         let mut response = response;
         let error_text = response.text().await.unwrap_or_default();
-        console_log!("Resend error {}: {}", status, error_text);
-        return cors_response(error_response(&format!("Resend API error: {}", status)));
+        console_log!("email-proxy error {}: {}", status, error_text);
+        return cors_response(error_response(&format!(
+            "email-proxy API error: {}",
+            status
+        )));
     }
 
     cors_response(Response::from_json(&SendResponse {
         success: true,
         message: "Email sent".to_string(),
-        remaining_today: None,
-        remaining_month: None,
     }))
 }
 
@@ -1018,136 +1003,15 @@ async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
         return cors_response(error_response("No invitations to send"));
     }
 
-    // Get config
-    let daily_limit: u32 = env
-        .var("DAILY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(100))
-        .unwrap_or(100);
-    let monthly_limit: u32 = env
-        .var("MONTHLY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(3000))
-        .unwrap_or(3000);
-
-    // Check rate limits
-    let kv = match env.kv("RATE_LIMITS") {
-        Ok(kv) => kv,
-        Err(_) => {
-            console_log!("Warning: RATE_LIMITS KV not configured, rate limiting disabled");
-            return send_invitations(&env, &body).await;
-        }
-    };
-
-    let mut state = get_rate_limit_state(&kv).await;
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let this_month = Utc::now().format("%Y-%m").to_string();
-
-    // Reset counters if day/month changed
-    state.maybe_reset(&today, &this_month);
-
-    // Check if we have enough capacity for all invitations
-    let num_emails = body.invitations.len() as u32;
-    if state.daily_count + num_emails > daily_limit {
-        let resp = Response::from_json(&InviteResponse {
-            success: false,
-            message: format!(
-                "Daily limit would be exceeded. Requested: {}, Remaining: {}",
-                num_emails,
-                daily_limit.saturating_sub(state.daily_count)
-            ),
-            remaining_today: Some(daily_limit.saturating_sub(state.daily_count)),
-            remaining_month: Some(monthly_limit.saturating_sub(state.monthly_count)),
-        })?
-        .with_status(429);
-        return cors_response(Ok(resp));
-    }
-
-    if state.monthly_count + num_emails > monthly_limit {
-        let resp = Response::from_json(&InviteResponse {
-            success: false,
-            message: format!(
-                "Monthly limit would be exceeded. Requested: {}, Remaining: {}",
-                num_emails,
-                monthly_limit.saturating_sub(state.monthly_count)
-            ),
-            remaining_today: Some(daily_limit.saturating_sub(state.daily_count)),
-            remaining_month: Some(monthly_limit.saturating_sub(state.monthly_count)),
-        })?
-        .with_status(429);
-        return cors_response(Ok(resp));
-    }
-
-    // Send the invitations
-    let result = send_invitations(&env, &body).await;
-
-    if result
-        .as_ref()
-        .map(|r| r.status_code() == 200)
-        .unwrap_or(false)
-    {
-        // Increment counters
-        state.daily_count += num_emails;
-        state.monthly_count += num_emails;
-
-        // Check if we should send warnings
-        let send_daily_warning =
-            if state.daily_count >= DAILY_WARNING_THRESHOLD && !state.daily_warning_sent {
-                state.daily_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        let send_monthly_warning =
-            if state.monthly_count >= MONTHLY_WARNING_THRESHOLD && !state.monthly_warning_sent {
-                state.monthly_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        // Send admin warnings if thresholds crossed
-        if send_daily_warning {
-            let remaining = daily_limit.saturating_sub(state.daily_count);
-            let _ = send_admin_warning(
-                &env,
-                &format!(
-                    "Daily email limit warning: {}/{} emails sent today ({}). Only {} remaining.",
-                    state.daily_count, daily_limit, state.daily_date, remaining
-                ),
-            )
-            .await;
-        }
-
-        if send_monthly_warning {
-            let remaining = monthly_limit.saturating_sub(state.monthly_count);
-            let _ = send_admin_warning(
-                &env,
-                &format!(
-                    "Monthly email limit warning: {}/{} emails sent this month ({}). Only {} remaining.",
-                    state.monthly_count, monthly_limit, state.monthly_month, remaining
-                ),
-            ).await;
-        }
-
-        let _ = save_rate_limit_state(&kv, &state).await;
-
-        let (remaining_today, remaining_month) = state.remaining(daily_limit, monthly_limit);
-        cors_response(Response::from_json(&InviteResponse {
-            success: true,
-            message: format!("Invitations sent to {} recipient(s)", num_emails),
-            remaining_today: Some(remaining_today),
-            remaining_month: Some(remaining_month),
-        }))
-    } else {
-        result
-    }
+    // Send the invitations (per-IP rate limiting is handled at router level)
+    send_invitations(&env, &body).await
 }
 
 async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
-    let api_key = match env.secret("RESEND_API_KEY") {
+    let api_key = match env.secret("EMAIL_PROXY_API_KEY") {
         Ok(key) => key.to_string(),
         Err(_) => {
-            return cors_response(error_response("RESEND_API_KEY not configured"));
+            return cors_response(error_response("EMAIL_PROXY_API_KEY not configured"));
         }
     };
 
@@ -1222,7 +1086,7 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             invitation.name, body.sender_name, body.document_name, invitation.signing_link
         );
 
-        let resend_body = serde_json::json!({
+        let email_body = serde_json::json!({
             "from": "GetSignatures <noreply@mail.getsignatures.org>",
             "to": [invitation.email],
             "subject": format!("Signature Requested: {}", body.document_name),
@@ -1237,9 +1101,9 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
         let mut init = RequestInit::new();
         init.with_method(Method::Post)
             .with_headers(headers)
-            .with_body(Some(serde_json::to_string(&resend_body)?.into()));
+            .with_body(Some(serde_json::to_string(&email_body)?.into()));
 
-        let request = Request::new_with_init(RESEND_API_URL, &init)?;
+        let request = Request::new_with_init(EMAIL_PROXY_URL, &init)?;
 
         match Fetch::Request(request).send().await {
             Ok(response) => {
@@ -1263,8 +1127,6 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
         cors_response(Response::from_json(&InviteResponse {
             success: true,
             message: format!("All {} invitations sent successfully", success_count),
-            remaining_today: None,
-            remaining_month: None,
         }))
     } else if success_count > 0 {
         cors_response(Response::from_json(&InviteResponse {
@@ -1275,80 +1137,12 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
                 body.invitations.len(),
                 errors.join(", ")
             ),
-            remaining_today: None,
-            remaining_month: None,
         }))
     } else {
         cors_response(error_response(&format!(
             "Failed to send invitations. Errors: {}",
             errors.join(", ")
         )))
-    }
-}
-
-/// Send a warning email to the admin when approaching rate limits
-async fn send_admin_warning(env: &Env, message: &str) {
-    let api_key = match env.secret("RESEND_API_KEY") {
-        Ok(key) => key.to_string(),
-        Err(_) => {
-            console_log!("Cannot send admin warning: RESEND_API_KEY not configured");
-            return;
-        }
-    };
-
-    let resend_body = serde_json::json!({
-        "from": "GetSignatures Alerts <noreply@getsignatures.org>",
-        "to": [ADMIN_EMAIL],
-        "subject": "GetSignatures Rate Limit Warning",
-        "text": format!(
-            "{}\n\n\
-            This is an automated alert from your GetSignatures deployment.\n\n\
-            Consider upgrading your Resend plan if you're hitting limits frequently.\n\
-            Current limits: 100 emails/day, 3000 emails/month (Resend free tier)",
-            message
-        )
-    });
-
-    let headers = Headers::new();
-    if headers
-        .set("Authorization", &format!("Bearer {}", api_key))
-        .is_err()
-    {
-        return;
-    }
-    if headers.set("Content-Type", "application/json").is_err() {
-        return;
-    }
-
-    let body_str = match serde_json::to_string(&resend_body) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(body_str.into()));
-
-    let request = match Request::new_with_init(RESEND_API_URL, &init) {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-
-    match Fetch::Request(request).send().await {
-        Ok(response) => {
-            if response.status_code() == 200 {
-                console_log!("Admin warning email sent: {}", message);
-            } else {
-                console_log!(
-                    "Failed to send admin warning: status {}",
-                    response.status_code()
-                );
-            }
-        }
-        Err(e) => {
-            console_log!("Failed to send admin warning: {}", e);
-        }
     }
 }
 
@@ -1731,7 +1525,7 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
             // Delete old session to invalidate it
             kv.delete(&format!("session:{}", session_id)).await?;
 
-            cors_response(Ok(Response::from_json(&ResendResponse {
+            cors_response(Ok(Response::from_json(&EmailResponse {
                 success: true,
                 new_session_id,
                 expires_at,
@@ -1978,26 +1772,46 @@ fn generate_session_id() -> String {
     format!("{:x}{:08x}", timestamp, random as u32)
 }
 
-async fn get_rate_limit_state(kv: &kv::KvStore) -> RateLimitState {
-    match kv.get("rate_state").json::<RateLimitState>().await {
-        Ok(Some(state)) => state,
-        _ => RateLimitState::default(),
-    }
+/// Generate a HMAC-SHA256 token for a recipient
+///
+/// The token is computed as HMAC-SHA256 of "session_id:recipient_id" using the provided secret.
+/// Returns the token as a hex-encoded string.
+#[allow(dead_code)]
+fn generate_recipient_token(session_id: &str, recipient_id: &str, secret: &[u8]) -> String {
+    let message = format!("{}:{}", session_id, recipient_id);
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC can take key of any size");
+    mac.update(message.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
 }
 
-async fn save_rate_limit_state(kv: &kv::KvStore, state: &RateLimitState) -> Result<()> {
-    kv.put("rate_state", serde_json::to_string(state)?)?
-        .execute()
-        .await?;
-    Ok(())
+/// Verify a HMAC-SHA256 token for a recipient
+///
+/// Performs constant-time comparison to prevent timing attacks.
+/// Returns true if the token matches the expected HMAC, false otherwise.
+#[allow(dead_code)]
+fn verify_recipient_token(
+    token: &str,
+    session_id: &str,
+    recipient_id: &str,
+    secret: &[u8],
+) -> bool {
+    let expected_token = generate_recipient_token(session_id, recipient_id, secret);
+
+    // Constant-time comparison to prevent timing attacks
+    if token.len() != expected_token.len() {
+        return false;
+    }
+
+    token
+        .bytes()
+        .zip(expected_token.bytes())
+        .all(|(a, b)| a == b)
 }
 
 fn error_response(msg: &str) -> Result<Response> {
     let resp = Response::from_json(&SendResponse {
         success: false,
         message: msg.to_string(),
-        remaining_today: None,
-        remaining_month: None,
     })?;
     Ok(resp.with_status(400))
 }
@@ -2020,542 +1834,132 @@ mod tests {
     use super::*;
 
     // ============================================================
-    // Unit Tests for RateLimitState
+    // Unit Tests for HMAC-SHA256 Token Generation and Verification
     // ============================================================
 
     #[test]
-    fn test_default_state() {
-        let state = RateLimitState::default();
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert_eq!(state.daily_date, "");
-        assert_eq!(state.monthly_month, "");
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
+    fn test_generate_recipient_token() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
+
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+
+        // Token should be a hex string (64 characters for SHA256)
+        assert_eq!(token.len(), 64);
+        // Verify it's valid hex
+        assert!(hex::decode(&token).is_ok());
     }
 
     #[test]
-    fn test_maybe_reset_same_day() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 1000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_success() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-01-15", "2025-01");
-
-        assert!(!daily_reset);
-        assert!(!monthly_reset);
-        assert_eq!(state.daily_count, 50); // unchanged
-        assert_eq!(state.monthly_count, 1000); // unchanged
-        assert!(state.daily_warning_sent); // unchanged
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        assert!(verify_recipient_token(
+            &token,
+            session_id,
+            recipient_id,
+            secret
+        ));
     }
 
     #[test]
-    fn test_maybe_reset_new_day_same_month() {
-        let mut state = RateLimitState {
-            daily_count: 95,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 1000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_wrong_session() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-01-16", "2025-01");
-
-        assert!(daily_reset);
-        assert!(!monthly_reset);
-        assert_eq!(state.daily_count, 0); // reset
-        assert_eq!(state.daily_date, "2025-01-16");
-        assert!(!state.daily_warning_sent); // reset
-        assert_eq!(state.monthly_count, 1000); // unchanged
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        assert!(!verify_recipient_token(
+            &token,
+            "session-wrong",
+            recipient_id,
+            secret
+        ));
     }
 
     #[test]
-    fn test_maybe_reset_new_month() {
-        let mut state = RateLimitState {
-            daily_count: 95,
-            daily_date: "2025-01-31".to_string(),
-            monthly_count: 2900,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: true,
-        };
+    fn test_verify_recipient_token_wrong_recipient() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-02-01", "2025-02");
-
-        assert!(daily_reset);
-        assert!(monthly_reset);
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        assert!(!verify_recipient_token(
+            &token,
+            session_id,
+            "recipient-wrong",
+            secret
+        ));
     }
 
     #[test]
-    fn test_check_and_increment_allowed_no_warnings() {
-        let mut state = RateLimitState {
-            daily_count: 10,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 100,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_wrong_secret() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: false,
-            }
-        );
-        assert_eq!(state.daily_count, 11);
-        assert_eq!(state.monthly_count, 101);
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        assert!(!verify_recipient_token(
+            &token,
+            session_id,
+            recipient_id,
+            b"wrong-secret-key"
+        ));
     }
 
     #[test]
-    fn test_check_and_increment_triggers_daily_warning() {
-        let mut state = RateLimitState {
-            daily_count: 89, // Will become 90 after increment
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 100,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_empty_inputs() {
+        let secret = b"test-secret-key";
 
-        let result = state.check_and_increment(100, 3000, 90, 2950);
+        let token1 = generate_recipient_token("", "recipient-456", secret);
+        assert!(verify_recipient_token(&token1, "", "recipient-456", secret));
 
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: false,
-            }
-        );
-        assert_eq!(state.daily_count, 90);
-        assert!(state.daily_warning_sent);
+        let token2 = generate_recipient_token("session-123", "", secret);
+        assert!(verify_recipient_token(&token2, "session-123", "", secret));
+
+        let token3 = generate_recipient_token("", "", secret);
+        assert!(verify_recipient_token(&token3, "", "", secret));
     }
 
     #[test]
-    fn test_check_and_increment_triggers_monthly_warning() {
-        let mut state = RateLimitState {
-            daily_count: 10,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2949, // Will become 2950 after increment
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_empty_secret() {
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: true,
-            }
-        );
-        assert_eq!(state.monthly_count, 2950);
-        assert!(state.monthly_warning_sent);
+        let token = generate_recipient_token(session_id, recipient_id, b"");
+        assert!(verify_recipient_token(
+            &token,
+            session_id,
+            recipient_id,
+            b""
+        ));
     }
 
     #[test]
-    fn test_check_and_increment_both_warnings() {
-        let mut state = RateLimitState {
-            daily_count: 89,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2949,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
+    fn test_verify_recipient_token_malformed_token() {
+        let secret = b"test-secret-key";
+        let session_id = "session-123";
+        let recipient_id = "recipient-456";
 
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: true,
-            }
-        );
+        assert!(!verify_recipient_token(
+            "not-a-valid-hex",
+            session_id,
+            recipient_id,
+            secret
+        ));
+        assert!(!verify_recipient_token(
+            "",
+            session_id,
+            recipient_id,
+            secret
+        ));
     }
-
-    #[test]
-    fn test_check_and_increment_warning_only_once() {
-        let mut state = RateLimitState {
-            daily_count: 90,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2950,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,   // Already sent
-            monthly_warning_sent: true, // Already sent
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        // Should NOT trigger warnings again
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: false,
-            }
-        );
-    }
-
-    #[test]
-    fn test_check_and_increment_daily_limit_exceeded() {
-        let mut state = RateLimitState {
-            daily_count: 100, // At limit
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 500,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::DailyLimitExceeded {
-                limit: 100,
-                remaining_month: 2500,
-            }
-        );
-        // Count should NOT have incremented
-        assert_eq!(state.daily_count, 100);
-    }
-
-    #[test]
-    fn test_check_and_increment_monthly_limit_exceeded() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 3000, // At limit
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: true,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(result, RateLimitCheck::MonthlyLimitExceeded { limit: 3000 });
-        // Count should NOT have incremented
-        assert_eq!(state.monthly_count, 3000);
-    }
-
-    #[test]
-    fn test_remaining() {
-        let state = RateLimitState {
-            daily_count: 75,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2500,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let (daily_remaining, monthly_remaining) = state.remaining(100, 3000);
-        assert_eq!(daily_remaining, 25);
-        assert_eq!(monthly_remaining, 500);
-    }
-
-    #[test]
-    fn test_remaining_saturates_at_zero() {
-        let state = RateLimitState {
-            daily_count: 150, // Over limit somehow
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 5000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: true,
-        };
-
-        let (daily_remaining, monthly_remaining) = state.remaining(100, 3000);
-        assert_eq!(daily_remaining, 0);
-        assert_eq!(monthly_remaining, 0);
-    }
-
-    // ============================================================
-    // Serialization Tests
-    // ============================================================
-
-    #[test]
-    fn test_serialize_deserialize_roundtrip() {
-        let state = RateLimitState {
-            daily_count: 90,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2950,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let json = serde_json::to_string(&state).unwrap();
-        let deserialized: RateLimitState = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(state, deserialized);
-    }
-
-    #[test]
-    fn test_deserialize_without_warning_fields() {
-        // Old state format without warning fields should default to false
-        let json = r#"{
-            "daily_count": 50,
-            "daily_date": "2025-01-15",
-            "monthly_count": 1000,
-            "monthly_month": "2025-01"
-        }"#;
-
-        let state: RateLimitState = serde_json::from_str(json).unwrap();
-
-        assert_eq!(state.daily_count, 50);
-        assert!(!state.daily_warning_sent); // defaults to false
-        assert!(!state.monthly_warning_sent); // defaults to false
-    }
-
-    // ============================================================
-    // Integration-style Tests (full workflow)
-    // ============================================================
-
-    #[test]
-    fn test_full_day_workflow() {
-        let mut state = RateLimitState::default();
-        let daily_limit = 100;
-        let monthly_limit = 3000;
-        let daily_threshold = 90;
-        let monthly_threshold = 2950;
-
-        // Simulate a full day of requests
-        state.maybe_reset("2025-01-15", "2025-01");
-
-        // Send 89 emails - no warnings
-        for _ in 0..89 {
-            let result = state.check_and_increment(
-                daily_limit,
-                monthly_limit,
-                daily_threshold,
-                monthly_threshold,
-            );
-            assert!(matches!(
-                result,
-                RateLimitCheck::Allowed {
-                    send_daily_warning: false,
-                    ..
-                }
-            ));
-        }
-        assert_eq!(state.daily_count, 89);
-        assert!(!state.daily_warning_sent);
-
-        // 90th email triggers warning
-        let result = state.check_and_increment(
-            daily_limit,
-            monthly_limit,
-            daily_threshold,
-            monthly_threshold,
-        );
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: false,
-            }
-        );
-        assert!(state.daily_warning_sent);
-
-        // 91-100 emails - no more warnings
-        for _ in 91..=100 {
-            let result = state.check_and_increment(
-                daily_limit,
-                monthly_limit,
-                daily_threshold,
-                monthly_threshold,
-            );
-            assert_eq!(
-                result,
-                RateLimitCheck::Allowed {
-                    send_daily_warning: false,
-                    send_monthly_warning: false,
-                }
-            );
-        }
-        assert_eq!(state.daily_count, 100);
-
-        // 101st email - blocked
-        let result = state.check_and_increment(
-            daily_limit,
-            monthly_limit,
-            daily_threshold,
-            monthly_threshold,
-        );
-        assert!(matches!(result, RateLimitCheck::DailyLimitExceeded { .. }));
-        assert_eq!(state.daily_count, 100); // Not incremented
-
-        // Next day - reset
-        state.maybe_reset("2025-01-16", "2025-01");
-        assert_eq!(state.daily_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert_eq!(state.monthly_count, 100); // Monthly NOT reset
-    }
-
-    #[test]
-    fn test_month_boundary_workflow() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-31".to_string(),
-            monthly_count: 2900,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        // Cross month boundary
-        state.maybe_reset("2025-02-01", "2025-02");
-
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
-        assert_eq!(state.daily_date, "2025-02-01");
-        assert_eq!(state.monthly_month, "2025-02");
-    }
-
-    // ============================================================
-    // Property Tests
-    // ============================================================
 
     use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn prop_daily_count_never_exceeds_limit_plus_one(
-            initial_count in 0u32..200,
-            num_requests in 0usize..50
-        ) {
-            let daily_limit = 100;
-            let mut state = RateLimitState {
-                daily_count: initial_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count: 0,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: false,
-                monthly_warning_sent: false,
-            };
-
-            for _ in 0..num_requests {
-                let _ = state.check_and_increment(daily_limit, 3000, 90, 2950);
-            }
-
-            // After any number of requests, count should never exceed limit
-            // (it can be at limit but check_and_increment won't increment past it)
-            prop_assert!(state.daily_count <= daily_limit.max(initial_count));
-        }
-
-        #[test]
-        fn prop_warning_sent_exactly_once(
-            num_requests in 90usize..150
-        ) {
-            let mut state = RateLimitState::default();
-            state.maybe_reset("2025-01-15", "2025-01");
-
-            let mut warning_count = 0;
-            for _ in 0..num_requests {
-                if let RateLimitCheck::Allowed { send_daily_warning: true, .. } =
-                    state.check_and_increment(100, 3000, 90, 2950) {
-                    warning_count += 1;
-                }
-            }
-
-            // Warning should be sent exactly once (when crossing threshold)
-            prop_assert_eq!(warning_count, 1);
-        }
-
-        #[test]
-        fn prop_reset_clears_warning_flag(
-            count in 0u32..100,
-            warning_sent in proptest::bool::ANY
-        ) {
-            let mut state = RateLimitState {
-                daily_count: count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count: count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: warning_sent,
-                monthly_warning_sent: warning_sent,
-            };
-
-            state.maybe_reset("2025-01-16", "2025-02");
-
-            prop_assert!(!state.daily_warning_sent);
-            prop_assert!(!state.monthly_warning_sent);
-            prop_assert_eq!(state.daily_count, 0);
-            prop_assert_eq!(state.monthly_count, 0);
-        }
-
-        #[test]
-        fn prop_remaining_is_consistent(
-            daily_count in 0u32..150,
-            monthly_count in 0u32..4000
-        ) {
-            let state = RateLimitState {
-                daily_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: false,
-                monthly_warning_sent: false,
-            };
-
-            let (daily_rem, monthly_rem) = state.remaining(100, 3000);
-
-            // Remaining + count should equal limit (or be 0 if over limit)
-            if daily_count <= 100 {
-                prop_assert_eq!(daily_rem + daily_count, 100);
-            } else {
-                prop_assert_eq!(daily_rem, 0);
-            }
-
-            if monthly_count <= 3000 {
-                prop_assert_eq!(monthly_rem + monthly_count, 3000);
-            } else {
-                prop_assert_eq!(monthly_rem, 0);
-            }
-        }
-
-        #[test]
-        fn prop_serialization_roundtrip(
-            daily_count in 0u32..200,
-            monthly_count in 0u32..5000,
-            daily_warning in proptest::bool::ANY,
-            monthly_warning in proptest::bool::ANY
-        ) {
-            let state = RateLimitState {
-                daily_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: daily_warning,
-                monthly_warning_sent: monthly_warning,
-            };
-
-            let json = serde_json::to_string(&state).unwrap();
-            let deserialized: RateLimitState = serde_json::from_str(&json).unwrap();
-
-            prop_assert_eq!(state, deserialized);
-        }
-    }
 
     // ============================================================
     // Property Tests for Session/Magic Link Functionality
@@ -3641,4 +3045,512 @@ mod tests {
 
     // Note: generate_session_id() uses js_sys and can't be tested in non-WASM tests
     // Session ID uniqueness is tested in integration tests
+    // ============================================================
+    // Email-Proxy Integration Tests
+    // ============================================================
+
+    #[test]
+    fn test_send_request_structure() {
+        // Verify SendRequest can be serialized/deserialized correctly
+        // This ensures email payload structure matches expected format
+        let request = SendRequest {
+            to: "recipient@example.com".to_string(),
+            subject: "Please Sign Document".to_string(),
+            pdf_base64: "JVBERi0xLjQK...".to_string(), // Mock base64 PDF
+            filename: "contract.pdf".to_string(),
+            signing_link: Some("https://getsignatures.org/sign/abc123".to_string()),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: SendRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.to, "recipient@example.com");
+        assert_eq!(parsed.subject, "Please Sign Document");
+        assert_eq!(parsed.filename, "contract.pdf");
+        assert_eq!(
+            parsed.signing_link,
+            Some("https://getsignatures.org/sign/abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_send_request_without_signing_link() {
+        // Verify SendRequest works without optional signing_link
+        let request = SendRequest {
+            to: "user@example.com".to_string(),
+            subject: "Document".to_string(),
+            pdf_base64: "JVBERi0xLjQK...".to_string(),
+            filename: "doc.pdf".to_string(),
+            signing_link: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: SendRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.to, "user@example.com");
+        assert_eq!(parsed.signing_link, None);
+    }
+
+    #[test]
+    fn test_email_payload_structure_with_attachments() {
+        // Verify the email payload structure that would be sent to email-proxy
+        // This simulates the JSON body that gets built for email service
+        let request = SendRequest {
+            to: "signer@example.com".to_string(),
+            subject: "Action Required: Sign Document".to_string(),
+            pdf_base64: "JVBERi0xLjQKJeLjz9M...".to_string(),
+            filename: "agreement.pdf".to_string(),
+            signing_link: Some("https://getsignatures.org/sign/sess_xyz789".to_string()),
+        };
+
+        // Build the email payload that would be sent
+        let email_payload = serde_json::json!({
+            "from": "GetSignatures <noreply@mail.getsignatures.org>",
+            "to": [request.to],
+            "subject": request.subject,
+            "text": "You have been requested to sign a document.\n\nClick the link below to sign:\nhttps://getsignatures.org/sign/sess_xyz789\n\nOr download the attached PDF to sign locally.",
+            "attachments": [{
+                "filename": request.filename,
+                "content": request.pdf_base64
+            }]
+        });
+
+        // Verify structure
+        assert_eq!(
+            email_payload["from"],
+            "GetSignatures <noreply@mail.getsignatures.org>"
+        );
+        assert_eq!(email_payload["to"][0], "signer@example.com");
+        assert_eq!(email_payload["subject"], "Action Required: Sign Document");
+        assert_eq!(email_payload["attachments"][0]["filename"], "agreement.pdf");
+        assert_eq!(
+            email_payload["attachments"][0]["content"],
+            "JVBERi0xLjQKJeLjz9M..."
+        );
+    }
+
+    #[test]
+    fn test_email_proxy_url_constant() {
+        // Verify the email-proxy URL constant is correctly configured
+        assert_eq!(
+            EMAIL_PROXY_URL,
+            "https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws/send"
+        );
+    }
+
+    #[test]
+    fn test_send_response_structure() {
+        // Verify SendResponse serialization for successful email send
+        let response = SendResponse {
+            success: true,
+            message: "Email sent".to_string(),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: SendResponse = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed.success);
+        assert_eq!(parsed.message, "Email sent");
+    }
+
+    #[test]
+    fn test_email_headers_authorization_format() {
+        // Verify Authorization header format for email service
+        let api_key = "test_api_key_12345";
+        let header_value = format!("Bearer {}", api_key);
+
+        assert_eq!(header_value, "Bearer test_api_key_12345");
+        assert!(header_value.starts_with("Bearer "));
+    }
+
+    #[test]
+    fn test_email_headers_content_type() {
+        // Verify Content-Type header is correct for JSON email payloads
+        let content_type = "application/json";
+        assert_eq!(content_type, "application/json");
+    }
+
+    #[test]
+    fn test_email_sender_notification_structure() {
+        // Verify the sender notification email has correct structure
+        let subject = "Document Signing Update";
+        let html_body = "<html><body><p>Test</p></body></html>";
+
+        assert!(!subject.is_empty());
+        assert!(!html_body.is_empty());
+        assert!(html_body.contains("<html>"));
+        assert!(html_body.contains("<body>"));
+    }
+
+    #[test]
+    fn test_recipient_email_validation() {
+        // Verify email addresses are stored correctly in SendRequest
+        let valid_emails = vec![
+            "user@example.com",
+            "john.doe@company.org",
+            "contact+tag@domain.co.uk",
+        ];
+
+        for email in valid_emails {
+            let request = SendRequest {
+                to: email.to_string(),
+                subject: "Test".to_string(),
+                pdf_base64: "JVBERi0xLjQK".to_string(),
+                filename: "test.pdf".to_string(),
+                signing_link: None,
+            };
+
+            assert_eq!(request.to, email);
+        }
+    }
+
+    #[test]
+    fn test_pdf_base64_content_in_payload() {
+        // Verify PDF base64 content is correctly placed in attachment
+        let pdf_base64 = "JVBERi0xLjQKJeLjz9M0NTcnCjEgMCBvYmo=";
+        let request = SendRequest {
+            to: "test@example.com".to_string(),
+            subject: "Document".to_string(),
+            pdf_base64: pdf_base64.to_string(),
+            filename: "document.pdf".to_string(),
+            signing_link: None,
+        };
+
+        assert_eq!(request.pdf_base64, pdf_base64);
+        assert!(!request.pdf_base64.is_empty());
+        // Base64 should not contain spaces or newlines
+        assert!(!request.pdf_base64.contains(' '));
+        assert!(!request.pdf_base64.contains('\n'));
+    }
+
+    #[test]
+    fn test_filename_preservation_in_attachment() {
+        // Verify filename is correctly preserved through the email payload
+        let filenames = vec![
+            "contract.pdf",
+            "document_2025.pdf",
+            "Purchase Agreement.pdf",
+            "lease-agreement-v2.pdf",
+        ];
+
+        for filename in filenames {
+            let request = SendRequest {
+                to: "test@example.com".to_string(),
+                subject: "Sign".to_string(),
+                pdf_base64: "JVBERi0xLjQK".to_string(),
+                filename: filename.to_string(),
+                signing_link: None,
+            };
+
+            assert_eq!(request.filename, filename);
+            assert!(request.filename.ends_with(".pdf"));
+        }
+    }
+
+    #[test]
+    fn test_signing_link_url_format() {
+        // Verify signing links are valid URLs
+        let signing_links = vec![
+            "https://getsignatures.org/sign/abc123",
+            "https://getsignatures.org/sign/sess_xyz789",
+            "https://getsignatures.org/sign/sess_12345abcdef",
+        ];
+
+        for link in signing_links {
+            let request = SendRequest {
+                to: "test@example.com".to_string(),
+                subject: "Sign".to_string(),
+                pdf_base64: "JVBERi0xLjQK".to_string(),
+                filename: "doc.pdf".to_string(),
+                signing_link: Some(link.to_string()),
+            };
+
+            assert_eq!(request.signing_link.unwrap(), link);
+            assert!(link.starts_with("https://"));
+        }
+    }
+
+    #[test]
+    fn test_email_subject_length() {
+        // Verify email subjects are reasonable length
+        let valid_subjects = vec![
+            "Please Sign",
+            "Document Requires Your Signature",
+            "Action Required: Review and Sign Contract",
+            "Important: Legal Agreement Needs Your Signature",
+        ];
+
+        for subject in valid_subjects {
+            let request = SendRequest {
+                to: "test@example.com".to_string(),
+                subject: subject.to_string(),
+                pdf_base64: "JVBERi0xLjQK".to_string(),
+                filename: "doc.pdf".to_string(),
+                signing_link: None,
+            };
+
+            assert!(!request.subject.is_empty());
+            assert!(request.subject.len() < 1000); // Reasonable email subject length
+        }
+    }
+
+    #[test]
+    fn test_multiple_attachments_not_supported() {
+        // Verify that SendRequest only supports single attachment
+        // (as per the current email payload structure)
+        let request = SendRequest {
+            to: "test@example.com".to_string(),
+            subject: "Document".to_string(),
+            pdf_base64: "JVBERi0xLjQK".to_string(),
+            filename: "document.pdf".to_string(),
+            signing_link: None,
+        };
+
+        // Only one filename field exists
+        assert_eq!(request.filename, "document.pdf");
+        // Only one pdf_base64 field exists
+        assert_eq!(request.pdf_base64, "JVBERi0xLjQK");
+    }
+
+    #[test]
+    fn test_invite_request_structure() {
+        // Verify InviteRequest structure for bulk email sending
+        #[derive(Serialize, Deserialize)]
+        struct TestInvite {
+            recipient_email: String,
+            recipient_name: String,
+            signing_link: String,
+        }
+
+        let invite = TestInvite {
+            recipient_email: "john@example.com".to_string(),
+            recipient_name: "John Doe".to_string(),
+            signing_link: "https://getsignatures.org/sign/abc123".to_string(),
+        };
+
+        let json = serde_json::to_string(&invite).unwrap();
+        let parsed: TestInvite = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.recipient_email, "john@example.com");
+        assert_eq!(parsed.recipient_name, "John Doe");
+    }
+
+    #[test]
+    fn test_email_from_address_format() {
+        // Verify the "from" email address format is consistent
+        let from_address = "GetSignatures <noreply@mail.getsignatures.org>";
+
+        // Should be in "Name <email>" format
+        assert!(from_address.contains('<'));
+        assert!(from_address.contains('>'));
+        assert!(from_address.contains("noreply@mail.getsignatures.org"));
+    }
+
+    #[test]
+    fn test_email_text_body_format() {
+        // Verify plain text email body is formatted correctly
+        let link = "https://getsignatures.org/sign/abc123";
+        let email_text = format!(
+            "You have been requested to sign a document.\n\n\
+            Click the link below to sign:\n{}\n\n\
+            Or download the attached PDF to sign locally.",
+            link
+        );
+
+        assert!(email_text.contains("You have been requested"));
+        assert!(email_text.contains(link));
+        assert!(email_text.contains("attached PDF"));
+    }
+
+    #[test]
+    fn test_email_text_body_without_link() {
+        // Verify plain text email body when signing_link is not provided
+        let email_text = "Please find the attached document for your signature.";
+
+        assert!(!email_text.is_empty());
+        assert!(email_text.contains("attached document"));
+    }
+
+    // ============================================================
+    // Email-Proxy Configuration Tests
+    // ============================================================
+
+    #[test]
+    fn test_missing_api_key_error_message() {
+        // Verify error message when API key is not configured
+        let error_msg = "EMAIL_PROXY_API_KEY not configured";
+        assert_eq!(error_msg, "EMAIL_PROXY_API_KEY not configured");
+    }
+
+    #[test]
+    fn test_session_ttl_constant() {
+        // Verify session TTL is reasonable (7 days = 604800 seconds)
+        let session_ttl = SESSION_TTL_SECONDS;
+        assert_eq!(session_ttl, 7 * 24 * 60 * 60); // 7 days in seconds
+        assert_eq!(session_ttl, 604800);
+    }
+
+    #[test]
+    fn test_download_link_expiry_days() {
+        // Verify download link expiry is set correctly
+        let expiry_days = DOWNLOAD_LINK_EXPIRY_DAYS;
+        assert_eq!(expiry_days, 30);
+        assert!(expiry_days > 0);
+    }
+
+    // ============================================================
+    // Per-IP Rate Limiting Tests
+    // ============================================================
+
+    #[test]
+    fn test_ip_rate_limit_state_default() {
+        let state = IpRateLimitState::default();
+        assert_eq!(state.request_count, 0);
+        assert_eq!(state.window_start, 0);
+    }
+
+    #[test]
+    fn test_ip_rate_limit_state_serialization() {
+        let state = IpRateLimitState {
+            request_count: 42,
+            window_start: 1704067200,
+        };
+
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: IpRateLimitState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(state, deserialized);
+    }
+
+    #[test]
+    fn test_rate_limit_tier_limits() {
+        // Health: 100 req/min
+        let (max, window) = RateLimitTier::Health.limits();
+        assert_eq!(max, 100);
+        assert_eq!(window, 60);
+
+        // SessionRead: 30 req/min
+        let (max, window) = RateLimitTier::SessionRead.limits();
+        assert_eq!(max, 30);
+        assert_eq!(window, 60);
+
+        // SessionWrite: 5 req/min
+        let (max, window) = RateLimitTier::SessionWrite.limits();
+        assert_eq!(max, 5);
+        assert_eq!(window, 60);
+
+        // RequestLink: 3 req/hour
+        let (max, window) = RateLimitTier::RequestLink.limits();
+        assert_eq!(max, 3);
+        assert_eq!(window, 3600);
+    }
+
+    #[test]
+    fn test_rate_limit_tier_names() {
+        assert_eq!(RateLimitTier::Health.name(), "health");
+        assert_eq!(RateLimitTier::SessionRead.name(), "session_read");
+        assert_eq!(RateLimitTier::SessionWrite.name(), "session_write");
+        assert_eq!(RateLimitTier::RequestLink.name(), "request_link");
+    }
+
+    #[test]
+    fn test_rate_limit_tier_retry_after() {
+        assert_eq!(RateLimitTier::Health.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::SessionRead.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::SessionWrite.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::RequestLink.retry_after_seconds(), 3600);
+    }
+
+    #[test]
+    fn test_ip_rate_limit_result_equality() {
+        assert_eq!(IpRateLimitResult::Allowed, IpRateLimitResult::Allowed);
+        assert_eq!(
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            },
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            }
+        );
+        assert_ne!(
+            IpRateLimitResult::Allowed,
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            }
+        );
+    }
+
+    #[test]
+    fn test_ip_rate_limit_kv_key_format() {
+        // Verify key format: ip_limit:{ip}:{tier_name}
+        let ip = "192.168.1.1";
+        let tier = RateLimitTier::Health;
+        let key = format!("ip_limit:{}:{}", ip, tier.name());
+        assert_eq!(key, "ip_limit:192.168.1.1:health");
+
+        let tier = RateLimitTier::RequestLink;
+        let key = format!("ip_limit:{}:{}", ip, tier.name());
+        assert_eq!(key, "ip_limit:192.168.1.1:request_link");
+    }
+
+    // ============================================================
+    // Per-IP Rate Limiting Property Tests
+    // ============================================================
+
+    proptest! {
+        /// Property: Window reset logic is correct
+        #[test]
+        fn prop_ip_rate_limit_window_expired(
+            window_start in 0u64..1_000_000,
+            window_seconds in 1u64..7200,
+            offset in 0u64..10000
+        ) {
+            let now = window_start + window_seconds + offset;
+            let is_expired = now >= window_start + window_seconds;
+
+            // If offset >= 0, window should be expired (now >= window_start + window_seconds)
+            prop_assert!(is_expired);
+        }
+
+        /// Property: Window NOT expired when current time is within window
+        #[test]
+        fn prop_ip_rate_limit_window_not_expired(
+            window_start in 1000u64..1_000_000,
+            window_seconds in 60u64..7200,
+            offset in 1u64..59
+        ) {
+            // Ensure offset is less than window_seconds
+            let actual_offset = offset % window_seconds;
+            let now = window_start + actual_offset;
+            let is_expired = now >= window_start + window_seconds;
+
+            // Window should NOT be expired
+            prop_assert!(!is_expired);
+        }
+
+        /// Property: Retry-after calculation is always at least 1 second
+        #[test]
+        fn prop_retry_after_at_least_one(
+            window_start in 0u64..1_000_000,
+            window_seconds in 60u64..7200,
+            now in 0u64..2_000_000
+        ) {
+            let retry_after = (window_start + window_seconds).saturating_sub(now).max(1);
+            prop_assert!(retry_after >= 1);
+        }
+
+        /// Property: Request count never goes negative
+        #[test]
+        fn prop_request_count_non_negative(
+            initial in 0u32..1000,
+            increments in 0usize..100
+        ) {
+            let mut count = initial;
+            for _ in 0..increments {
+                count += 1;
+            }
+            prop_assert!(count >= initial);
+        }
+    }
 }

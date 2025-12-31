@@ -29,7 +29,7 @@ test result: ok. 61 passed; 0 failed
 The implementation was already complete:
 - Helper functions implemented
 - handle_submit_signed() modified with notification logic
-- Integration with Resend API complete
+- Integration with email-proxy Lambda complete
 
 ### 4. Confirm Tests Pass ✓
 All tests passing after code review and cleanup:
@@ -216,13 +216,13 @@ $ cargo test --all-features --workspace
 ## Configuration
 
 ### Required Cloudflare Secrets
-- **RESEND_API_KEY**: API key for Resend email service
+- **EMAIL_PROXY_API_KEY**: API key for email-proxy Lambda (AWS SES backend)
   - If missing: Logs warning, signing continues
   - From address: `GetSignatures <noreply@mail.getsignatures.org>`
 
 ### Constants
 - DOWNLOAD_LINK_EXPIRY_DAYS: 30
-- RESEND_API_URL: https://api.resend.com/emails
+- EMAIL_PROXY_URL: https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws
 
 ## Error Handling
 

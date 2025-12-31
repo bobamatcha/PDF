@@ -75,9 +75,9 @@ id = "paste-your-rate-limits-id-here"
 ```bash
 cd apps/docsign-web/worker
 
-# Required: Get a Resend API key from https://resend.com
-wrangler secret put RESEND_API_KEY
-# Paste your Resend API key when prompted
+# Required: Get email-proxy API key (AWS SES Lambda backend)
+wrangler secret put EMAIL_PROXY_API_KEY
+# Paste your email-proxy API key when prompted
 
 # Optional: API protection (leave blank for open access)
 wrangler secret put DOCSIGN_API_KEY
@@ -198,7 +198,7 @@ Run `wrangler login` again
 Already fixed - wasm-opt is disabled in Cargo.toml
 
 ### Emails not sending
-Check that RESEND_API_KEY is set: `wrangler secret list`
+Check that EMAIL_PROXY_API_KEY is set: `wrangler secret list`
 
 ### Trunk "Is a directory" error
 
