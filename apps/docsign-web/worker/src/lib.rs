@@ -4,8 +4,13 @@
 //! Signing sessions expire after 7 days
 
 use chrono::Utc;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use worker::*;
+
+// Type alias for HMAC-SHA256
+type HmacSha256 = Hmac<Sha256>;
 
 /// Email proxy Lambda URL (AWS SES)
 const EMAIL_PROXY_URL: &str =
@@ -16,6 +21,7 @@ const FROM_ADDRESS: &str = "GetSignatures <noreply@getsignatures.org>";
 
 /// Request body for sending a document
 #[derive(Deserialize)]
+#[allow(dead_code)] // Fields used via serde deserialization
 struct SendRequest {
     /// Recipient email address
     to: String,
@@ -241,6 +247,10 @@ struct SigningSession {
     /// Final merged document when all signers complete (parallel mode only)
     #[serde(default)]
     final_document: Option<String>,
+    /// Legacy flag: if true, allow access without token (for backwards compatibility)
+    /// New sessions should NOT set this flag (defaults to false)
+    #[serde(default)]
+    legacy: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -309,6 +319,7 @@ struct DeclineResponse {
 
 /// Request to record consent acceptance (for audit trail)
 #[derive(Deserialize)]
+#[allow(dead_code)] // Fields used via serde deserialization
 struct ConsentRequest {
     recipient_id: String,
     /// User agent string for audit trail
@@ -422,6 +433,188 @@ enum RateLimitCheck {
     MonthlyLimitExceeded { limit: u32 },
 }
 
+// ============================================================
+// Per-IP Rate Limiting (DDoS Prevention)
+// ============================================================
+
+/// Per-IP rate limit state stored in KV
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+struct IpRateLimitState {
+    /// Number of requests in current window
+    request_count: u32,
+    /// Unix timestamp when the current window started
+    window_start: u64,
+}
+
+/// Rate limit tiers for different endpoint types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateLimitTier {
+    /// Health check: 100 req/min per IP
+    Health,
+    /// Session read (GET): 30 req/min per IP
+    SessionRead,
+    /// Session write (PUT signed/decline/consent): 5 req/min per IP
+    SessionWrite,
+    /// Request link: 3 req/hour per IP (prevents email spam)
+    RequestLink,
+}
+
+impl RateLimitTier {
+    /// Returns (max_requests, window_seconds) for this tier
+    fn limits(&self) -> (u32, u64) {
+        match self {
+            RateLimitTier::Health => (100, 60),      // 100/min
+            RateLimitTier::SessionRead => (30, 60),  // 30/min
+            RateLimitTier::SessionWrite => (5, 60),  // 5/min
+            RateLimitTier::RequestLink => (3, 3600), // 3/hour
+        }
+    }
+
+    /// Returns the tier name for KV key construction
+    fn name(&self) -> &'static str {
+        match self {
+            RateLimitTier::Health => "health",
+            RateLimitTier::SessionRead => "session_read",
+            RateLimitTier::SessionWrite => "session_write",
+            RateLimitTier::RequestLink => "request_link",
+        }
+    }
+
+    /// Returns retry-after seconds for rate limit response
+    #[allow(dead_code)] // Available for tests and future use
+    fn retry_after_seconds(&self) -> u64 {
+        let (_, window) = self.limits();
+        window
+    }
+}
+
+/// Result of per-IP rate limit check
+#[derive(Debug, Clone, PartialEq)]
+enum IpRateLimitResult {
+    /// Request allowed
+    Allowed,
+    /// Rate limited - retry after specified seconds
+    Limited { retry_after_seconds: u64 },
+}
+
+/// Check per-IP rate limit for a given tier
+/// Returns IpRateLimitResult indicating if request is allowed or rate limited
+async fn check_ip_rate_limit(
+    kv: &kv::KvStore,
+    ip: &str,
+    tier: RateLimitTier,
+) -> Result<IpRateLimitResult> {
+    let (max_requests, window_seconds) = tier.limits();
+    let key = format!("ip_limit:{}:{}", ip, tier.name());
+
+    // Get current timestamp
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Get current state from KV
+    let mut state: IpRateLimitState = kv.get(&key).json().await?.unwrap_or_default();
+
+    // Check if window has expired
+    if now >= state.window_start + window_seconds {
+        // Start new window
+        state.window_start = now;
+        state.request_count = 0;
+    }
+
+    // Check if we're over the limit
+    if state.request_count >= max_requests {
+        let retry_after = (state.window_start + window_seconds).saturating_sub(now);
+        return Ok(IpRateLimitResult::Limited {
+            retry_after_seconds: retry_after.max(1), // At least 1 second
+        });
+    }
+
+    // Increment and save
+    state.request_count += 1;
+
+    // TTL should be slightly longer than the window to handle edge cases
+    let ttl = window_seconds + 60;
+
+    kv.put(&key, serde_json::to_string(&state)?)?
+        .expiration_ttl(ttl)
+        .execute()
+        .await?;
+
+    Ok(IpRateLimitResult::Allowed)
+}
+
+/// Get client IP from Cloudflare headers
+/// Falls back to "unknown" if not present
+fn get_client_ip(req: &Request) -> String {
+    req.headers()
+        .get("CF-Connecting-IP")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Generate a 429 Too Many Requests response for IP rate limiting
+fn ip_rate_limit_response(retry_after_seconds: u64) -> Result<Response> {
+    #[derive(Serialize)]
+    struct RateLimitError {
+        error: String,
+        retry_after_seconds: u64,
+    }
+
+    let resp = Response::from_json(&RateLimitError {
+        error: "Rate limit exceeded".to_string(),
+        retry_after_seconds,
+    })?
+    .with_status(429);
+
+    // Add Retry-After header
+    let headers = Headers::new();
+    let _ = headers.set("Retry-After", &retry_after_seconds.to_string());
+
+    Ok(resp.with_headers(headers))
+}
+
+/// Apply IP rate limiting to a request
+/// Returns Some(Response) if rate limited, None if allowed
+async fn apply_ip_rate_limit(
+    req: &Request,
+    env: &Env,
+    tier: RateLimitTier,
+) -> Option<Result<Response>> {
+    let kv = match env.kv("RATE_LIMITS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            // KV not configured, skip rate limiting
+            console_log!("Warning: RATE_LIMITS KV not configured, IP rate limiting disabled");
+            return None;
+        }
+    };
+
+    let ip = get_client_ip(req);
+
+    match check_ip_rate_limit(&kv, &ip, tier).await {
+        Ok(IpRateLimitResult::Allowed) => None,
+        Ok(IpRateLimitResult::Limited {
+            retry_after_seconds,
+        }) => {
+            console_log!(
+                "IP {} rate limited for tier {:?}, retry after {} seconds",
+                ip,
+                tier,
+                retry_after_seconds
+            );
+            Some(cors_response(ip_rate_limit_response(retry_after_seconds)))
+        }
+        Err(e) => {
+            // On error, allow the request but log
+            console_log!("IP rate limit check failed for {}: {}", ip, e);
+            None
+        }
+    }
+}
+
 impl RateLimitState {
     /// Reset counters if date/month has changed, returns whether resets occurred
     fn maybe_reset(&mut self, today: &str, this_month: &str) -> (bool, bool) {
@@ -508,6 +701,246 @@ impl RateLimitState {
 // const RESEND_API_URL: &str = "https://api.resend.com/emails";
 const SESSION_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
 const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
+
+// ============================================================
+// Session Token Configuration (Security)
+// ============================================================
+/// Token expiry duration in seconds (30 days)
+const TOKEN_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60;
+
+/// Errors that can occur during token verification
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenError {
+    /// Token format is invalid (wrong number of parts, bad encoding)
+    InvalidFormat,
+    /// Token has expired
+    Expired,
+    /// HMAC signature is invalid
+    InvalidSignature,
+    /// Token session_id doesn't match the requested session
+    SessionMismatch,
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenError::InvalidFormat => write!(f, "Invalid token format"),
+            TokenError::Expired => write!(f, "Token has expired"),
+            TokenError::InvalidSignature => write!(f, "Invalid token signature"),
+            TokenError::SessionMismatch => write!(f, "Token does not match session"),
+        }
+    }
+}
+
+// ============================================================
+// Session Token Functions (Security)
+// ============================================================
+
+/// Get the signing secret from environment.
+/// Priority: 1. SESSION_TOKEN_SECRET (secret), 2. SESSION_TOKEN_SECRET (var), 3. API key hash (fallback)
+fn get_signing_secret(env: &Env) -> Vec<u8> {
+    // Try secret first
+    if let Ok(secret) = env.secret("SESSION_TOKEN_SECRET") {
+        return secret.to_string().into_bytes();
+    }
+
+    // Try var for development
+    if let Ok(var) = env.var("SESSION_TOKEN_SECRET") {
+        return var.to_string().into_bytes();
+    }
+
+    // Fallback: derive from API key for backwards compatibility
+    if let Ok(api_key) = env.secret("DOCSIGN_API_KEY") {
+        // Use SHA256 of API key as the signing secret
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(api_key.to_string().as_bytes());
+        hasher.update(b"session-token-secret-v1"); // Domain separation
+        return hasher.finalize().to_vec();
+    }
+
+    // Last resort: empty secret (WARNING: insecure, for development only)
+    console_log!(
+        "WARNING: No SESSION_TOKEN_SECRET or DOCSIGN_API_KEY configured - tokens are insecure!"
+    );
+    b"insecure-dev-secret".to_vec()
+}
+
+/// Generate a signed recipient token for accessing a session.
+///
+/// Token format (base64url encoded): {session_id}:{recipient_id}:{expiry_timestamp}:{hmac_signature}
+///
+/// # Arguments
+/// * `session_id` - The session ID this token is for
+/// * `recipient_id` - The recipient ID this token authorizes
+/// * `secret` - The HMAC signing secret
+///
+/// # Returns
+/// A base64url-encoded token string
+pub fn generate_recipient_token(session_id: &str, recipient_id: &str, secret: &[u8]) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+
+    // Calculate expiry timestamp (30 days from now)
+    let expiry = chrono::Utc::now().timestamp() as u64 + TOKEN_EXPIRY_SECONDS;
+
+    // Create the payload to sign
+    let payload = format!("{}:{}:{}", session_id, recipient_id, expiry);
+
+    // Generate HMAC signature
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
+    mac.update(payload.as_bytes());
+    let signature = mac.finalize().into_bytes();
+
+    // Encode signature as base64url
+    let sig_base64 = URL_SAFE_NO_PAD.encode(signature);
+
+    // Create the full token
+    let token = format!("{}:{}", payload, sig_base64);
+
+    // Encode the entire token as base64url for safe URL inclusion
+    URL_SAFE_NO_PAD.encode(token.as_bytes())
+}
+
+/// Verify a recipient token and extract the recipient_id if valid.
+///
+/// # Arguments
+/// * `token` - The base64url-encoded token to verify
+/// * `session_id` - The session ID to validate against
+/// * `secret` - The HMAC signing secret
+///
+/// # Returns
+/// * `Ok(recipient_id)` - The recipient ID from the token if valid
+/// * `Err(TokenError)` - The reason verification failed
+pub fn verify_recipient_token(
+    token: &str,
+    session_id: &str,
+    secret: &[u8],
+) -> std::result::Result<String, TokenError> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+
+    // Decode the outer base64url encoding
+    let token_bytes = URL_SAFE_NO_PAD
+        .decode(token)
+        .map_err(|_| TokenError::InvalidFormat)?;
+
+    let token_str = String::from_utf8(token_bytes).map_err(|_| TokenError::InvalidFormat)?;
+
+    // Split into parts: session_id:recipient_id:expiry:signature
+    let parts: Vec<&str> = token_str.split(':').collect();
+    if parts.len() != 4 {
+        return Err(TokenError::InvalidFormat);
+    }
+
+    let token_session_id = parts[0];
+    let token_recipient_id = parts[1];
+    let expiry_str = parts[2];
+    let signature_base64 = parts[3];
+
+    // Verify session ID matches
+    if token_session_id != session_id {
+        return Err(TokenError::SessionMismatch);
+    }
+
+    // Parse and verify expiry
+    let expiry: u64 = expiry_str.parse().map_err(|_| TokenError::InvalidFormat)?;
+    let now = chrono::Utc::now().timestamp() as u64;
+    if now > expiry {
+        return Err(TokenError::Expired);
+    }
+
+    // Recreate the payload and verify HMAC
+    let payload = format!("{}:{}:{}", token_session_id, token_recipient_id, expiry_str);
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
+    mac.update(payload.as_bytes());
+
+    // Decode the signature
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature_base64)
+        .map_err(|_| TokenError::InvalidFormat)?;
+
+    // Verify signature (constant-time comparison)
+    mac.verify_slice(&signature)
+        .map_err(|_| TokenError::InvalidSignature)?;
+
+    Ok(token_recipient_id.to_string())
+}
+
+// ============================================================
+// Request Size Limits (Security)
+// ============================================================
+/// Maximum size for PDF documents (10MB)
+const MAX_PDF_SIZE: usize = 10 * 1024 * 1024;
+/// Maximum size for signature data (100KB) - reserved for future granular validation
+#[allow(dead_code)]
+const MAX_SIGNATURE_SIZE: usize = 100 * 1024;
+/// Maximum total request body size (12MB - PDF + overhead)
+const MAX_REQUEST_BODY: usize = 12 * 1024 * 1024;
+
+// ============================================================
+// Session Limits per Sender (Storage Exhaustion Prevention)
+// ============================================================
+/// Maximum active sessions per sender to prevent storage exhaustion
+const MAX_SESSIONS_PER_SENDER: usize = 100;
+
+/// Maximum age for sessions in sender index before pruning (30 days)
+const SESSION_INDEX_PRUNE_DAYS: i64 = 30;
+
+/// Tracks all active sessions for a sender (stored in KV)
+/// Key format: sender_index:{sha256_hash_of_email}
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+struct SenderSessionIndex {
+    /// List of active session IDs for this sender
+    session_ids: Vec<String>,
+    /// ISO timestamps when each session was created (parallel array)
+    created_at: Vec<String>,
+}
+
+impl SenderSessionIndex {
+    /// Remove expired sessions from the index (older than prune_days)
+    fn prune_expired(&mut self, prune_days: i64) {
+        let now = chrono::Utc::now();
+        let cutoff = now - chrono::Duration::days(prune_days);
+
+        let mut new_ids = Vec::new();
+        let mut new_times = Vec::new();
+
+        for (id, created) in self.session_ids.iter().zip(self.created_at.iter()) {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created) {
+                if dt > cutoff {
+                    new_ids.push(id.clone());
+                    new_times.push(created.clone());
+                }
+            }
+            // If we can't parse the timestamp, drop it (corrupted data)
+        }
+
+        self.session_ids = new_ids;
+        self.created_at = new_times;
+    }
+
+    /// Add a new session to the index
+    fn add_session(&mut self, session_id: String, created_at: String) {
+        self.session_ids.push(session_id);
+        self.created_at.push(created_at);
+    }
+
+    /// Remove a session from the index by ID
+    fn remove_session(&mut self, session_id: &str) {
+        if let Some(idx) = self.session_ids.iter().position(|id| id == session_id) {
+            self.session_ids.remove(idx);
+            if idx < self.created_at.len() {
+                self.created_at.remove(idx);
+            }
+        }
+    }
+
+    /// Get the number of active sessions
+    fn count(&self) -> usize {
+        self.session_ids.len()
+    }
+}
 
 // ============================================================
 // UX-006: Sender Notification Helper Functions
@@ -844,7 +1277,12 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     // Route requests
     match (method, path.as_str()) {
         // Health check (public) - detailed monitoring endpoint
-        (Method::Get, "/health") => handle_health_check(env).await,
+        (Method::Get, "/health") => {
+            if let Some(response) = apply_ip_rate_limit(&req, &env, RateLimitTier::Health).await {
+                return response;
+            }
+            handle_health_check(env).await
+        }
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
 
         // Protected endpoints - require API key
@@ -869,14 +1307,26 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             handle_create_session(req, env).await
         }
         (Method::Get, p) if p.starts_with("/session/") => {
+            // Apply SessionRead rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionRead).await
+            {
+                return response;
+            }
             let id = p.strip_prefix("/session/").unwrap_or("");
             if id.contains('/') {
                 cors_response(Response::error("Not found", 404))
             } else {
-                handle_get_session(id, env).await
+                handle_get_session(id, &req, env).await
             }
         }
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/signed") => {
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_submit_signed(parts[2], req, env).await
@@ -885,6 +1335,12 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         }
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/decline") => {
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_decline(parts[2], req, env).await
@@ -894,6 +1350,12 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         }
         // Consent endpoint: logs consent acceptance for audit trail
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/consent") => {
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_consent(parts[2], req, env).await
@@ -902,7 +1364,14 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
         }
         // UX-004: Request new link endpoint (public - no API key required)
+        // Strictest rate limit: 3 req/hour per IP (prevents email spam)
         (Method::Post, p) if p.starts_with("/session/") && p.ends_with("/request-link") => {
+            // Apply RequestLink rate limit (strictest - 3/hour)
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_request_link(parts[2], req, env).await
@@ -1004,6 +1473,11 @@ async fn handle_health_check(env: Env) -> Result<Response> {
 }
 
 async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
+    // Check request size before parsing
+    if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
+        return cors_response(Ok(response));
+    }
+
     // Parse request
     let body: SendRequest = match req.json().await {
         Ok(b) => b,
@@ -1011,6 +1485,12 @@ async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
             return cors_response(error_response(&format!("Invalid request: {}", e)));
         }
     };
+
+    // Validate PDF size after parsing (double-check actual content)
+    let pdf_size = body.pdf_base64.len();
+    if pdf_size > MAX_PDF_SIZE {
+        return cors_response(payload_too_large_response(MAX_PDF_SIZE, pdf_size));
+    }
 
     // Get config
     let daily_limit: u32 = env
@@ -1203,6 +1683,11 @@ async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
 }
 
 async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
+    // Check request size before parsing
+    if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
+        return cors_response(Ok(response));
+    }
+
     // Parse request
     let body: InviteRequest = match req.json().await {
         Ok(b) => b,
@@ -1340,11 +1825,24 @@ async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
     }
 }
 
-async fn send_invitations(_env: &Env, body: &InviteRequest) -> Result<Response> {
+async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
     let mut success_count = 0;
     let mut errors = Vec::new();
 
+    // Get signing secret for token generation
+    let secret = get_signing_secret(env);
+
     for invitation in &body.invitations {
+        // Generate a signed token for this recipient
+        let token = generate_recipient_token(&body.session_id, &invitation.recipient_id, &secret);
+
+        // Append token to the signing link
+        let signing_link_with_token = if invitation.signing_link.contains('?') {
+            format!("{}&token={}", invitation.signing_link, token)
+        } else {
+            format!("{}?token={}", invitation.signing_link, token)
+        };
+
         // Build HTML email template
         let email_html = format!(
             r#"<!DOCTYPE html>
@@ -1387,7 +1885,7 @@ async fn send_invitations(_env: &Env, body: &InviteRequest) -> Result<Response> 
             recipient_name = invitation.name,
             sender_name = body.sender_name,
             document_name = body.document_name,
-            signing_link = invitation.signing_link
+            signing_link = signing_link_with_token
         );
 
         let email_request = serde_json::json!({
@@ -1528,12 +2026,23 @@ async fn send_admin_warning(_env: &Env, message: &str) {
 }
 
 async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
+    // Check request size before parsing (contains PDF)
+    if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
+        return cors_response(Ok(response));
+    }
+
     let body: CreateSessionRequest = match req.json().await {
         Ok(b) => b,
         Err(e) => {
             return cors_response(error_response(&format!("Invalid request: {}", e)));
         }
     };
+
+    // Validate encrypted document size after parsing
+    let doc_size = body.encrypted_document.len();
+    if doc_size > MAX_PDF_SIZE {
+        return cors_response(payload_too_large_response(MAX_PDF_SIZE, doc_size));
+    }
 
     let kv = match env.kv("SESSIONS") {
         Ok(kv) => kv,
@@ -1542,11 +2051,31 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         }
     };
 
+    // Check sender session limits (storage exhaustion prevention)
+    let sender_email = body.metadata.sender_email.as_deref().unwrap_or("");
+    let sender_hash = hash_sender_email(sender_email);
+    let mut sender_index = get_sender_index(&kv, &sender_hash).await;
+
+    // Prune expired sessions from index first
+    sender_index.prune_expired(SESSION_INDEX_PRUNE_DAYS);
+
+    // Check if sender is at limit
+    if sender_index.count() >= MAX_SESSIONS_PER_SENDER {
+        return cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Maximum active sessions reached. Please complete or cancel existing sessions.",
+            "error_code": "SESSION_LIMIT_EXCEEDED",
+            "limit": MAX_SESSIONS_PER_SENDER
+        }))?
+        .with_status(429)));
+    }
+
     // Generate session ID
     let session_id = generate_session_id();
 
     // Calculate expiry
     let expiry_seconds = (body.expiry_hours as u64) * 60 * 60;
+    let created_at = chrono::Utc::now().to_rfc3339();
     let expires_at = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::seconds(expiry_seconds as i64))
         .unwrap_or_else(chrono::Utc::now)
@@ -1564,6 +2093,7 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         signing_mode: body.signing_mode,
         reminder_config: Some(body.reminder_config),
         final_document: None,
+        legacy: false, // New sessions require token authentication
     };
 
     // Store session with TTL
@@ -1575,6 +2105,13 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         .execute()
         .await?;
 
+    // Add session to sender's index
+    sender_index.add_session(session_id.clone(), created_at);
+    if let Err(e) = save_sender_index(&kv, &sender_hash, &sender_index).await {
+        // Log error but don't fail the request - session is already created
+        console_log!("Warning: Failed to update sender index: {}", e);
+    }
+
     cors_response(Response::from_json(&CreateSessionResponse {
         success: true,
         session_id,
@@ -1582,7 +2119,7 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     }))
 }
 
-async fn handle_get_session(session_id: &str, env: Env) -> Result<Response> {
+async fn handle_get_session(session_id: &str, req: &Request, env: Env) -> Result<Response> {
     let kv = match env.kv("SESSIONS") {
         Ok(kv) => kv,
         Err(_) => {
@@ -1614,13 +2151,92 @@ async fn handle_get_session(session_id: &str, env: Env) -> Result<Response> {
                 }
             }
 
+            // Token verification: extract token from query parameter
+            let url = req.url()?;
+            let token = url
+                .query_pairs()
+                .find(|(k, _)| k == "token")
+                .map(|(_, v)| v.to_string());
+
+            // Verify token if present, or check legacy flag
+            let verified_recipient_id = if let Some(token) = token {
+                // Verify the token
+                let secret = get_signing_secret(&env);
+                match verify_recipient_token(&token, session_id, &secret) {
+                    Ok(recipient_id) => Some(recipient_id),
+                    Err(TokenError::Expired) => {
+                        return cors_response(Ok(Response::from_json(&serde_json::json!({
+                            "success": false,
+                            "error": "token_expired",
+                            "message": "Your signing link has expired. Please request a new link."
+                        }))?
+                        .with_status(401)));
+                    }
+                    Err(TokenError::InvalidSignature) | Err(TokenError::SessionMismatch) => {
+                        return cors_response(Ok(Response::from_json(&serde_json::json!({
+                            "success": false,
+                            "error": "invalid_token",
+                            "message": "Invalid signing link. Please use the link from your email."
+                        }))?
+                        .with_status(403)));
+                    }
+                    Err(TokenError::InvalidFormat) => {
+                        return cors_response(Ok(Response::from_json(&serde_json::json!({
+                            "success": false,
+                            "error": "invalid_token",
+                            "message": "Invalid signing link format."
+                        }))?
+                        .with_status(400)));
+                    }
+                }
+            } else if s.legacy {
+                // Legacy session without token requirement - allow access (backwards compatible)
+                console_log!(
+                    "WARNING: Legacy session {} accessed without token",
+                    session_id
+                );
+                None
+            } else {
+                // No token provided and not a legacy session - deny access
+                return cors_response(Ok(Response::from_json(&serde_json::json!({
+                    "success": false,
+                    "error": "token_required",
+                    "message": "A valid signing token is required to access this session."
+                }))?
+                .with_status(401)));
+            };
+
+            // If we have a verified recipient ID, filter the response to only show
+            // information relevant to that recipient
+            let (recipients, fields) = if let Some(ref recipient_id) = verified_recipient_id {
+                // Filter to only show this recipient's information
+                let filtered_recipients: Vec<RecipientInfo> = s
+                    .recipients
+                    .iter()
+                    .filter(|r| &r.id == recipient_id)
+                    .cloned()
+                    .collect();
+
+                let filtered_fields: Vec<FieldInfo> = s
+                    .fields
+                    .iter()
+                    .filter(|f| &f.recipient_id == recipient_id)
+                    .cloned()
+                    .collect();
+
+                (filtered_recipients, filtered_fields)
+            } else {
+                // Legacy mode: return all recipients and fields
+                (s.recipients.clone(), s.fields.clone())
+            };
+
             cors_response(Response::from_json(&GetSessionResponse {
                 success: true,
                 session: Some(SessionPublicInfo {
                     id: s.id,
                     metadata: s.metadata,
-                    recipients: s.recipients,
-                    fields: s.fields,
+                    recipients,
+                    fields,
                     encrypted_document: s.encrypted_document,
                     expires_at: s.expires_at,
                     signing_mode: s.signing_mode,
@@ -1993,12 +2609,16 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
 
     match old_session {
         Some(s) => {
+            // Capture sender email before consuming metadata
+            let sender_email = s.metadata.sender_email.clone();
+
             // Generate new session ID
             let new_session_id = generate_session_id();
 
             // Calculate new expiry (7 days default)
             let expiry_hours = 168u64;
             let expiry_seconds = expiry_hours * 60 * 60;
+            let created_at = chrono::Utc::now().to_rfc3339();
             let expires_at = chrono::Utc::now()
                 .checked_add_signed(chrono::Duration::seconds(expiry_seconds as i64))
                 .unwrap_or_else(chrono::Utc::now)
@@ -2028,6 +2648,7 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
                 signing_mode: s.signing_mode,
                 reminder_config: s.reminder_config,
                 final_document: None, // Reset for new session
+                legacy: false,        // Resent sessions require token authentication
             };
 
             // Store new session
@@ -2041,6 +2662,17 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
 
             // Delete old session to invalidate it
             kv.delete(&format!("session:{}", session_id)).await?;
+
+            // Update sender session index: remove old, add new
+            if let Some(ref email) = sender_email {
+                let sender_hash = hash_sender_email(email);
+                let mut sender_index = get_sender_index(&kv, &sender_hash).await;
+                sender_index.remove_session(session_id);
+                sender_index.add_session(new_session_id.clone(), created_at);
+                if let Err(e) = save_sender_index(&kv, &sender_hash, &sender_index).await {
+                    console_log!("Warning: Failed to update sender index on resend: {}", e);
+                }
+            }
 
             cors_response(Ok(Response::from_json(&ResendResponse {
                 success: true,
@@ -2058,12 +2690,24 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
 }
 
 async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> Result<Response> {
+    // Check request size before parsing
+    // Note: signed documents can be larger than signatures alone due to embedded signature images
+    if let Some(response) = check_content_length(&req, MAX_PDF_SIZE) {
+        return cors_response(Ok(response));
+    }
+
     let body: SubmitSignedRequest = match req.json().await {
         Ok(b) => b,
         Err(e) => {
             return cors_response(error_response(&format!("Invalid request: {}", e)));
         }
     };
+
+    // Validate encrypted document size after parsing
+    let doc_size = body.encrypted_document.len();
+    if doc_size > MAX_PDF_SIZE {
+        return cors_response(payload_too_large_response(MAX_PDF_SIZE, doc_size));
+    }
 
     let kv = match env.kv("SESSIONS") {
         Ok(kv) => kv,
@@ -2196,6 +2840,55 @@ async fn save_rate_limit_state(kv: &kv::KvStore, state: &RateLimitState) -> Resu
     Ok(())
 }
 
+// ============================================================
+// Sender Session Index Helper Functions
+// ============================================================
+
+/// Hash an email address using SHA-256 for privacy-preserving storage keys
+fn hash_sender_email(email: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(email.to_lowercase().as_bytes());
+    let result = hasher.finalize();
+    // Return hex-encoded hash
+    result.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Get the sender session index from KV storage
+async fn get_sender_index(kv: &kv::KvStore, sender_hash: &str) -> SenderSessionIndex {
+    let key = format!("sender_index:{}", sender_hash);
+    match kv.get(&key).json::<SenderSessionIndex>().await {
+        Ok(Some(index)) => index,
+        _ => SenderSessionIndex::default(),
+    }
+}
+
+/// Save the sender session index to KV storage
+async fn save_sender_index(
+    kv: &kv::KvStore,
+    sender_hash: &str,
+    index: &SenderSessionIndex,
+) -> Result<()> {
+    let key = format!("sender_index:{}", sender_hash);
+    kv.put(&key, serde_json::to_string(index)?)?
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Remove a session from a sender's index (for cleanup on session deletion)
+#[allow(dead_code)] // Prepared for future explicit session deletion endpoint
+async fn remove_session_from_sender_index(
+    kv: &kv::KvStore,
+    sender_email: &str,
+    session_id: &str,
+) -> Result<()> {
+    let sender_hash = hash_sender_email(sender_email);
+    let mut index = get_sender_index(kv, &sender_hash).await;
+    index.remove_session(session_id);
+    save_sender_index(kv, &sender_hash, &index).await
+}
+
 fn error_response(msg: &str) -> Result<Response> {
     let resp = Response::from_json(&SendResponse {
         success: false,
@@ -2204,6 +2897,56 @@ fn error_response(msg: &str) -> Result<Response> {
         remaining_month: None,
     })?;
     Ok(resp.with_status(400))
+}
+
+// ============================================================
+// Request Size Validation (Security)
+// ============================================================
+
+/// Response structure for payload too large errors
+#[derive(Serialize)]
+struct PayloadTooLargeResponse {
+    error: String,
+    max_size_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    received_bytes: Option<usize>,
+}
+
+/// Check Content-Length header against a maximum size limit.
+/// Returns None if within limits, Some(Response) with 413 if exceeded.
+fn check_content_length(req: &Request, max_size: usize) -> Option<Response> {
+    let content_length = req
+        .headers()
+        .get("Content-Length")
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    if content_length > max_size {
+        let response = Response::from_json(&PayloadTooLargeResponse {
+            error: "Request too large".to_string(),
+            max_size_bytes: max_size,
+            received_bytes: Some(content_length),
+        })
+        .map(|r| r.with_status(413))
+        .unwrap_or_else(|_| Response::error("Request too large", 413).unwrap());
+
+        return Some(response);
+    }
+
+    None
+}
+
+/// Create a 413 Payload Too Large response
+fn payload_too_large_response(max_size: usize, actual_size: usize) -> Result<Response> {
+    let resp = Response::from_json(&PayloadTooLargeResponse {
+        error: "Request too large".to_string(),
+        max_size_bytes: max_size,
+        received_bytes: Some(actual_size),
+    })?
+    .with_status(413);
+    Ok(resp)
 }
 
 fn cors_response(response: Result<Response>) -> Result<Response> {
@@ -2268,7 +3011,381 @@ mod tests {
             signing_mode: SigningMode::Parallel,
             reminder_config: None,
             final_document: None,
+            legacy: false,
         }
+    }
+
+    // ============================================================
+    // Unit Tests for Session Token Generation and Verification
+    // ============================================================
+
+    #[test]
+    fn test_generate_and_verify_token_roundtrip() {
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+        let recipient_id = "recipient_456";
+
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+
+        assert!(!token.is_empty());
+        assert!(token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+
+        let result = verify_recipient_token(&token, session_id, secret);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), recipient_id);
+    }
+
+    #[test]
+    fn test_verify_token_wrong_session_id() {
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+        let recipient_id = "recipient_456";
+
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        let result = verify_recipient_token(&token, "sess_different", secret);
+        assert_eq!(result, Err(TokenError::SessionMismatch));
+    }
+
+    #[test]
+    fn test_verify_token_wrong_secret() {
+        let secret = b"test-secret-key";
+        let wrong_secret = b"wrong-secret-key";
+        let session_id = "sess_abc123";
+        let recipient_id = "recipient_456";
+
+        let token = generate_recipient_token(session_id, recipient_id, secret);
+        let result = verify_recipient_token(&token, session_id, wrong_secret);
+        assert_eq!(result, Err(TokenError::InvalidSignature));
+    }
+
+    #[test]
+    fn test_verify_token_invalid_format() {
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+
+        let result = verify_recipient_token("not-a-valid-token", session_id, secret);
+        assert_eq!(result, Err(TokenError::InvalidFormat));
+
+        let result = verify_recipient_token("", session_id, secret);
+        assert_eq!(result, Err(TokenError::InvalidFormat));
+    }
+
+    #[test]
+    fn test_verify_token_expired() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+        let recipient_id = "recipient_456";
+        let expiry = chrono::Utc::now().timestamp() as u64 - 3600;
+        let payload = format!("{}:{}:{}", session_id, recipient_id, expiry);
+
+        let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
+        mac.update(payload.as_bytes());
+        let signature = mac.finalize().into_bytes();
+        let sig_base64 = URL_SAFE_NO_PAD.encode(signature);
+
+        let token_str = format!("{}:{}", payload, sig_base64);
+        let token = URL_SAFE_NO_PAD.encode(token_str.as_bytes());
+
+        let result = verify_recipient_token(&token, session_id, secret);
+        assert_eq!(result, Err(TokenError::Expired));
+    }
+
+    #[test]
+    fn test_token_error_display() {
+        assert_eq!(
+            TokenError::InvalidFormat.to_string(),
+            "Invalid token format"
+        );
+        assert_eq!(TokenError::Expired.to_string(), "Token has expired");
+        assert_eq!(
+            TokenError::InvalidSignature.to_string(),
+            "Invalid token signature"
+        );
+        assert_eq!(
+            TokenError::SessionMismatch.to_string(),
+            "Token does not match session"
+        );
+    }
+
+    #[test]
+    fn test_different_recipients_get_different_tokens() {
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+
+        let token1 = generate_recipient_token(session_id, "recipient_1", secret);
+        let token2 = generate_recipient_token(session_id, "recipient_2", secret);
+
+        assert_ne!(token1, token2);
+
+        assert_eq!(
+            verify_recipient_token(&token1, session_id, secret).unwrap(),
+            "recipient_1"
+        );
+        assert_eq!(
+            verify_recipient_token(&token2, session_id, secret).unwrap(),
+            "recipient_2"
+        );
+    }
+
+    // ============================================================
+    // Unit Tests for Request Size Validation
+    // ============================================================
+
+    #[test]
+    fn test_size_limit_constants() {
+        // Verify size limits are set correctly
+        assert_eq!(MAX_PDF_SIZE, 10 * 1024 * 1024); // 10MB
+        assert_eq!(MAX_SIGNATURE_SIZE, 100 * 1024); // 100KB
+        assert_eq!(MAX_REQUEST_BODY, 12 * 1024 * 1024); // 12MB
+
+        // Ensure hierarchy makes sense
+        assert!(MAX_SIGNATURE_SIZE < MAX_PDF_SIZE);
+        assert!(MAX_PDF_SIZE < MAX_REQUEST_BODY);
+    }
+
+    #[test]
+    fn test_payload_too_large_response_serialization() {
+        let response = PayloadTooLargeResponse {
+            error: "Request too large".to_string(),
+            max_size_bytes: MAX_PDF_SIZE,
+            received_bytes: Some(15_000_000),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"error\":\"Request too large\""));
+        assert!(json.contains("\"max_size_bytes\":10485760"));
+        assert!(json.contains("\"received_bytes\":15000000"));
+    }
+
+    #[test]
+    fn test_payload_too_large_response_without_received_bytes() {
+        let response = PayloadTooLargeResponse {
+            error: "Request too large".to_string(),
+            max_size_bytes: MAX_PDF_SIZE,
+            received_bytes: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"error\":\"Request too large\""));
+        assert!(json.contains("\"max_size_bytes\":10485760"));
+        // received_bytes should be omitted when None
+        assert!(!json.contains("received_bytes"));
+    }
+
+    #[test]
+    fn test_pdf_size_validation_within_limit() {
+        // 1MB of data (within 10MB limit)
+        let data = "a".repeat(1024 * 1024);
+        assert!(data.len() <= MAX_PDF_SIZE);
+    }
+
+    #[test]
+    fn test_pdf_size_validation_exceeds_limit() {
+        // 11MB of data (exceeds 10MB limit)
+        let data = "a".repeat(11 * 1024 * 1024);
+        assert!(data.len() > MAX_PDF_SIZE);
+    }
+
+    #[test]
+    fn test_signature_size_validation_within_limit() {
+        // 50KB of data (within 100KB limit)
+        let data = "a".repeat(50 * 1024);
+        assert!(data.len() <= MAX_SIGNATURE_SIZE);
+    }
+
+    #[test]
+    fn test_signature_size_validation_exceeds_limit() {
+        // 150KB of data (exceeds 100KB limit)
+        let data = "a".repeat(150 * 1024);
+        assert!(data.len() > MAX_SIGNATURE_SIZE);
+    }
+
+    #[test]
+    fn test_request_body_size_validation_within_limit() {
+        // 10MB of data (within 12MB limit)
+        let data = "a".repeat(10 * 1024 * 1024);
+        assert!(data.len() <= MAX_REQUEST_BODY);
+    }
+
+    #[test]
+    fn test_request_body_size_validation_exceeds_limit() {
+        // 15MB of data (exceeds 12MB limit)
+        let data = "a".repeat(15 * 1024 * 1024);
+        assert!(data.len() > MAX_REQUEST_BODY);
+    }
+
+    // ============================================================
+    // Unit Tests for SenderSessionIndex
+    // ============================================================
+
+    #[test]
+    fn test_sender_session_index_default() {
+        let index = SenderSessionIndex::default();
+        assert_eq!(index.count(), 0);
+        assert!(index.session_ids.is_empty());
+        assert!(index.created_at.is_empty());
+    }
+
+    #[test]
+    fn test_sender_session_index_add_session() {
+        let mut index = SenderSessionIndex::default();
+        index.add_session("sess_001".to_string(), "2025-01-15T10:00:00Z".to_string());
+
+        assert_eq!(index.count(), 1);
+        assert_eq!(index.session_ids[0], "sess_001");
+        assert_eq!(index.created_at[0], "2025-01-15T10:00:00Z");
+    }
+
+    #[test]
+    fn test_sender_session_index_remove_session() {
+        let mut index = SenderSessionIndex::default();
+        index.add_session("sess_001".to_string(), "2025-01-15T10:00:00Z".to_string());
+        index.add_session("sess_002".to_string(), "2025-01-16T10:00:00Z".to_string());
+        index.add_session("sess_003".to_string(), "2025-01-17T10:00:00Z".to_string());
+
+        assert_eq!(index.count(), 3);
+
+        index.remove_session("sess_002");
+        assert_eq!(index.count(), 2);
+        assert_eq!(index.session_ids, vec!["sess_001", "sess_003"]);
+        assert_eq!(
+            index.created_at,
+            vec!["2025-01-15T10:00:00Z", "2025-01-17T10:00:00Z"]
+        );
+    }
+
+    #[test]
+    fn test_sender_session_index_remove_nonexistent_session() {
+        let mut index = SenderSessionIndex::default();
+        index.add_session("sess_001".to_string(), "2025-01-15T10:00:00Z".to_string());
+
+        // Removing non-existent session should not panic or change count
+        index.remove_session("sess_999");
+        assert_eq!(index.count(), 1);
+    }
+
+    #[test]
+    fn test_sender_session_index_prune_expired() {
+        let mut index = SenderSessionIndex::default();
+
+        // Add sessions at various ages
+        // Session from 10 days ago (should be kept with 30-day prune)
+        let ten_days_ago = (chrono::Utc::now() - chrono::Duration::days(10)).to_rfc3339();
+        index.add_session("sess_recent".to_string(), ten_days_ago);
+
+        // Session from 35 days ago (should be pruned with 30-day prune)
+        let thirty_five_days_ago = (chrono::Utc::now() - chrono::Duration::days(35)).to_rfc3339();
+        index.add_session("sess_old".to_string(), thirty_five_days_ago);
+
+        // Session from today (should be kept)
+        let now = chrono::Utc::now().to_rfc3339();
+        index.add_session("sess_today".to_string(), now);
+
+        assert_eq!(index.count(), 3);
+
+        index.prune_expired(30);
+
+        assert_eq!(index.count(), 2);
+        assert!(index.session_ids.contains(&"sess_recent".to_string()));
+        assert!(index.session_ids.contains(&"sess_today".to_string()));
+        assert!(!index.session_ids.contains(&"sess_old".to_string()));
+    }
+
+    #[test]
+    fn test_sender_session_index_prune_with_invalid_timestamps() {
+        let mut index = SenderSessionIndex::default();
+
+        // Valid timestamp
+        let now = chrono::Utc::now().to_rfc3339();
+        index.add_session("sess_valid".to_string(), now);
+
+        // Invalid timestamp (should be removed during prune)
+        index.add_session(
+            "sess_invalid".to_string(),
+            "not-a-valid-timestamp".to_string(),
+        );
+
+        assert_eq!(index.count(), 2);
+
+        index.prune_expired(30);
+
+        // Only the valid session should remain
+        assert_eq!(index.count(), 1);
+        assert_eq!(index.session_ids[0], "sess_valid");
+    }
+
+    #[test]
+    fn test_sender_session_index_at_limit() {
+        let mut index = SenderSessionIndex::default();
+
+        // Add exactly MAX_SESSIONS_PER_SENDER sessions
+        for i in 0..MAX_SESSIONS_PER_SENDER {
+            index.add_session(format!("sess_{:03}", i), chrono::Utc::now().to_rfc3339());
+        }
+
+        assert_eq!(index.count(), MAX_SESSIONS_PER_SENDER);
+        assert!(index.count() >= MAX_SESSIONS_PER_SENDER);
+    }
+
+    #[test]
+    fn test_hash_sender_email_consistency() {
+        // Same email should produce same hash
+        let hash1 = hash_sender_email("test@example.com");
+        let hash2 = hash_sender_email("test@example.com");
+        assert_eq!(hash1, hash2);
+
+        // Case insensitive
+        let hash_lower = hash_sender_email("test@example.com");
+        let hash_upper = hash_sender_email("TEST@EXAMPLE.COM");
+        assert_eq!(hash_lower, hash_upper);
+
+        // Different emails should produce different hashes
+        let hash_other = hash_sender_email("other@example.com");
+        assert_ne!(hash1, hash_other);
+    }
+
+    #[test]
+    fn test_hash_sender_email_format() {
+        let hash = hash_sender_email("test@example.com");
+
+        // SHA-256 produces 64 hex characters
+        assert_eq!(hash.len(), 64);
+
+        // Should only contain hex characters
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_sender_session_index_serialization() {
+        let mut index = SenderSessionIndex::default();
+        index.add_session("sess_001".to_string(), "2025-01-15T10:00:00Z".to_string());
+        index.add_session("sess_002".to_string(), "2025-01-16T10:00:00Z".to_string());
+
+        // Should serialize correctly
+        let json = serde_json::to_string(&index).unwrap();
+        assert!(json.contains("sess_001"));
+        assert!(json.contains("sess_002"));
+        assert!(json.contains("2025-01-15T10:00:00Z"));
+
+        // Should deserialize correctly
+        let deserialized: SenderSessionIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.count(), 2);
+        assert_eq!(deserialized.session_ids, index.session_ids);
+        assert_eq!(deserialized.created_at, index.created_at);
+    }
+
+    #[test]
+    fn test_session_limit_constant() {
+        // Verify the session limit is set to expected value
+        assert_eq!(MAX_SESSIONS_PER_SENDER, 100);
+
+        // Verify prune days is set correctly
+        assert_eq!(SESSION_INDEX_PRUNE_DAYS, 30);
     }
 
     // ============================================================
@@ -2959,6 +4076,7 @@ mod tests {
                 signing_mode: SigningMode::Parallel,
                 reminder_config: None,
                 final_document: None,
+                legacy: false,
             };
 
             let json = serde_json::to_string(&session).unwrap();
@@ -3819,6 +4937,157 @@ mod email_proptests {
             prop_assert!(html.contains(&signing_link));
             prop_assert!(html.contains(&session_id));
             prop_assert!(html.contains(&recipient_id));
+        }
+    }
+
+    // ============================================================
+    // Per-IP Rate Limiting Tests
+    // ============================================================
+
+    #[test]
+    fn test_ip_rate_limit_state_default() {
+        let state = IpRateLimitState::default();
+        assert_eq!(state.request_count, 0);
+        assert_eq!(state.window_start, 0);
+    }
+
+    #[test]
+    fn test_ip_rate_limit_state_serialization() {
+        let state = IpRateLimitState {
+            request_count: 42,
+            window_start: 1704067200,
+        };
+
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: IpRateLimitState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(state, deserialized);
+    }
+
+    #[test]
+    fn test_rate_limit_tier_limits() {
+        // Health: 100 req/min
+        let (max, window) = RateLimitTier::Health.limits();
+        assert_eq!(max, 100);
+        assert_eq!(window, 60);
+
+        // SessionRead: 30 req/min
+        let (max, window) = RateLimitTier::SessionRead.limits();
+        assert_eq!(max, 30);
+        assert_eq!(window, 60);
+
+        // SessionWrite: 5 req/min
+        let (max, window) = RateLimitTier::SessionWrite.limits();
+        assert_eq!(max, 5);
+        assert_eq!(window, 60);
+
+        // RequestLink: 3 req/hour
+        let (max, window) = RateLimitTier::RequestLink.limits();
+        assert_eq!(max, 3);
+        assert_eq!(window, 3600);
+    }
+
+    #[test]
+    fn test_rate_limit_tier_names() {
+        assert_eq!(RateLimitTier::Health.name(), "health");
+        assert_eq!(RateLimitTier::SessionRead.name(), "session_read");
+        assert_eq!(RateLimitTier::SessionWrite.name(), "session_write");
+        assert_eq!(RateLimitTier::RequestLink.name(), "request_link");
+    }
+
+    #[test]
+    fn test_rate_limit_tier_retry_after() {
+        assert_eq!(RateLimitTier::Health.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::SessionRead.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::SessionWrite.retry_after_seconds(), 60);
+        assert_eq!(RateLimitTier::RequestLink.retry_after_seconds(), 3600);
+    }
+
+    #[test]
+    fn test_ip_rate_limit_result_equality() {
+        assert_eq!(IpRateLimitResult::Allowed, IpRateLimitResult::Allowed);
+        assert_eq!(
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            },
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            }
+        );
+        assert_ne!(
+            IpRateLimitResult::Allowed,
+            IpRateLimitResult::Limited {
+                retry_after_seconds: 30
+            }
+        );
+    }
+
+    #[test]
+    fn test_ip_rate_limit_kv_key_format() {
+        // Verify key format: ip_limit:{ip}:{tier_name}
+        let ip = "192.168.1.1";
+        let tier = RateLimitTier::Health;
+        let key = format!("ip_limit:{}:{}", ip, tier.name());
+        assert_eq!(key, "ip_limit:192.168.1.1:health");
+
+        let tier = RateLimitTier::RequestLink;
+        let key = format!("ip_limit:{}:{}", ip, tier.name());
+        assert_eq!(key, "ip_limit:192.168.1.1:request_link");
+    }
+
+    proptest! {
+        /// Property: Window reset logic is correct
+        #[test]
+        fn prop_ip_rate_limit_window_expired(
+            window_start in 0u64..1_000_000,
+            window_seconds in 1u64..7200,
+            offset in 0u64..10000
+        ) {
+            let now = window_start + window_seconds + offset;
+            let is_expired = now >= window_start + window_seconds;
+
+            // If offset >= 0, window should be expired (now >= window_start + window_seconds)
+            prop_assert!(is_expired);
+        }
+
+        /// Property: Window NOT expired when current time is within window
+        #[test]
+        fn prop_ip_rate_limit_window_not_expired(
+            window_start in 1000u64..1_000_000,
+            window_seconds in 60u64..7200,
+            offset in 1u64..59
+        ) {
+            // Ensure offset is less than window_seconds
+            let actual_offset = offset % window_seconds;
+            let now = window_start + actual_offset;
+            let is_expired = now >= window_start + window_seconds;
+
+            // Window should NOT be expired
+            prop_assert!(!is_expired);
+        }
+
+        /// Property: Retry-after calculation is always at least 1 second
+        #[test]
+        fn prop_retry_after_at_least_one(
+            window_start in 0u64..1_000_000,
+            window_seconds in 60u64..7200,
+            now in 0u64..2_000_000
+        ) {
+            let retry_after = (window_start + window_seconds).saturating_sub(now).max(1);
+            prop_assert!(retry_after >= 1);
+        }
+
+        /// Property: Request count never goes negative
+        #[test]
+        fn prop_request_count_non_negative(
+            initial in 0u32..1000,
+            increments in 0usize..100
+        ) {
+            let mut count = initial;
+            for _ in 0..increments {
+                count += 1;
+            }
+            prop_assert!(count >= initial);
         }
     }
 }

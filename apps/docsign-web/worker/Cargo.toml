@@ -15,5 +15,9 @@ base64 = "0.21"
 # Cloudflare Workers (updated from 0.3 to 0.7)
 worker = "0.7"
 
+# Cryptographic primitives for session token signing (HMAC-SHA256)
+hmac = "0.12"
+sha2 = "0.10"
+
 [dev-dependencies]
 proptest = { workspace = true }
