@@ -13,68 +13,25 @@ workers_dev = true
 command = "cargo install -q worker-build && worker-build --release"
 
 # KV Namespace bindings
-# Create these in Cloudflare dashboard first, then add IDs:
-# wrangler kv:namespace create "SESSIONS"
-# wrangler kv:namespace create "RATE_LIMITS"
-# wrangler kv:namespace create "VERIFICATIONS"
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = ""  # Add after creating: wrangler kv:namespace create "SESSIONS"
+id = "0bf12b5d4fca450b8c4fab1d3ef58a96"
 
 [[kv_namespaces]]
 binding = "RATE_LIMITS"
-id = ""  # Add after creating: wrangler kv:namespace create "RATE_LIMITS"
+id = "9384f737469a494db2f447c5c57743f4"
 
 [[kv_namespaces]]
 binding = "VERIFICATIONS"
-id = ""  # Add after creating: wrangler kv:namespace create "VERIFICATIONS"
+id = "1929d880b7944f239a91032379a39eec"
 
 # Environment variables (non-secret)
 [vars]
-DAILY_LIMIT = "100"
-MONTHLY_LIMIT = "3000"
+ALLOW_DUPLICATE_EMAILS = "true"  # For testing - allows same email for multiple signers
 
 # Secrets (set via wrangler secret put):
 # wrangler secret put DOCSIGN_API_KEY
-# Note: Email sending now uses email-proxy Lambda (not Resend)
-
-# =============================================================
-# Development environment
-# =============================================================
-[env.dev]
-workers_dev = true
-vars = { DAILY_LIMIT = "10", MONTHLY_LIMIT = "100" }
-
-[[env.dev.kv_namespaces]]
-binding = "SESSIONS"
-id = ""  # Add dev namespace ID
-
-[[env.dev.kv_namespaces]]
-binding = "RATE_LIMITS"
-id = ""  # Add dev namespace ID
-
-[[env.dev.kv_namespaces]]
-binding = "VERIFICATIONS"
-id = ""  # Add dev namespace ID
-
-# =============================================================
-# Staging environment
-# =============================================================
-[env.staging]
-workers_dev = true
-vars = { DAILY_LIMIT = "50", MONTHLY_LIMIT = "500" }
-
-[[env.staging.kv_namespaces]]
-binding = "SESSIONS"
-id = ""  # Add staging namespace ID
-
-[[env.staging.kv_namespaces]]
-binding = "RATE_LIMITS"
-id = ""  # Add staging namespace ID
-
-[[env.staging.kv_namespaces]]
-binding = "VERIFICATIONS"
-id = ""  # Add staging namespace ID
+# wrangler secret put TOKEN_SECRET
 
 # =============================================================
 # Production environment
@@ -84,16 +41,16 @@ workers_dev = false
 routes = [
   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
 ]
-vars = { DAILY_LIMIT = "100", MONTHLY_LIMIT = "3000" }
+# Production: ALLOW_DUPLICATE_EMAILS not set = defaults to false (prevents same email for multiple signers)
 
 [[env.production.kv_namespaces]]
 binding = "SESSIONS"
-id = ""  # Add production namespace ID
+id = "0bf12b5d4fca450b8c4fab1d3ef58a96"
 
 [[env.production.kv_namespaces]]
 binding = "RATE_LIMITS"
-id = ""  # Add production namespace ID
+id = "9384f737469a494db2f447c5c57743f4"
 
 [[env.production.kv_namespaces]]
 binding = "VERIFICATIONS"
-id = ""  # Add production namespace ID
+id = "1929d880b7944f239a91032379a39eec"

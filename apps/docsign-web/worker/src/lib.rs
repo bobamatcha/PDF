@@ -41,10 +41,6 @@ struct SendRequest {
 struct SendResponse {
     success: bool,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_today: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_month: Option<u32>,
 }
 
 /// Health check response for monitoring
@@ -360,10 +356,6 @@ struct InvitationInfo {
 struct InviteResponse {
     success: bool,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_today: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    remaining_month: Option<u32>,
 }
 
 /// Request to request a new signing link (UX-004)
@@ -399,38 +391,6 @@ struct ExpiredSessionResponse {
     document_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
-}
-
-/// Rate limit state stored in KV
-#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
-struct RateLimitState {
-    daily_count: u32,
-    daily_date: String, // YYYY-MM-DD
-    monthly_count: u32,
-    monthly_month: String, // YYYY-MM
-    #[serde(default)]
-    daily_warning_sent: bool,
-    #[serde(default)]
-    monthly_warning_sent: bool,
-}
-
-// Warning thresholds - send admin email when these are hit
-const DAILY_WARNING_THRESHOLD: u32 = 90;
-const MONTHLY_WARNING_THRESHOLD: u32 = 2950;
-const ADMIN_EMAIL: &str = "bobamatchasolutions@gmail.com";
-
-/// Result of checking rate limits
-#[derive(Debug, Clone, PartialEq)]
-enum RateLimitCheck {
-    /// Request allowed, optionally with warnings to send
-    Allowed {
-        send_daily_warning: bool,
-        send_monthly_warning: bool,
-    },
-    /// Daily limit exceeded
-    DailyLimitExceeded { limit: u32, remaining_month: u32 },
-    /// Monthly limit exceeded
-    MonthlyLimitExceeded { limit: u32 },
 }
 
 // ============================================================
@@ -615,90 +575,6 @@ async fn apply_ip_rate_limit(
     }
 }
 
-impl RateLimitState {
-    /// Reset counters if date/month has changed, returns whether resets occurred
-    fn maybe_reset(&mut self, today: &str, this_month: &str) -> (bool, bool) {
-        let daily_reset = if self.daily_date != today {
-            self.daily_count = 0;
-            self.daily_date = today.to_string();
-            self.daily_warning_sent = false;
-            true
-        } else {
-            false
-        };
-
-        let monthly_reset = if self.monthly_month != this_month {
-            self.monthly_count = 0;
-            self.monthly_month = this_month.to_string();
-            self.monthly_warning_sent = false;
-            true
-        } else {
-            false
-        };
-
-        (daily_reset, monthly_reset)
-    }
-
-    /// Check if request is allowed and increment counters if so
-    fn check_and_increment(
-        &mut self,
-        daily_limit: u32,
-        monthly_limit: u32,
-        daily_warning_threshold: u32,
-        monthly_warning_threshold: u32,
-    ) -> RateLimitCheck {
-        // Check limits before incrementing
-        if self.daily_count >= daily_limit {
-            return RateLimitCheck::DailyLimitExceeded {
-                limit: daily_limit,
-                remaining_month: monthly_limit.saturating_sub(self.monthly_count),
-            };
-        }
-
-        if self.monthly_count >= monthly_limit {
-            return RateLimitCheck::MonthlyLimitExceeded {
-                limit: monthly_limit,
-            };
-        }
-
-        // Increment counts
-        self.daily_count += 1;
-        self.monthly_count += 1;
-
-        // Check if we should send warnings (only once per period)
-        let send_daily_warning =
-            if self.daily_count >= daily_warning_threshold && !self.daily_warning_sent {
-                self.daily_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        let send_monthly_warning =
-            if self.monthly_count >= monthly_warning_threshold && !self.monthly_warning_sent {
-                self.monthly_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        RateLimitCheck::Allowed {
-            send_daily_warning,
-            send_monthly_warning,
-        }
-    }
-
-    /// Get remaining counts for response
-    fn remaining(&self, daily_limit: u32, monthly_limit: u32) -> (u32, u32) {
-        (
-            daily_limit.saturating_sub(self.daily_count),
-            monthly_limit.saturating_sub(self.monthly_count),
-        )
-    }
-}
-
-// Email sending disabled - will use email-proxy Lambda
-// const RESEND_API_URL: &str = "https://api.resend.com/emails";
 const SESSION_TTL_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
 const DOWNLOAD_LINK_EXPIRY_DAYS: u32 = 30;
 
@@ -1492,137 +1368,8 @@ async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
         return cors_response(payload_too_large_response(MAX_PDF_SIZE, pdf_size));
     }
 
-    // Get config
-    let daily_limit: u32 = env
-        .var("DAILY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(100))
-        .unwrap_or(100);
-    let monthly_limit: u32 = env
-        .var("MONTHLY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(3000))
-        .unwrap_or(3000);
-
-    // Check rate limits
-    let kv = match env.kv("RATE_LIMITS") {
-        Ok(kv) => kv,
-        Err(_) => {
-            console_log!("Warning: RATE_LIMITS KV not configured, rate limiting disabled");
-            return send_email(&env, &body).await;
-        }
-    };
-
-    let mut state = get_rate_limit_state(&kv).await;
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let this_month = Utc::now().format("%Y-%m").to_string();
-
-    // Reset counters if day/month changed
-    state.maybe_reset(&today, &this_month);
-
-    // Check rate limits before sending
-    let check_result = state.check_and_increment(
-        daily_limit,
-        monthly_limit,
-        DAILY_WARNING_THRESHOLD,
-        MONTHLY_WARNING_THRESHOLD,
-    );
-
-    match check_result {
-        RateLimitCheck::DailyLimitExceeded {
-            limit,
-            remaining_month,
-        } => {
-            let resp = Response::from_json(&SendResponse {
-                success: false,
-                message: format!(
-                    "Daily limit reached ({}/{}). Resets at midnight UTC.",
-                    limit, limit
-                ),
-                remaining_today: Some(0),
-                remaining_month: Some(remaining_month),
-            })?
-            .with_status(429);
-            cors_response(Ok(resp))
-        }
-        RateLimitCheck::MonthlyLimitExceeded { limit } => {
-            let resp = Response::from_json(&SendResponse {
-                success: false,
-                message: format!(
-                    "Monthly limit reached ({}/{}). Resets on the 1st.",
-                    limit, limit
-                ),
-                remaining_today: Some(0),
-                remaining_month: Some(0),
-            })?
-            .with_status(429);
-            cors_response(Ok(resp))
-        }
-        RateLimitCheck::Allowed {
-            send_daily_warning,
-            send_monthly_warning,
-        } => {
-            // Send the actual email
-            let result = send_email(&env, &body).await;
-
-            if result
-                .as_ref()
-                .map(|r| r.status_code() == 200)
-                .unwrap_or(false)
-            {
-                // Send admin warnings if thresholds crossed
-                if send_daily_warning {
-                    let (remaining, _) = state.remaining(daily_limit, monthly_limit);
-                    let _ = send_admin_warning(
-                        &env,
-                        &format!(
-                            "Daily email limit warning: {}/{} emails sent today ({}). Only {} remaining.",
-                            state.daily_count, daily_limit, state.daily_date, remaining
-                        ),
-                    ).await;
-                }
-
-                if send_monthly_warning {
-                    let (_, remaining) = state.remaining(daily_limit, monthly_limit);
-                    let _ = send_admin_warning(
-                        &env,
-                        &format!(
-                            "Monthly email limit warning: {}/{} emails sent this month ({}). Only {} remaining.",
-                            state.monthly_count, monthly_limit, state.monthly_month, remaining
-                        ),
-                    ).await;
-                }
-
-                let _ = save_rate_limit_state(&kv, &state).await;
-            } else {
-                // Email failed - decrement the counts we optimistically incremented
-                state.daily_count = state.daily_count.saturating_sub(1);
-                state.monthly_count = state.monthly_count.saturating_sub(1);
-            }
-
-            handle_email_result(result, &state, daily_limit, monthly_limit)
-        }
-    }
-}
-
-/// Helper to format the email send result as a response
-fn handle_email_result(
-    result: Result<Response>,
-    state: &RateLimitState,
-    daily_limit: u32,
-    monthly_limit: u32,
-) -> Result<Response> {
-    match result {
-        Ok(response) if response.status_code() == 200 => {
-            let (remaining_today, remaining_month) = state.remaining(daily_limit, monthly_limit);
-            cors_response(Response::from_json(&SendResponse {
-                success: true,
-                message: "Email sent".to_string(),
-                remaining_today: Some(remaining_today),
-                remaining_month: Some(remaining_month),
-            }))
-        }
-        Ok(response) => cors_response(Ok(response)),
-        Err(e) => Err(e),
-    }
+    // Send the email via email-proxy Lambda
+    send_email(&env, &body).await
 }
 
 async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
@@ -1663,8 +1410,6 @@ async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
                 cors_response(Response::from_json(&SendResponse {
                     success: true,
                     message: "Email sent".to_string(),
-                    remaining_today: None,
-                    remaining_month: None,
                 }))
             } else {
                 let status = response.status_code();
@@ -1700,129 +1445,8 @@ async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
         return cors_response(error_response("No invitations to send"));
     }
 
-    // Get config
-    let daily_limit: u32 = env
-        .var("DAILY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(100))
-        .unwrap_or(100);
-    let monthly_limit: u32 = env
-        .var("MONTHLY_LIMIT")
-        .map(|v| v.to_string().parse().unwrap_or(3000))
-        .unwrap_or(3000);
-
-    // Check rate limits
-    let kv = match env.kv("RATE_LIMITS") {
-        Ok(kv) => kv,
-        Err(_) => {
-            console_log!("Warning: RATE_LIMITS KV not configured, rate limiting disabled");
-            return send_invitations(&env, &body).await;
-        }
-    };
-
-    let mut state = get_rate_limit_state(&kv).await;
-    let today = Utc::now().format("%Y-%m-%d").to_string();
-    let this_month = Utc::now().format("%Y-%m").to_string();
-
-    // Reset counters if day/month changed
-    state.maybe_reset(&today, &this_month);
-
-    // Check if we have enough capacity for all invitations
-    let num_emails = body.invitations.len() as u32;
-    if state.daily_count + num_emails > daily_limit {
-        let resp = Response::from_json(&InviteResponse {
-            success: false,
-            message: format!(
-                "Daily limit would be exceeded. Requested: {}, Remaining: {}",
-                num_emails,
-                daily_limit.saturating_sub(state.daily_count)
-            ),
-            remaining_today: Some(daily_limit.saturating_sub(state.daily_count)),
-            remaining_month: Some(monthly_limit.saturating_sub(state.monthly_count)),
-        })?
-        .with_status(429);
-        return cors_response(Ok(resp));
-    }
-
-    if state.monthly_count + num_emails > monthly_limit {
-        let resp = Response::from_json(&InviteResponse {
-            success: false,
-            message: format!(
-                "Monthly limit would be exceeded. Requested: {}, Remaining: {}",
-                num_emails,
-                monthly_limit.saturating_sub(state.monthly_count)
-            ),
-            remaining_today: Some(daily_limit.saturating_sub(state.daily_count)),
-            remaining_month: Some(monthly_limit.saturating_sub(state.monthly_count)),
-        })?
-        .with_status(429);
-        return cors_response(Ok(resp));
-    }
-
-    // Send the invitations
-    let result = send_invitations(&env, &body).await;
-
-    if result
-        .as_ref()
-        .map(|r| r.status_code() == 200)
-        .unwrap_or(false)
-    {
-        // Increment counters
-        state.daily_count += num_emails;
-        state.monthly_count += num_emails;
-
-        // Check if we should send warnings
-        let send_daily_warning =
-            if state.daily_count >= DAILY_WARNING_THRESHOLD && !state.daily_warning_sent {
-                state.daily_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        let send_monthly_warning =
-            if state.monthly_count >= MONTHLY_WARNING_THRESHOLD && !state.monthly_warning_sent {
-                state.monthly_warning_sent = true;
-                true
-            } else {
-                false
-            };
-
-        // Send admin warnings if thresholds crossed
-        if send_daily_warning {
-            let remaining = daily_limit.saturating_sub(state.daily_count);
-            let _ = send_admin_warning(
-                &env,
-                &format!(
-                    "Daily email limit warning: {}/{} emails sent today ({}). Only {} remaining.",
-                    state.daily_count, daily_limit, state.daily_date, remaining
-                ),
-            )
-            .await;
-        }
-
-        if send_monthly_warning {
-            let remaining = monthly_limit.saturating_sub(state.monthly_count);
-            let _ = send_admin_warning(
-                &env,
-                &format!(
-                    "Monthly email limit warning: {}/{} emails sent this month ({}). Only {} remaining.",
-                    state.monthly_count, monthly_limit, state.monthly_month, remaining
-                ),
-            ).await;
-        }
-
-        let _ = save_rate_limit_state(&kv, &state).await;
-
-        let (remaining_today, remaining_month) = state.remaining(daily_limit, monthly_limit);
-        cors_response(Response::from_json(&InviteResponse {
-            success: true,
-            message: format!("Invitations sent to {} recipient(s)", num_emails),
-            remaining_today: Some(remaining_today),
-            remaining_month: Some(remaining_month),
-        }))
-    } else {
-        result
-    }
+    // Send the invitations via email-proxy Lambda
+    send_invitations(&env, &body).await
 }
 
 async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
@@ -1945,8 +1569,6 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
         cors_response(Response::from_json(&InviteResponse {
             success: true,
             message: format!("All {} invitations sent successfully", success_count),
-            remaining_today: None,
-            remaining_month: None,
         }))
     } else if success_count > 0 {
         cors_response(Response::from_json(&InviteResponse {
@@ -1957,71 +1579,12 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
                 body.invitations.len(),
                 errors.join(", ")
             ),
-            remaining_today: None,
-            remaining_month: None,
         }))
     } else {
         cors_response(error_response(&format!(
             "Failed to send invitations. Errors: {}",
             errors.join(", ")
         )))
-    }
-}
-
-/// Send a warning email to the admin when approaching rate limits
-async fn send_admin_warning(_env: &Env, message: &str) {
-    let email_request = serde_json::json!({
-        "from": "GetSignatures Alerts <noreply@getsignatures.org>",
-        "to": [ADMIN_EMAIL],
-        "subject": "GetSignatures Rate Limit Warning",
-        "html": format!(
-            "<p>{}</p><p>This is an automated alert from your GetSignatures deployment.</p>",
-            message
-        )
-    });
-
-    let headers = Headers::new();
-    if headers.set("Content-Type", "application/json").is_err() {
-        console_log!("Failed to set headers for admin warning");
-        return;
-    }
-
-    let body_str = match serde_json::to_string(&email_request) {
-        Ok(s) => s,
-        Err(_) => {
-            console_log!("Failed to serialize admin warning email");
-            return;
-        }
-    };
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(body_str.into()));
-
-    let url = format!("{}/send", EMAIL_PROXY_URL);
-    let request = match Request::new_with_init(&url, &init) {
-        Ok(r) => r,
-        Err(_) => {
-            console_log!("Failed to create admin warning request");
-            return;
-        }
-    };
-
-    match Fetch::Request(request).send().await {
-        Ok(response) => {
-            if response.status_code() == 200 {
-                console_log!("Admin warning email sent: {}", message);
-            } else {
-                console_log!(
-                    "Failed to send admin warning: HTTP {}",
-                    response.status_code()
-                );
-            }
-        }
-        Err(e) => {
-            console_log!("Failed to send admin warning: {}", e);
-        }
     }
 }
 
@@ -2042,6 +1605,28 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     let doc_size = body.encrypted_document.len();
     if doc_size > MAX_PDF_SIZE {
         return cors_response(payload_too_large_response(MAX_PDF_SIZE, doc_size));
+    }
+
+    // Check for duplicate recipient emails (production bug prevention)
+    // Bypass with ALLOW_DUPLICATE_EMAILS=true for testing
+    let allow_duplicates = env
+        .var("ALLOW_DUPLICATE_EMAILS")
+        .map(|v| v.to_string() == "true")
+        .unwrap_or(false);
+
+    if !allow_duplicates {
+        let mut seen_emails = std::collections::HashSet::new();
+        for recipient in &body.recipients {
+            let email_lower = recipient.email.to_lowercase();
+            if !seen_emails.insert(email_lower.clone()) {
+                return cors_response(Ok(Response::from_json(&serde_json::json!({
+                    "success": false,
+                    "message": format!("Duplicate recipient email: {}", recipient.email),
+                    "error_code": "DUPLICATE_RECIPIENT_EMAIL"
+                }))?
+                .with_status(400)));
+            }
+        }
     }
 
     let kv = match env.kv("SESSIONS") {
@@ -2826,20 +2411,6 @@ fn generate_session_id() -> String {
     format!("{:x}{:08x}", timestamp, random as u32)
 }
 
-async fn get_rate_limit_state(kv: &kv::KvStore) -> RateLimitState {
-    match kv.get("rate_state").json::<RateLimitState>().await {
-        Ok(Some(state)) => state,
-        _ => RateLimitState::default(),
-    }
-}
-
-async fn save_rate_limit_state(kv: &kv::KvStore, state: &RateLimitState) -> Result<()> {
-    kv.put("rate_state", serde_json::to_string(state)?)?
-        .execute()
-        .await?;
-    Ok(())
-}
-
 // ============================================================
 // Sender Session Index Helper Functions
 // ============================================================
@@ -2893,8 +2464,6 @@ fn error_response(msg: &str) -> Result<Response> {
     let resp = Response::from_json(&SendResponse {
         success: false,
         message: msg.to_string(),
-        remaining_today: None,
-        remaining_month: None,
     })?;
     Ok(resp.with_status(400))
 }
@@ -3389,546 +2958,10 @@ mod tests {
     }
 
     // ============================================================
-    // Unit Tests for RateLimitState
-    // ============================================================
-
-    #[test]
-    fn test_default_state() {
-        let state = RateLimitState::default();
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert_eq!(state.daily_date, "");
-        assert_eq!(state.monthly_month, "");
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
-    }
-
-    #[test]
-    fn test_maybe_reset_same_day() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 1000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-01-15", "2025-01");
-
-        assert!(!daily_reset);
-        assert!(!monthly_reset);
-        assert_eq!(state.daily_count, 50); // unchanged
-        assert_eq!(state.monthly_count, 1000); // unchanged
-        assert!(state.daily_warning_sent); // unchanged
-    }
-
-    #[test]
-    fn test_maybe_reset_new_day_same_month() {
-        let mut state = RateLimitState {
-            daily_count: 95,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 1000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-01-16", "2025-01");
-
-        assert!(daily_reset);
-        assert!(!monthly_reset);
-        assert_eq!(state.daily_count, 0); // reset
-        assert_eq!(state.daily_date, "2025-01-16");
-        assert!(!state.daily_warning_sent); // reset
-        assert_eq!(state.monthly_count, 1000); // unchanged
-    }
-
-    #[test]
-    fn test_maybe_reset_new_month() {
-        let mut state = RateLimitState {
-            daily_count: 95,
-            daily_date: "2025-01-31".to_string(),
-            monthly_count: 2900,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: true,
-        };
-
-        let (daily_reset, monthly_reset) = state.maybe_reset("2025-02-01", "2025-02");
-
-        assert!(daily_reset);
-        assert!(monthly_reset);
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
-    }
-
-    #[test]
-    fn test_check_and_increment_allowed_no_warnings() {
-        let mut state = RateLimitState {
-            daily_count: 10,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 100,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: false,
-            }
-        );
-        assert_eq!(state.daily_count, 11);
-        assert_eq!(state.monthly_count, 101);
-    }
-
-    #[test]
-    fn test_check_and_increment_triggers_daily_warning() {
-        let mut state = RateLimitState {
-            daily_count: 89, // Will become 90 after increment
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 100,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: false,
-            }
-        );
-        assert_eq!(state.daily_count, 90);
-        assert!(state.daily_warning_sent);
-    }
-
-    #[test]
-    fn test_check_and_increment_triggers_monthly_warning() {
-        let mut state = RateLimitState {
-            daily_count: 10,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2949, // Will become 2950 after increment
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: true,
-            }
-        );
-        assert_eq!(state.monthly_count, 2950);
-        assert!(state.monthly_warning_sent);
-    }
-
-    #[test]
-    fn test_check_and_increment_both_warnings() {
-        let mut state = RateLimitState {
-            daily_count: 89,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2949,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: true,
-            }
-        );
-    }
-
-    #[test]
-    fn test_check_and_increment_warning_only_once() {
-        let mut state = RateLimitState {
-            daily_count: 90,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2950,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,   // Already sent
-            monthly_warning_sent: true, // Already sent
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        // Should NOT trigger warnings again
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: false,
-                send_monthly_warning: false,
-            }
-        );
-    }
-
-    #[test]
-    fn test_check_and_increment_daily_limit_exceeded() {
-        let mut state = RateLimitState {
-            daily_count: 100, // At limit
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 500,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(
-            result,
-            RateLimitCheck::DailyLimitExceeded {
-                limit: 100,
-                remaining_month: 2500,
-            }
-        );
-        // Count should NOT have incremented
-        assert_eq!(state.daily_count, 100);
-    }
-
-    #[test]
-    fn test_check_and_increment_monthly_limit_exceeded() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 3000, // At limit
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: true,
-        };
-
-        let result = state.check_and_increment(100, 3000, 90, 2950);
-
-        assert_eq!(result, RateLimitCheck::MonthlyLimitExceeded { limit: 3000 });
-        // Count should NOT have incremented
-        assert_eq!(state.monthly_count, 3000);
-    }
-
-    #[test]
-    fn test_remaining() {
-        let state = RateLimitState {
-            daily_count: 75,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2500,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: false,
-            monthly_warning_sent: false,
-        };
-
-        let (daily_remaining, monthly_remaining) = state.remaining(100, 3000);
-        assert_eq!(daily_remaining, 25);
-        assert_eq!(monthly_remaining, 500);
-    }
-
-    #[test]
-    fn test_remaining_saturates_at_zero() {
-        let state = RateLimitState {
-            daily_count: 150, // Over limit somehow
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 5000,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: true,
-        };
-
-        let (daily_remaining, monthly_remaining) = state.remaining(100, 3000);
-        assert_eq!(daily_remaining, 0);
-        assert_eq!(monthly_remaining, 0);
-    }
-
-    // ============================================================
-    // Serialization Tests
-    // ============================================================
-
-    #[test]
-    fn test_serialize_deserialize_roundtrip() {
-        let state = RateLimitState {
-            daily_count: 90,
-            daily_date: "2025-01-15".to_string(),
-            monthly_count: 2950,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        let json = serde_json::to_string(&state).unwrap();
-        let deserialized: RateLimitState = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(state, deserialized);
-    }
-
-    #[test]
-    fn test_deserialize_without_warning_fields() {
-        // Old state format without warning fields should default to false
-        let json = r#"{
-            "daily_count": 50,
-            "daily_date": "2025-01-15",
-            "monthly_count": 1000,
-            "monthly_month": "2025-01"
-        }"#;
-
-        let state: RateLimitState = serde_json::from_str(json).unwrap();
-
-        assert_eq!(state.daily_count, 50);
-        assert!(!state.daily_warning_sent); // defaults to false
-        assert!(!state.monthly_warning_sent); // defaults to false
-    }
-
-    // ============================================================
-    // Integration-style Tests (full workflow)
-    // ============================================================
-
-    #[test]
-    fn test_full_day_workflow() {
-        let mut state = RateLimitState::default();
-        let daily_limit = 100;
-        let monthly_limit = 3000;
-        let daily_threshold = 90;
-        let monthly_threshold = 2950;
-
-        // Simulate a full day of requests
-        state.maybe_reset("2025-01-15", "2025-01");
-
-        // Send 89 emails - no warnings
-        for _ in 0..89 {
-            let result = state.check_and_increment(
-                daily_limit,
-                monthly_limit,
-                daily_threshold,
-                monthly_threshold,
-            );
-            assert!(matches!(
-                result,
-                RateLimitCheck::Allowed {
-                    send_daily_warning: false,
-                    ..
-                }
-            ));
-        }
-        assert_eq!(state.daily_count, 89);
-        assert!(!state.daily_warning_sent);
-
-        // 90th email triggers warning
-        let result = state.check_and_increment(
-            daily_limit,
-            monthly_limit,
-            daily_threshold,
-            monthly_threshold,
-        );
-        assert_eq!(
-            result,
-            RateLimitCheck::Allowed {
-                send_daily_warning: true,
-                send_monthly_warning: false,
-            }
-        );
-        assert!(state.daily_warning_sent);
-
-        // 91-100 emails - no more warnings
-        for _ in 91..=100 {
-            let result = state.check_and_increment(
-                daily_limit,
-                monthly_limit,
-                daily_threshold,
-                monthly_threshold,
-            );
-            assert_eq!(
-                result,
-                RateLimitCheck::Allowed {
-                    send_daily_warning: false,
-                    send_monthly_warning: false,
-                }
-            );
-        }
-        assert_eq!(state.daily_count, 100);
-
-        // 101st email - blocked
-        let result = state.check_and_increment(
-            daily_limit,
-            monthly_limit,
-            daily_threshold,
-            monthly_threshold,
-        );
-        assert!(matches!(result, RateLimitCheck::DailyLimitExceeded { .. }));
-        assert_eq!(state.daily_count, 100); // Not incremented
-
-        // Next day - reset
-        state.maybe_reset("2025-01-16", "2025-01");
-        assert_eq!(state.daily_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert_eq!(state.monthly_count, 100); // Monthly NOT reset
-    }
-
-    #[test]
-    fn test_month_boundary_workflow() {
-        let mut state = RateLimitState {
-            daily_count: 50,
-            daily_date: "2025-01-31".to_string(),
-            monthly_count: 2900,
-            monthly_month: "2025-01".to_string(),
-            daily_warning_sent: true,
-            monthly_warning_sent: false,
-        };
-
-        // Cross month boundary
-        state.maybe_reset("2025-02-01", "2025-02");
-
-        assert_eq!(state.daily_count, 0);
-        assert_eq!(state.monthly_count, 0);
-        assert!(!state.daily_warning_sent);
-        assert!(!state.monthly_warning_sent);
-        assert_eq!(state.daily_date, "2025-02-01");
-        assert_eq!(state.monthly_month, "2025-02");
-    }
-
-    // ============================================================
-    // Property Tests
+    // Property Tests for Session/Magic Link Functionality
     // ============================================================
 
     use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn prop_daily_count_never_exceeds_limit_plus_one(
-            initial_count in 0u32..200,
-            num_requests in 0usize..50
-        ) {
-            let daily_limit = 100;
-            let mut state = RateLimitState {
-                daily_count: initial_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count: 0,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: false,
-                monthly_warning_sent: false,
-            };
-
-            for _ in 0..num_requests {
-                let _ = state.check_and_increment(daily_limit, 3000, 90, 2950);
-            }
-
-            // After any number of requests, count should never exceed limit
-            // (it can be at limit but check_and_increment won't increment past it)
-            prop_assert!(state.daily_count <= daily_limit.max(initial_count));
-        }
-
-        #[test]
-        fn prop_warning_sent_exactly_once(
-            num_requests in 90usize..150
-        ) {
-            let mut state = RateLimitState::default();
-            state.maybe_reset("2025-01-15", "2025-01");
-
-            let mut warning_count = 0;
-            for _ in 0..num_requests {
-                if let RateLimitCheck::Allowed { send_daily_warning: true, .. } =
-                    state.check_and_increment(100, 3000, 90, 2950) {
-                    warning_count += 1;
-                }
-            }
-
-            // Warning should be sent exactly once (when crossing threshold)
-            prop_assert_eq!(warning_count, 1);
-        }
-
-        #[test]
-        fn prop_reset_clears_warning_flag(
-            count in 0u32..100,
-            warning_sent in proptest::bool::ANY
-        ) {
-            let mut state = RateLimitState {
-                daily_count: count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count: count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: warning_sent,
-                monthly_warning_sent: warning_sent,
-            };
-
-            state.maybe_reset("2025-01-16", "2025-02");
-
-            prop_assert!(!state.daily_warning_sent);
-            prop_assert!(!state.monthly_warning_sent);
-            prop_assert_eq!(state.daily_count, 0);
-            prop_assert_eq!(state.monthly_count, 0);
-        }
-
-        #[test]
-        fn prop_remaining_is_consistent(
-            daily_count in 0u32..150,
-            monthly_count in 0u32..4000
-        ) {
-            let state = RateLimitState {
-                daily_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: false,
-                monthly_warning_sent: false,
-            };
-
-            let (daily_rem, monthly_rem) = state.remaining(100, 3000);
-
-            // Remaining + count should equal limit (or be 0 if over limit)
-            if daily_count <= 100 {
-                prop_assert_eq!(daily_rem + daily_count, 100);
-            } else {
-                prop_assert_eq!(daily_rem, 0);
-            }
-
-            if monthly_count <= 3000 {
-                prop_assert_eq!(monthly_rem + monthly_count, 3000);
-            } else {
-                prop_assert_eq!(monthly_rem, 0);
-            }
-        }
-
-        #[test]
-        fn prop_serialization_roundtrip(
-            daily_count in 0u32..200,
-            monthly_count in 0u32..5000,
-            daily_warning in proptest::bool::ANY,
-            monthly_warning in proptest::bool::ANY
-        ) {
-            let state = RateLimitState {
-                daily_count,
-                daily_date: "2025-01-15".to_string(),
-                monthly_count,
-                monthly_month: "2025-01".to_string(),
-                daily_warning_sent: daily_warning,
-                monthly_warning_sent: monthly_warning,
-            };
-
-            let json = serde_json::to_string(&state).unwrap();
-            let deserialized: RateLimitState = serde_json::from_str(&json).unwrap();
-
-            prop_assert_eq!(state, deserialized);
-        }
-    }
-
-    // ============================================================
-    // Property Tests for Session/Magic Link Functionality
-    // ============================================================
 
     proptest! {
         /// Property: SessionMetadata serialization roundtrip preserves all fields
