@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="DocSigner - Local-first, zero-knowledge digital signature platform">
-    <title>DocSigner - Document Signing</title>
+    <meta name="description" content="Get Signatures - Local-first, zero-knowledge digital signature platform">
+    <title>Get Signatures</title>
     <!-- Trunk: Build WASM from Rust crate -->
     <link data-trunk rel="rust" href="../wasm/Cargo.toml" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals" />
     <!-- Trunk: Copy static JS files -->
@@ -15,6 +15,7 @@
     <link data-trunk rel="copy-file" href="sw.js" />
     <!-- Trunk: Copy additional HTML pages -->
     <link data-trunk rel="copy-file" href="sign.html" />
+    <link data-trunk rel="copy-file" href="auth.html" />
     <!-- Trunk: Copy CSS and TypeScript bundle (required by sign.html) -->
     <link data-trunk rel="copy-file" href="geriatric.css" />
     <link data-trunk rel="copy-dir" href="js" />
@@ -1384,19 +1385,27 @@
 
     <div id="loading-overlay" class="loading-overlay" role="alert" aria-live="polite" aria-label="Loading application">
         <div class="spinner" aria-hidden="true"></div>
-        <span class="sr-only">Loading DocSigner...</span>
+        <span class="sr-only">Loading Get Signatures...</span>
     </div>
 
     <!-- Ghost field for placement -->
     <div id="ghost-field" class="ghost-field hidden" aria-hidden="true"></div>
 
     <header class="header" role="banner">
-        <h1>DocSigner</h1>
+        <h1>Get Signatures</h1>
         <div class="header-actions">
             <span id="doc-name" style="color: rgba(255,255,255,0.8); font-size: 0.875rem;"></span>
             <span id="cert-status-indicator" class="cert-indicator hidden" title="Certificate loaded" aria-label="Certificate is loaded">
                 <span aria-hidden="true">🔒</span>
             </span>
+            <!-- User info (shown when authenticated) -->
+            <div id="user-info" class="hidden" style="display: none; align-items: center; gap: 0.75rem; margin-left: 1rem; padding: 0.25rem 0.75rem; background: rgba(255,255,255,0.1); border-radius: 6px;">
+                <span id="user-email" style="color: rgba(255,255,255,0.9); font-size: 0.875rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                <span id="docs-remaining" style="color: rgba(255,255,255,0.7); font-size: 0.75rem;">(0 docs left today)</span>
+                <button id="btn-logout" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white;">
+                    Logout
+                </button>
+            </div>
             <button id="btn-dark-mode" class="btn btn-secondary" style="padding: 0.5rem 0.75rem; margin-left: 1rem;" title="Toggle dark mode" aria-label="Toggle dark mode">
                 <span id="dark-mode-icon" aria-hidden="true">🌙</span>
                 <span class="sr-only">Toggle Dark Mode</span>
@@ -2117,12 +2126,56 @@
                 // Initialize dark mode (already handled by inline script, but call for module state)
                 // initDarkMode();
 
-                // Check for signing link in URL first
+                // Check for signing link in URL first (recipients don't need auth)
                 const hasSigningLink = window.location.hash.startsWith('#sign=');
                 if (hasSigningLink) {
                     // Keep loading overlay while loading remote session
                     await checkForSigningLink();
                 } else {
+                    // Sender flow - requires authentication
+                    // Wait for DocSign namespace to be available
+                    let authCheckAttempts = 0;
+                    while (!window.DocSign?.isAuthenticated && authCheckAttempts < 20) {
+                        await new Promise(r => setTimeout(r, 100));
+                        authCheckAttempts++;
+                    }
+
+                    // Check if authenticated
+                    if (window.DocSign?.isAuthenticated && !window.DocSign.isAuthenticated()) {
+                        // Not authenticated - redirect to auth page
+                        console.log('User not authenticated, redirecting to auth.html');
+                        window.location.href = 'auth.html';
+                        return;
+                    }
+
+                    // Show user info in header
+                    if (window.DocSign?.getCurrentUser) {
+                        const user = window.DocSign.getCurrentUser();
+                        if (user) {
+                            const userInfoEl = document.getElementById('user-info');
+                            const userEmailEl = document.getElementById('user-email');
+                            const docsRemainingEl = document.getElementById('docs-remaining');
+
+                            if (userInfoEl && userEmailEl && docsRemainingEl) {
+                                userEmailEl.textContent = user.email;
+                                docsRemainingEl.textContent = `(${user.daily_documents_remaining} doc${user.daily_documents_remaining !== 1 ? 's' : ''} left today)`;
+                                userInfoEl.classList.remove('hidden');
+                                userInfoEl.style.display = 'flex';
+                            }
+                        }
+                    }
+
+                    // Setup logout button
+                    const logoutBtn = document.getElementById('btn-logout');
+                    if (logoutBtn) {
+                        logoutBtn.addEventListener('click', async () => {
+                            if (window.DocSign?.logout) {
+                                await window.DocSign.logout();
+                                window.location.href = 'auth.html';
+                            }
+                        });
+                    }
+
                     // Check for incoming document from agentPDF
                     const incomingDoc = checkForAgentPdfDocument();
                     if (incomingDoc) {
@@ -4278,7 +4331,7 @@
                     body: JSON.stringify({
                         session_id: state.currentSessionId,
                         document_name: state.fileName || 'document.pdf',
-                        sender_name: 'DocSigner', // Could be from user settings
+                        sender_name: 'Get Signatures', // Could be from user settings
                         invitations: invitations
                     })
                 });
@@ -4419,7 +4472,7 @@
                         filename: state.filename,
                         page_count: state.totalPages,
                         created_at: new Date().toISOString(),
-                        created_by: 'DocSigner'
+                        created_by: 'Get Signatures'
                     },
                     recipients: state.recipients.map(r => ({
                         id: String(r.id),

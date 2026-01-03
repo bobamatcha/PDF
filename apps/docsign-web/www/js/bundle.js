@@ -5307,13 +5307,332 @@ if (typeof window !== "undefined") {
   window.createSignatureCaptureModal = createSignatureCaptureModal;
 }
 
+// src/ts/auth.ts
+var log6 = createLogger("Auth");
+var ACCESS_TOKEN_KEY = "docsign_access_token";
+var REFRESH_TOKEN_KEY = "docsign_refresh_token";
+var USER_KEY = "docsign_user";
+var API_BASE = "/api";
+var authListeners = [];
+function onAuthStateChange(listener) {
+  authListeners.push(listener);
+  return () => {
+    const index = authListeners.indexOf(listener);
+    if (index > -1) {
+      authListeners.splice(index, 1);
+    }
+  };
+}
+function emitAuthStateChange() {
+  const event = {
+    isAuthenticated: isAuthenticated(),
+    user: getCurrentUser()
+  };
+  authListeners.forEach((listener) => listener(event));
+}
+function getAccessToken() {
+  try {
+    return localStorage.getItem(ACCESS_TOKEN_KEY);
+  } catch (e) {
+    log6.warn("Failed to get access token:", e);
+    return null;
+  }
+}
+function getRefreshToken() {
+  try {
+    return localStorage.getItem(REFRESH_TOKEN_KEY);
+  } catch (e) {
+    log6.warn("Failed to get refresh token:", e);
+    return null;
+  }
+}
+function storeTokens(accessToken, refreshToken2) {
+  try {
+    localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken2);
+  } catch (e) {
+    log6.error("Failed to store tokens:", e);
+  }
+}
+function clearTokens() {
+  try {
+    localStorage.removeItem(ACCESS_TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+  } catch (e) {
+    log6.error("Failed to clear tokens:", e);
+  }
+}
+function storeUser(user) {
+  try {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  } catch (e) {
+    log6.error("Failed to store user:", e);
+  }
+}
+function getCurrentUser() {
+  try {
+    const userJson = localStorage.getItem(USER_KEY);
+    if (!userJson) return null;
+    return JSON.parse(userJson);
+  } catch (e) {
+    log6.warn("Failed to get user:", e);
+    return null;
+  }
+}
+function isAuthenticated() {
+  return getAccessToken() !== null;
+}
+function getDocumentsRemaining() {
+  const user = getCurrentUser();
+  if (!user) return 0;
+  return user.daily_documents_remaining;
+}
+async function register(email, password, name) {
+  try {
+    log6.info("Registering new user:", email);
+    const response = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, name })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      log6.warn("Registration failed:", data.message);
+      return {
+        success: false,
+        message: data.message || "Registration failed",
+        error: data.message
+      };
+    }
+    log6.info("Registration successful, verification email sent");
+    return {
+      success: true,
+      user_id: data.user_id,
+      message: data.message
+    };
+  } catch (error) {
+    log6.error("Registration error:", error);
+    return {
+      success: false,
+      message: "Network error. Please check your connection and try again.",
+      error: String(error)
+    };
+  }
+}
+async function login(email, password) {
+  try {
+    log6.info("Logging in user:", email);
+    const response = await fetch(`${API_BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      log6.warn("Login failed:", data.error);
+      return {
+        success: false,
+        error: data.error || "Login failed"
+      };
+    }
+    if (data.access_token && data.refresh_token && data.user) {
+      storeTokens(data.access_token, data.refresh_token);
+      storeUser(data.user);
+      emitAuthStateChange();
+      log6.info("Login successful:", data.user.email);
+    }
+    return {
+      success: true,
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in: data.expires_in,
+      user: data.user
+    };
+  } catch (error) {
+    log6.error("Login error:", error);
+    return {
+      success: false,
+      error: "Network error. Please check your connection and try again."
+    };
+  }
+}
+async function logout() {
+  const token = getAccessToken();
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        }
+      });
+    } catch (error) {
+      log6.warn("Logout API call failed:", error);
+    }
+  }
+  clearTokens();
+  emitAuthStateChange();
+  log6.info("User logged out");
+}
+async function refreshToken() {
+  const token = getRefreshToken();
+  if (!token) {
+    log6.debug("No refresh token available");
+    return false;
+  }
+  try {
+    log6.debug("Refreshing access token");
+    const response = await fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: token })
+    });
+    if (!response.ok) {
+      log6.warn("Token refresh failed, logging out");
+      await logout();
+      return false;
+    }
+    const data = await response.json();
+    if (data.access_token) {
+      localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+      log6.debug("Token refreshed successfully");
+      return true;
+    }
+    return false;
+  } catch (error) {
+    log6.error("Token refresh error:", error);
+    return false;
+  }
+}
+async function authenticatedFetch(url, options = {}) {
+  let token = getAccessToken();
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  let response = await fetch(url, { ...options, headers });
+  if (response.status === 401) {
+    const refreshed = await refreshToken();
+    if (refreshed) {
+      token = getAccessToken();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+        response = await fetch(url, { ...options, headers });
+      }
+    }
+  }
+  return response;
+}
+async function forgotPassword(email) {
+  try {
+    log6.info("Requesting password reset for:", email);
+    const response = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    return {
+      success: true,
+      message: data.message || "If an account exists, a reset link has been sent."
+    };
+  } catch (error) {
+    log6.error("Forgot password error:", error);
+    return {
+      success: false,
+      message: "Network error. Please try again."
+    };
+  }
+}
+async function resetPassword(token, newPassword) {
+  try {
+    log6.info("Resetting password");
+    const response = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, new_password: newPassword })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data.message || "Password reset failed"
+      };
+    }
+    log6.info("Password reset successful");
+    return {
+      success: true,
+      message: data.message || "Password reset successfully"
+    };
+  } catch (error) {
+    log6.error("Reset password error:", error);
+    return {
+      success: false,
+      message: "Network error. Please try again."
+    };
+  }
+}
+function validatePassword(password) {
+  if (password.length < 8) {
+    return "Password must be at least 8 characters long";
+  }
+  if (!/[A-Z]/.test(password)) {
+    return "Password must contain at least one uppercase letter";
+  }
+  if (!/[a-z]/.test(password)) {
+    return "Password must contain at least one lowercase letter";
+  }
+  if (!/[0-9]/.test(password)) {
+    return "Password must contain at least one number";
+  }
+  return null;
+}
+function validateEmail(email) {
+  const trimmed = email.trim();
+  if (trimmed.length < 5) {
+    return "Email is too short";
+  }
+  if (!trimmed.includes("@")) {
+    return "Please enter a valid email address";
+  }
+  const parts = trimmed.split("@");
+  if (parts.length !== 2 || !parts[0] || !parts[1].includes(".")) {
+    return "Please enter a valid email address";
+  }
+  return null;
+}
+function initAuthNamespace() {
+  if (typeof window !== "undefined" && window.DocSign) {
+    const docSign = window.DocSign;
+    docSign.isAuthenticated = isAuthenticated;
+    docSign.getCurrentUser = getCurrentUser;
+    docSign.getAccessToken = getAccessToken;
+    docSign.getDocumentsRemaining = getDocumentsRemaining;
+    docSign.register = register;
+    docSign.login = login;
+    docSign.logout = logout;
+    docSign.refreshToken = refreshToken;
+    docSign.forgotPassword = forgotPassword;
+    docSign.resetPassword = resetPassword;
+    docSign.authenticatedFetch = authenticatedFetch;
+    docSign.validatePassword = validatePassword;
+    docSign.validateEmail = validateEmail;
+    docSign.onAuthStateChange = onAuthStateChange;
+    log6.debug("Auth module initialized on window.DocSign");
+  }
+}
+
 // src/ts/main.ts
-var log6 = createLogger("DocSign");
+var log7 = createLogger("DocSign");
 var DEFAULT_SYNC_ENDPOINT = "/api/signatures/sync";
 function init() {
   perf.mark(PERF_MARKS.NAMESPACE_INIT);
   initDocSignNamespace();
   initLocalSessionNamespace();
+  initAuthNamespace();
   const syncEndpoint = window.DOCSIGN_SYNC_ENDPOINT || DEFAULT_SYNC_ENDPOINT;
   initSyncManager({
     syncEndpoint,
@@ -5344,15 +5663,17 @@ function init() {
   if (perf.isEnabled()) {
     perf.logMetrics();
   }
-  log6.info("DocSign TypeScript initialized");
-  log6.debug("PDF Preview Bridge available:", typeof PdfPreviewBridge !== "undefined");
-  log6.debug("DocSign namespace available:", typeof window.DocSign !== "undefined");
-  log6.debug("LocalSessionManager available:", typeof LocalSessionManager !== "undefined");
-  log6.debug("SyncManager available:", typeof SyncManager !== "undefined");
-  log6.debug("TypedSignature available:", typeof TypedSignature !== "undefined");
-  log6.debug("MobileSignatureModal available:", typeof MobileSignatureModal !== "undefined");
-  log6.debug("SignatureCapture available:", typeof SignatureCapture !== "undefined");
-  log6.debug("SignatureCaptureModal available:", typeof SignatureCaptureModal !== "undefined");
+  log7.info("DocSign TypeScript initialized");
+  log7.debug("PDF Preview Bridge available:", typeof PdfPreviewBridge !== "undefined");
+  log7.debug("DocSign namespace available:", typeof window.DocSign !== "undefined");
+  log7.debug("LocalSessionManager available:", typeof LocalSessionManager !== "undefined");
+  log7.debug("SyncManager available:", typeof SyncManager !== "undefined");
+  log7.debug("TypedSignature available:", typeof TypedSignature !== "undefined");
+  log7.debug("MobileSignatureModal available:", typeof MobileSignatureModal !== "undefined");
+  log7.debug("SignatureCapture available:", typeof SignatureCapture !== "undefined");
+  log7.debug("SignatureCaptureModal available:", typeof SignatureCaptureModal !== "undefined");
+  log7.debug("Auth module available:", typeof isAuthenticated !== "undefined");
+  log7.debug("User authenticated:", isAuthenticated());
 }
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
@@ -5371,6 +5692,7 @@ export {
   SignatureModal,
   SyncManager,
   TypedSignature,
+  authenticatedFetch,
   categorizeError,
   createSignatureCaptureModal,
   createSignatureModal,
@@ -5380,6 +5702,10 @@ export {
   domPointToPdf,
   domRectToPdf,
   ensurePdfJsLoaded,
+  forgotPassword,
+  getAccessToken,
+  getCurrentUser,
+  getDocumentsRemaining,
   getFileTooLargeError,
   getOfflineError,
   getPageRenderInfo,
@@ -5388,13 +5714,18 @@ export {
   getUserFriendlyError,
   hideErrorModal,
   hideErrorToast,
+  initAuthNamespace,
   initDocSignNamespace,
   initLocalSessionNamespace,
   initSignatureModal,
   initSyncManager,
+  isAuthenticated,
   isMobileDevice,
   isPdfJsLoaded,
   localSessionManager,
+  login,
+  logout,
+  onAuthStateChange,
   onOnlineStatusChanged,
   onSyncCompleted,
   onSyncFailed,
@@ -5404,9 +5735,14 @@ export {
   pdfRectToDom,
   perf,
   previewBridge,
+  refreshToken,
+  register,
+  resetPassword,
   showConfirmDialog,
   showErrorModal,
   showErrorToast,
+  validateEmail,
+  validatePassword,
   withLoading,
   withTiming,
   withTimingSync

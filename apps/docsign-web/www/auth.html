@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Sign in or create an account for Get Signatures">
+    <title>Sign In - Get Signatures</title>
+    <link rel="stylesheet" href="geriatric.css">
+    <style>
+        /* Auth page specific styles - follows geriatric.css patterns */
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --text-primary: #1a1a1a;
+            --text-secondary: #4a4a4a;
+            --border-primary: #d1d5db;
+            --accent-primary: #0056b3;
+            --accent-hover: #003d82;
+            --error: #b30000;
+            --error-bg: #fce8e8;
+            --success: #006644;
+            --success-bg: #e6f4ed;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: var(--accent-primary);
+            color: white;
+            padding: 1.5rem 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .container {
+            max-width: 500px;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+        }
+
+        .auth-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .auth-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            background: #f0f0f0;
+            border-radius: 12px;
+            padding: 4px;
+        }
+
+        .auth-tab {
+            flex: 1;
+            padding: 0.875rem 1rem;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
+            background: transparent;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            min-height: 52px;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+        }
+
+        .auth-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .auth-tab.active {
+            background: white;
+            color: var(--text-primary);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .auth-tab:focus {
+            outline: none;
+        }
+
+        .auth-tab:focus-visible {
+            outline: 2px solid var(--accent-primary);
+            outline-offset: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        /* CRITICAL: Override geriatric.css dark mode for form inputs
+           Elderly users need WHITE backgrounds with DARK text - always */
+        .form-input,
+        input[type="text"].form-input,
+        input[type="email"].form-input,
+        input[type="password"].form-input {
+            width: 100%;
+            padding: 1rem;
+            font-size: 18px;
+            border: 2px solid #d1d5db !important;
+            border-radius: 8px;
+            background: #ffffff !important;
+            background-color: #ffffff !important;
+            color: #1a1a1a !important;
+            min-height: 60px;
+        }
+
+        .form-input:focus,
+        input[type="text"].form-input:focus,
+        input[type="email"].form-input:focus,
+        input[type="password"].form-input:focus {
+            outline: none;
+            border-color: #0056b3 !important;
+            box-shadow: 0 0 0 4px rgba(0, 86, 179, 0.2);
+        }
+
+        .form-input.error {
+            border-color: #b30000 !important;
+        }
+
+        .form-input::placeholder {
+            color: #6b7280;
+        }
+
+        .form-hint {
+            font-size: 16px;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+
+        .form-error {
+            font-size: 16px;
+            color: var(--error);
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        .form-error.visible {
+            display: block;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 1rem 2rem;
+            font-size: 20px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            min-height: 60px;
+            transition: background-color 0.2s ease;
+        }
+
+        .btn:focus {
+            outline: 4px solid var(--accent-primary);
+            outline-offset: 2px;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+            min-height: 60px;
+            font-size: 20px;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-primary:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+
+        .btn-link {
+            background: none;
+            color: var(--accent-primary);
+            text-decoration: underline;
+            padding: 0.5rem;
+            min-height: auto;
+            width: auto;
+            display: inline;
+        }
+
+        .btn-link:hover {
+            color: var(--accent-hover);
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            font-size: 18px;
+            display: none;
+        }
+
+        .alert.visible {
+            display: block;
+        }
+
+        .alert-error {
+            background: var(--error-bg);
+            color: var(--error);
+            border: 2px solid var(--error);
+        }
+
+        .alert-success {
+            background: var(--success-bg);
+            color: var(--success);
+            border: 2px solid var(--success);
+        }
+
+        .auth-form {
+            display: none;
+        }
+
+        .auth-form.active {
+            display: block;
+        }
+
+        .forgot-password-link {
+            text-align: center;
+            margin-top: 1rem;
+        }
+
+        .password-requirements {
+            font-size: 16px;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+            padding-left: 1rem;
+        }
+
+        .password-requirements li {
+            margin-bottom: 0.25rem;
+        }
+
+        .password-requirements li.valid {
+            color: var(--success);
+        }
+
+        .password-requirements li.invalid {
+            color: var(--text-secondary);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid white;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .back-link {
+            text-align: center;
+            margin-top: 2rem;
+        }
+
+        /* Verification and reset pages */
+        .message-card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .message-card h2 {
+            font-size: 24px;
+            margin-bottom: 1rem;
+        }
+
+        .message-card p {
+            font-size: 18px;
+            margin-bottom: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        /* Show password toggle */
+        .password-wrapper {
+            position: relative;
+        }
+
+        /* CRITICAL: Prevent placeholder text from overlapping Show button */
+        .password-wrapper .form-input {
+            padding-right: 85px;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        /* Placeholder text truncation for password fields */
+        .password-wrapper .form-input::placeholder {
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .show-password-btn {
+            position: absolute;
+            right: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.5rem;
+            font-size: 16px;
+        }
+
+        .show-password-btn:hover {
+            color: var(--accent-primary);
+        }
+
+        /* Documents remaining badge */
+        .docs-remaining {
+            display: inline-block;
+            background: var(--success-bg);
+            color: var(--success);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Get Signatures</h1>
+    </header>
+
+    <main class="container">
+        <!-- Alert messages -->
+        <div id="alert" class="alert" role="alert" aria-live="polite"></div>
+
+        <!-- Main auth card -->
+        <div class="auth-card" id="authCard">
+            <!-- Tab navigation -->
+            <div class="auth-tabs" role="tablist">
+                <button class="auth-tab active"
+                        id="loginTab"
+                        role="tab"
+                        aria-selected="true"
+                        aria-controls="loginForm"
+                        onclick="showForm('login')">
+                    Sign In
+                </button>
+                <button class="auth-tab"
+                        id="registerTab"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="registerForm"
+                        onclick="showForm('register')">
+                    Create Account
+                </button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="loginForm" class="auth-form active" role="tabpanel" aria-labelledby="loginTab" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label class="form-label" for="loginEmail">Email Address</label>
+                    <input type="email"
+                           id="loginEmail"
+                           class="form-input"
+                           required
+                           autocomplete="email"
+                           placeholder="Enter your email">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="loginPassword">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password"
+                               id="loginPassword"
+                               class="form-input"
+                               required
+                               autocomplete="current-password"
+                               placeholder="Enter your password">
+                        <button type="button" class="show-password-btn" onclick="togglePassword('loginPassword', this)">Show</button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="loginBtn">
+                    Sign In
+                </button>
+
+                <div class="forgot-password-link">
+                    <button type="button" class="btn-link" onclick="showForm('forgot')">
+                        Forgot your password?
+                    </button>
+                </div>
+            </form>
+
+            <!-- Register Form -->
+            <form id="registerForm" class="auth-form" role="tabpanel" aria-labelledby="registerTab" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label class="form-label" for="registerName">Your Name</label>
+                    <input type="text"
+                           id="registerName"
+                           class="form-input"
+                           required
+                           autocomplete="name"
+                           placeholder="Enter your full name">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="registerEmail">Email Address</label>
+                    <input type="email"
+                           id="registerEmail"
+                           class="form-input"
+                           required
+                           autocomplete="email"
+                           placeholder="Enter your email">
+                    <p class="form-hint">We'll send a verification link to this address</p>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="registerPassword">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password"
+                               id="registerPassword"
+                               class="form-input"
+                               required
+                               autocomplete="new-password"
+                               placeholder="Create a password"
+                               oninput="validatePasswordInput()">
+                        <button type="button" class="show-password-btn" onclick="togglePassword('registerPassword', this)">Show</button>
+                    </div>
+                    <ul class="password-requirements" id="passwordRequirements">
+                        <li id="req-length">At least 8 characters</li>
+                        <li id="req-upper">One uppercase letter</li>
+                        <li id="req-lower">One lowercase letter</li>
+                        <li id="req-number">One number</li>
+                    </ul>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="registerConfirm">Confirm Password</label>
+                    <div class="password-wrapper">
+                        <input type="password"
+                               id="registerConfirm"
+                               class="form-input"
+                               required
+                               autocomplete="new-password"
+                               placeholder="Confirm password">
+                        <button type="button" class="show-password-btn" onclick="togglePassword('registerConfirm', this)">Show</button>
+                    </div>
+                    <p class="form-error" id="confirmError">Passwords do not match</p>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="registerBtn">
+                    Create Account
+                </button>
+
+                <p style="text-align: center; margin-top: 1.5rem; font-size: 16px; color: var(--text-secondary); font-style: italic; line-height: 1.5; padding: 0 1rem;">
+                    All accounts enjoy a daily complimentary signing ceremony<br>
+                    <span style="font-size: 14px;">(no credit card required)</span>
+                </p>
+            </form>
+
+            <!-- Forgot Password Form -->
+            <form id="forgotForm" class="auth-form" onsubmit="handleForgotPassword(event)">
+                <h2 style="font-size: 24px; margin-bottom: 1rem;">Reset Password</h2>
+                <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">
+                    Enter your email address and we'll send you a link to reset your password.
+                </p>
+
+                <div class="form-group">
+                    <label class="form-label" for="forgotEmail">Email Address</label>
+                    <input type="email"
+                           id="forgotEmail"
+                           class="form-input"
+                           required
+                           autocomplete="email"
+                           placeholder="Enter your email">
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="forgotBtn">
+                    Send Reset Link
+                </button>
+
+                <div style="text-align: center; margin-top: 1rem;">
+                    <button type="button" class="btn-link" onclick="showForm('login')">
+                        Back to Sign In
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Back to main site -->
+        <div class="back-link">
+            <a href="index.html" class="btn-link">Back to Document Signing</a>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="js/bundle.js"></script>
+    <script>
+        // Wait for DocSign to be available
+        function waitForDocSign() {
+            return new Promise((resolve) => {
+                if (window.DocSign && window.DocSign.isAuthenticated) {
+                    resolve();
+                } else {
+                    const check = setInterval(() => {
+                        if (window.DocSign && window.DocSign.isAuthenticated) {
+                            clearInterval(check);
+                            resolve();
+                        }
+                    }, 50);
+                }
+            });
+        }
+
+        // Show/hide forms
+        function showForm(formName) {
+            const forms = document.querySelectorAll('.auth-form');
+            const tabs = document.querySelectorAll('.auth-tab');
+
+            forms.forEach(f => f.classList.remove('active'));
+            tabs.forEach(t => {
+                t.classList.remove('active');
+                t.setAttribute('aria-selected', 'false');
+            });
+
+            document.getElementById(formName + 'Form').classList.add('active');
+
+            if (formName === 'login') {
+                document.getElementById('loginTab').classList.add('active');
+                document.getElementById('loginTab').setAttribute('aria-selected', 'true');
+            } else if (formName === 'register') {
+                document.getElementById('registerTab').classList.add('active');
+                document.getElementById('registerTab').setAttribute('aria-selected', 'true');
+            }
+
+            hideAlert();
+        }
+
+        // Show alert message
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = 'alert visible alert-' + type;
+        }
+
+        // Hide alert
+        function hideAlert() {
+            document.getElementById('alert').classList.remove('visible');
+        }
+
+        // Toggle password visibility
+        function togglePassword(inputId, btn) {
+            const input = document.getElementById(inputId);
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = 'Hide';
+            } else {
+                input.type = 'password';
+                btn.textContent = 'Show';
+            }
+        }
+
+        // Validate password requirements in real-time
+        function validatePasswordInput() {
+            const password = document.getElementById('registerPassword').value;
+
+            const checks = {
+                'req-length': password.length >= 8,
+                'req-upper': /[A-Z]/.test(password),
+                'req-lower': /[a-z]/.test(password),
+                'req-number': /[0-9]/.test(password)
+            };
+
+            for (const [id, valid] of Object.entries(checks)) {
+                const el = document.getElementById(id);
+                el.classList.toggle('valid', valid);
+                el.classList.toggle('invalid', !valid);
+            }
+        }
+
+        // Handle login
+        async function handleLogin(event) {
+            event.preventDefault();
+            await waitForDocSign();
+
+            const btn = document.getElementById('loginBtn');
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Signing In...';
+
+            try {
+                const result = await window.DocSign.login(email, password);
+
+                if (result.success) {
+                    showAlert('Login successful! Redirecting...', 'success');
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else {
+                    showAlert(result.error || 'Login failed. Please check your email and password.', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Sign In';
+                }
+            } catch (error) {
+                showAlert('An error occurred. Please try again.', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        }
+
+        // Handle registration
+        async function handleRegister(event) {
+            event.preventDefault();
+            await waitForDocSign();
+
+            const btn = document.getElementById('registerBtn');
+            const name = document.getElementById('registerName').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const confirm = document.getElementById('registerConfirm').value;
+
+            // Validate passwords match
+            if (password !== confirm) {
+                document.getElementById('confirmError').classList.add('visible');
+                document.getElementById('registerConfirm').classList.add('error');
+                return;
+            } else {
+                document.getElementById('confirmError').classList.remove('visible');
+                document.getElementById('registerConfirm').classList.remove('error');
+            }
+
+            // Validate password strength
+            const passwordError = window.DocSign.validatePassword(password);
+            if (passwordError) {
+                showAlert(passwordError, 'error');
+                return;
+            }
+
+            // Validate email
+            const emailError = window.DocSign.validateEmail(email);
+            if (emailError) {
+                showAlert(emailError, 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Creating Account...';
+
+            try {
+                const result = await window.DocSign.register(email, password, name);
+
+                if (result.success) {
+                    showAlert('Account created! Please check your email to verify your account.', 'success');
+                    btn.textContent = 'Create Account';
+                    btn.disabled = false;
+                    // Switch to login form after short delay
+                    setTimeout(() => {
+                        showForm('login');
+                        document.getElementById('loginEmail').value = email;
+                    }, 2000);
+                } else {
+                    showAlert(result.message || 'Registration failed. Please try again.', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Create Account';
+                }
+            } catch (error) {
+                showAlert('An error occurred. Please try again.', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Create Account';
+            }
+        }
+
+        // Handle forgot password
+        async function handleForgotPassword(event) {
+            event.preventDefault();
+            await waitForDocSign();
+
+            const btn = document.getElementById('forgotBtn');
+            const email = document.getElementById('forgotEmail').value;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Sending...';
+
+            try {
+                const result = await window.DocSign.forgotPassword(email);
+                showAlert(result.message, 'success');
+                btn.disabled = false;
+                btn.textContent = 'Send Reset Link';
+            } catch (error) {
+                showAlert('An error occurred. Please try again.', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Send Reset Link';
+            }
+        }
+
+        // Check if already authenticated on page load
+        async function checkAuth() {
+            await waitForDocSign();
+
+            if (window.DocSign.isAuthenticated()) {
+                // Already logged in, redirect to main page
+                window.location.href = 'index.html';
+            }
+
+            // Check URL for verification success
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('verified') === 'true') {
+                showAlert('Email verified successfully! You can now sign in.', 'success');
+            }
+            if (params.get('reset') === 'true') {
+                showAlert('Password reset successfully! You can now sign in.', 'success');
+            }
+        }
+
+        // Initialize
+        checkAuth();
+    </script>
+</body>
+</html>

@@ -1,7 +1,10 @@
 //! DocSign Server - Cloudflare Worker for email relay and signing sessions
 //!
-//! Email sending via AWS Lambda email-proxy (SES)
+//! Email sending via Resend API (provider-agnostic, can swap to AWS SES/Postmark)
 //! Signing sessions expire after 7 days
+
+mod auth;
+mod email;
 
 use chrono::Utc;
 use hmac::{Hmac, Mac};
@@ -11,13 +14,6 @@ use worker::*;
 
 // Type alias for HMAC-SHA256
 type HmacSha256 = Hmac<Sha256>;
-
-/// Email proxy Lambda URL (AWS SES)
-const EMAIL_PROXY_URL: &str =
-    "https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws";
-
-/// Default from address for emails
-const FROM_ADDRESS: &str = "GetSignatures <noreply@getsignatures.org>";
 
 /// Request body for sending a document
 #[derive(Deserialize)]
@@ -1083,37 +1079,28 @@ fn format_decline_notification_email(
 
 /// Send notification email to sender when recipient signs
 async fn send_sender_notification(
-    _env: &Env,
+    env: &Env,
     sender_email: &str,
     subject: &str,
     html_body: &str,
 ) -> Result<()> {
-    let email_request = serde_json::json!({
-        "from": FROM_ADDRESS,
-        "to": [sender_email],
-        "subject": subject,
-        "html": html_body
-    });
+    let request = email::EmailSendRequest {
+        to: vec![sender_email.to_string()],
+        subject: subject.to_string(),
+        html: html_body.to_string(),
+        text: None,
+        reply_to: None,
+        tags: vec![("type".to_string(), "notification".to_string())],
+    };
 
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&email_request)?.into()));
-
-    let url = format!("{}/send", EMAIL_PROXY_URL);
-    let request = Request::new_with_init(&url, &init)?;
-
-    match Fetch::Request(request).send().await {
-        Ok(response) => {
-            if response.status_code() == 200 {
+    match email::send_email(env, request).await {
+        Ok(result) => {
+            if result.success {
                 console_log!("Notification sent to sender: {}", sender_email);
             } else {
                 console_log!(
-                    "Failed to send notification: status {}",
-                    response.status_code()
+                    "Failed to send notification: {}",
+                    result.error.unwrap_or_default()
                 );
             }
         }
@@ -1160,6 +1147,45 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             handle_health_check(env).await
         }
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
+
+        // ============================================
+        // Authentication endpoints (public)
+        // ============================================
+        (Method::Post, "/auth/register") => {
+            // Rate limit: 5 registrations per hour per IP
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
+            cors_response(auth::handle_register(req, env).await)
+        }
+        (Method::Get, "/auth/verify-email") => {
+            cors_response(auth::handle_verify_email(req, env).await)
+        }
+        (Method::Post, "/auth/login") => {
+            // Rate limit: 10 login attempts per hour per IP
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            cors_response(auth::handle_login(req, env).await)
+        }
+        (Method::Post, "/auth/refresh") => cors_response(auth::handle_refresh(req, env).await),
+        (Method::Post, "/auth/logout") => cors_response(auth::handle_logout(req, env).await),
+        (Method::Post, "/auth/forgot-password") => {
+            // Rate limit to prevent spam
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
+            cors_response(auth::handle_forgot_password(req, env).await)
+        }
+        (Method::Post, "/auth/reset-password") => {
+            cors_response(auth::handle_reset_password(req, env).await)
+        }
 
         // Protected endpoints - require API key
         (Method::Post, "/send") => {
@@ -1368,11 +1394,11 @@ async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
         return cors_response(payload_too_large_response(MAX_PDF_SIZE, pdf_size));
     }
 
-    // Send the email via email-proxy Lambda
-    send_email(&env, &body).await
+    // Send the email via Resend
+    send_document_email(&env, &body).await
 }
 
-async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
+async fn send_document_email(env: &Env, body: &SendRequest) -> Result<Response> {
     // Build email body with optional signing link
     let html_body = if let Some(ref link) = body.signing_link {
         format!(
@@ -1385,44 +1411,32 @@ async fn send_email(_env: &Env, body: &SendRequest) -> Result<Response> {
         "<p>Please find the attached document for your signature.</p>".to_string()
     };
 
-    let email_request = serde_json::json!({
-        "from": FROM_ADDRESS,
-        "to": [body.to],
-        "subject": body.subject,
-        "html": html_body
-    });
+    let request = email::EmailSendRequest {
+        to: vec![body.to.clone()],
+        subject: body.subject.clone(),
+        html: html_body,
+        text: None,
+        reply_to: None,
+        tags: vec![("type".to_string(), "document".to_string())],
+    };
 
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(serde_json::to_string(&email_request)?.into()));
-
-    let url = format!("{}/send", EMAIL_PROXY_URL);
-    let request = Request::new_with_init(&url, &init)?;
-
-    match Fetch::Request(request).send().await {
-        Ok(response) => {
-            if response.status_code() == 200 {
+    match email::send_email(env, request).await {
+        Ok(result) => {
+            if result.success {
                 console_log!("Email sent to {}", body.to);
                 cors_response(Response::from_json(&SendResponse {
                     success: true,
                     message: "Email sent".to_string(),
                 }))
             } else {
-                let status = response.status_code();
-                console_log!("Email proxy error: HTTP {}", status);
-                cors_response(error_response(&format!(
-                    "Email proxy error: HTTP {}",
-                    status
-                )))
+                let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                console_log!("Email send failed: {}", error_msg);
+                cors_response(error_response(&error_msg))
             }
         }
         Err(e) => {
-            console_log!("Email proxy request failed: {}", e);
-            cors_response(error_response(&format!("Email proxy error: {}", e)))
+            console_log!("Email send error: {}", e);
+            cors_response(error_response(&format!("Email service error: {}", e)))
         }
     }
 }
@@ -1445,7 +1459,7 @@ async fn handle_send_invites(mut req: Request, env: Env) -> Result<Response> {
         return cors_response(error_response("No invitations to send"));
     }
 
-    // Send the invitations via email-proxy Lambda
+    // Send the invitations via Resend
     send_invitations(&env, &body).await
 }
 
@@ -1512,50 +1526,28 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             signing_link = signing_link_with_token
         );
 
-        let email_request = serde_json::json!({
-            "from": FROM_ADDRESS,
-            "to": [invitation.email],
-            "subject": format!("Signature Requested: {}", body.document_name),
-            "html": email_html
-        });
-
-        let headers = Headers::new();
-        if headers.set("Content-Type", "application/json").is_err() {
-            errors.push(format!("{}: header error", invitation.email));
-            continue;
-        }
-
-        let body_str = match serde_json::to_string(&email_request) {
-            Ok(s) => s,
-            Err(_) => {
-                errors.push(format!("{}: serialize error", invitation.email));
-                continue;
-            }
+        // Send via email module
+        let email_request = email::EmailSendRequest {
+            to: vec![invitation.email.clone()],
+            subject: format!("Signature Requested: {}", body.document_name),
+            html: email_html,
+            text: None,
+            reply_to: None,
+            tags: vec![
+                ("type".to_string(), "invitation".to_string()),
+                ("session_id".to_string(), body.session_id.clone()),
+            ],
         };
 
-        let mut init = RequestInit::new();
-        init.with_method(Method::Post)
-            .with_headers(headers)
-            .with_body(Some(body_str.into()));
-
-        let url = format!("{}/send", EMAIL_PROXY_URL);
-        let request = match Request::new_with_init(&url, &init) {
-            Ok(r) => r,
-            Err(_) => {
-                errors.push(format!("{}: request error", invitation.email));
-                continue;
-            }
-        };
-
-        match Fetch::Request(request).send().await {
-            Ok(response) => {
-                if response.status_code() == 200 {
+        match email::send_email(env, email_request).await {
+            Ok(result) => {
+                if result.success {
                     success_count += 1;
                     console_log!("Invitation sent to {}", invitation.email);
                 } else {
-                    let status = response.status_code();
-                    errors.push(format!("{}: HTTP {}", invitation.email, status));
-                    console_log!("Failed to send to {}: HTTP {}", invitation.email, status);
+                    let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                    errors.push(format!("{}: {}", invitation.email, error_msg));
+                    console_log!("Failed to send to {}: {}", invitation.email, error_msg);
                 }
             }
             Err(e) => {
@@ -1592,6 +1584,41 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     // Check request size before parsing (contains PDF)
     if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
         return cors_response(Ok(response));
+    }
+
+    // Require authentication for session creation
+    let (mut user, users_kv) = match auth::require_auth(&req, &env).await? {
+        Ok(result) => result,
+        Err(response) => return cors_response(Ok(response)),
+    };
+
+    // Check if email is verified
+    if !user.email_verified {
+        return cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Please verify your email address before creating signing sessions.",
+            "error_code": "EMAIL_NOT_VERIFIED"
+        }))?
+        .with_status(403)));
+    }
+
+    // Check document limit for free tier users
+    // Reset counter if it's a new day
+    let now = chrono::Utc::now();
+    let today = now.format("%Y-%m-%d").to_string();
+    if user.daily_reset_at != today {
+        user.daily_document_count = 0;
+        user.daily_reset_at = today;
+    }
+
+    if user.tier == auth::types::UserTier::Free && user.daily_document_count >= 1 {
+        return cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Daily limit reached. Free accounts can create 1 document per day. Upgrade to Pro for unlimited documents.",
+            "error_code": "DAILY_LIMIT_EXCEEDED",
+            "limit": 1
+        }))?
+        .with_status(429)));
     }
 
     let body: CreateSessionRequest = match req.json().await {
@@ -1695,6 +1722,12 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     if let Err(e) = save_sender_index(&kv, &sender_hash, &sender_index).await {
         // Log error but don't fail the request - session is already created
         console_log!("Warning: Failed to update sender index: {}", e);
+    }
+
+    // Increment document count for the user (best-effort, don't fail if this errors)
+    user.daily_document_count += 1;
+    if let Err(e) = auth::save_user(&users_kv, &user).await {
+        console_log!("Warning: Failed to update user document count: {:?}", e);
     }
 
     cors_response(Response::from_json(&CreateSessionResponse {
@@ -2706,6 +2739,7 @@ mod tests {
     // ============================================================
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_size_limit_constants() {
         // Verify size limits are set correctly
         assert_eq!(MAX_PDF_SIZE, 10 * 1024 * 1024); // 10MB
@@ -3766,55 +3800,49 @@ mod tests {
     // ============================================================
 
     #[test]
-    fn test_email_proxy_url_is_valid() {
-        // Verify EMAIL_PROXY_URL is a valid HTTPS URL
-        assert!(EMAIL_PROXY_URL.starts_with("https://"));
-        assert!(EMAIL_PROXY_URL.contains(".lambda-url."));
-        assert!(EMAIL_PROXY_URL.contains(".on.aws"));
-    }
-
-    #[test]
     fn test_from_address_format() {
-        // FROM_ADDRESS should be in "Name <email>" format
-        assert!(FROM_ADDRESS.contains('<'));
-        assert!(FROM_ADDRESS.contains('>'));
-        assert!(FROM_ADDRESS.contains('@'));
-        assert!(FROM_ADDRESS.contains("getsignatures.org"));
+        // DEFAULT_FROM_ADDRESS should be in "Name <email>" format
+        assert!(email::DEFAULT_FROM_ADDRESS.contains('<'));
+        assert!(email::DEFAULT_FROM_ADDRESS.contains('>'));
+        assert!(email::DEFAULT_FROM_ADDRESS.contains('@'));
+        assert!(email::DEFAULT_FROM_ADDRESS.contains("getsignatures.org"));
     }
 
     #[test]
     fn test_email_request_payload_structure() {
-        // Verify email request JSON structure matches Lambda expectations
-        let email_request = serde_json::json!({
-            "from": FROM_ADDRESS,
-            "to": ["test@example.com"],
-            "subject": "Test Subject",
-            "html": "<p>Test body</p>"
-        });
+        // Verify EmailSendRequest structure
+        let request = email::EmailSendRequest {
+            to: vec!["test@example.com".to_string()],
+            subject: "Test Subject".to_string(),
+            html: "<p>Test body</p>".to_string(),
+            text: None,
+            reply_to: None,
+            tags: vec![],
+        };
 
-        // Verify all required fields exist
-        assert!(email_request.get("from").is_some());
-        assert!(email_request.get("to").is_some());
-        assert!(email_request.get("subject").is_some());
-        assert!(email_request.get("html").is_some());
-
-        // Verify "to" is an array
-        assert!(email_request["to"].is_array());
-        assert_eq!(email_request["to"].as_array().unwrap().len(), 1);
+        // Verify fields are set correctly
+        assert_eq!(request.to.len(), 1);
+        assert_eq!(request.subject, "Test Subject");
+        assert!(request.html.contains("<p>"));
     }
 
     #[test]
     fn test_email_request_multiple_recipients() {
-        // Email proxy accepts multiple recipients as array
-        let recipients = vec!["a@test.com", "b@test.com", "c@test.com"];
-        let email_request = serde_json::json!({
-            "from": FROM_ADDRESS,
-            "to": recipients,
-            "subject": "Multi-recipient test",
-            "html": "<p>Test</p>"
-        });
+        // EmailSendRequest accepts multiple recipients
+        let request = email::EmailSendRequest {
+            to: vec![
+                "a@test.com".to_string(),
+                "b@test.com".to_string(),
+                "c@test.com".to_string(),
+            ],
+            subject: "Multi-recipient test".to_string(),
+            html: "<p>Test</p>".to_string(),
+            text: None,
+            reply_to: None,
+            tags: vec![],
+        };
 
-        assert_eq!(email_request["to"].as_array().unwrap().len(), 3);
+        assert_eq!(request.to.len(), 3);
     }
 
     #[test]
@@ -3838,11 +3866,17 @@ mod tests {
     }
 
     #[test]
-    fn test_email_url_construction() {
-        // Verify URL is constructed correctly
-        let url = format!("{}/send", EMAIL_PROXY_URL);
-        assert!(url.ends_with("/send"));
-        assert!(!url.contains("//send")); // No double slashes
+    fn test_email_send_result_helpers() {
+        // Test EmailSendResult helper methods
+        let success = email::EmailSendResult::success("msg-123".to_string());
+        assert!(success.success);
+        assert_eq!(success.id, "msg-123");
+        assert!(success.error.is_none());
+
+        let failure = email::EmailSendResult::error("Something went wrong");
+        assert!(!failure.success);
+        assert!(failure.id.is_empty());
+        assert_eq!(failure.error.as_deref(), Some("Something went wrong"));
     }
 }
 
@@ -3859,15 +3893,17 @@ mod email_proptests {
         /// Property: Email subject can contain any printable ASCII
         #[test]
         fn email_subject_accepts_printable_ascii(subject in "[a-zA-Z0-9 !@#$%^&*()_+=\\-\\[\\]{}|;:',.<>?/]{1,200}") {
-            let email_request = serde_json::json!({
-                "from": FROM_ADDRESS,
-                "to": ["test@example.com"],
-                "subject": subject,
-                "html": "<p>Test</p>"
-            });
+            let request = email::EmailSendRequest {
+                to: vec!["test@example.com".to_string()],
+                subject: subject.clone(),
+                html: "<p>Test</p>".to_string(),
+                text: None,
+                reply_to: None,
+                tags: vec![],
+            };
 
             // Should serialize without error
-            let json_str = serde_json::to_string(&email_request);
+            let json_str = serde_json::to_string(&request);
             prop_assert!(json_str.is_ok(), "Should serialize email with subject: {}", subject);
         }
 
@@ -3878,16 +3914,17 @@ mod email_proptests {
             domain in "[a-z0-9-]{1,20}",
             tld in "(com|org|net|io)"
         ) {
-            let email = format!("{}@{}.{}", local, domain, tld);
-            let email_request = serde_json::json!({
-                "from": FROM_ADDRESS,
-                "to": [&email],
-                "subject": "Test",
-                "html": "<p>Test</p>"
-            });
+            let email_addr = format!("{}@{}.{}", local, domain, tld);
+            let request = email::EmailSendRequest {
+                to: vec![email_addr.clone()],
+                subject: "Test".to_string(),
+                html: "<p>Test</p>".to_string(),
+                text: None,
+                reply_to: None,
+                tags: vec![],
+            };
 
-            let to_array = email_request["to"].as_array().unwrap();
-            prop_assert_eq!(to_array[0].as_str().unwrap(), email.as_str());
+            prop_assert_eq!(&request.to[0], &email_addr);
         }
 
         /// Property: HTML body can contain any valid HTML characters
@@ -3896,19 +3933,20 @@ mod email_proptests {
             text in "[a-zA-Z0-9 .,!?]{1,100}"
         ) {
             let html = format!("<p>{}</p>", text);
-            let email_request = serde_json::json!({
-                "from": FROM_ADDRESS,
-                "to": ["test@example.com"],
-                "subject": "Test",
-                "html": html
-            });
+            let request = email::EmailSendRequest {
+                to: vec!["test@example.com".to_string()],
+                subject: "Test".to_string(),
+                html: html.clone(),
+                text: None,
+                reply_to: None,
+                tags: vec![],
+            };
 
-            let json_str = serde_json::to_string(&email_request);
+            let json_str = serde_json::to_string(&request);
             prop_assert!(json_str.is_ok());
 
-            // Verify HTML is preserved in JSON
-            let parsed: serde_json::Value = serde_json::from_str(&json_str.unwrap()).unwrap();
-            prop_assert!(parsed["html"].as_str().unwrap().contains(&text));
+            // Verify HTML is preserved
+            prop_assert!(request.html.contains(&text));
         }
 
         /// Property: Multiple recipients all included in request
@@ -3918,18 +3956,19 @@ mod email_proptests {
                 .map(|i| format!("user{}@example.com", i))
                 .collect();
 
-            let email_request = serde_json::json!({
-                "from": FROM_ADDRESS,
-                "to": recipients.clone(),
-                "subject": "Test",
-                "html": "<p>Test</p>"
-            });
+            let request = email::EmailSendRequest {
+                to: recipients.clone(),
+                subject: "Test".to_string(),
+                html: "<p>Test</p>".to_string(),
+                text: None,
+                reply_to: None,
+                tags: vec![],
+            };
 
-            let to_array = email_request["to"].as_array().unwrap();
-            prop_assert_eq!(to_array.len(), count);
+            prop_assert_eq!(request.to.len(), count);
 
             for (i, recipient) in recipients.iter().enumerate() {
-                prop_assert_eq!(to_array[i].as_str().unwrap(), recipient.as_str());
+                prop_assert_eq!(&request.to[i], recipient);
             }
         }
 

@@ -184,6 +184,35 @@ import {
 } from "./perf";
 import type { PerformanceMetrics, PerfMarkId } from "./perf";
 
+// Import authentication module
+import {
+  isAuthenticated,
+  getCurrentUser,
+  getAccessToken,
+  getDocumentsRemaining,
+  register,
+  login,
+  logout,
+  refreshToken,
+  forgotPassword,
+  resetPassword,
+  authenticatedFetch,
+  validatePassword,
+  validateEmail,
+  onAuthStateChange,
+  initAuthNamespace,
+} from "./auth";
+import type {
+  User,
+  UserTier,
+  AuthTokens,
+  RegisterResponse,
+  LoginResponse,
+  RefreshResponse,
+  AuthResponse,
+  AuthStateChangeEvent,
+} from "./auth";
+
 // Re-export for backwards compatibility and external access
 export {
   // PDF modules
@@ -246,6 +275,22 @@ export {
   withTiming,
   withTimingSync,
   withLoading,
+  // Authentication module
+  isAuthenticated,
+  getCurrentUser,
+  getAccessToken,
+  getDocumentsRemaining,
+  register,
+  login,
+  logout,
+  refreshToken,
+  forgotPassword,
+  resetPassword,
+  authenticatedFetch,
+  validatePassword,
+  validateEmail,
+  onAuthStateChange,
+  initAuthNamespace,
 };
 
 export type {
@@ -287,6 +332,15 @@ export type {
   // Performance monitoring types
   PerformanceMetrics,
   PerfMarkId,
+  // Authentication types
+  User,
+  UserTier,
+  AuthTokens,
+  RegisterResponse,
+  LoginResponse,
+  RefreshResponse,
+  AuthResponse,
+  AuthStateChangeEvent,
 };
 
 /**
@@ -306,6 +360,9 @@ function init(): void {
 
   // Initialize local session management on window.DocSign
   initLocalSessionNamespace();
+
+  // Initialize authentication module on window.DocSign
+  initAuthNamespace();
 
   // Initialize SyncManager with configurable endpoint
   const syncEndpoint =
@@ -367,6 +424,8 @@ function init(): void {
   log.debug("MobileSignatureModal available:", typeof MobileSignatureModal !== "undefined");
   log.debug("SignatureCapture available:", typeof SignatureCapture !== "undefined");
   log.debug("SignatureCaptureModal available:", typeof SignatureCaptureModal !== "undefined");
+  log.debug("Auth module available:", typeof isAuthenticated !== "undefined");
+  log.debug("User authenticated:", isAuthenticated());
 }
 
 // Initialize when DOM is ready

@@ -12,7 +12,7 @@ members = [
     "crates/typst-engine",
     "crates/benchmark-harness",
     "crates/pdfjoin-core",
-    "crates/email-proxy",        # AWS Lambda email proxy with SES
+    # "crates/email-proxy",      # DEPRECATED: Replaced by Resend in Cloudflare Worker
 
     # Apps
     "apps/agentpdf-web/wasm",
@@ -148,7 +148,7 @@ docsign-core = { path = "crates/docsign-core" }
 typst-engine = { path = "crates/typst-engine" }
 benchmark-harness = { path = "crates/benchmark-harness" }
 pdfjoin-core = { path = "crates/pdfjoin-core" }
-email-proxy = { path = "crates/email-proxy" }
+# email-proxy = { path = "crates/email-proxy" }  # DEPRECATED
 
 [profile.release]
 opt-level = "z"  # Smallest size (was "s")

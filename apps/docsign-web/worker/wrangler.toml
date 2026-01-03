@@ -25,13 +25,27 @@ id = "9384f737469a494db2f447c5c57743f4"
 binding = "VERIFICATIONS"
 id = "1929d880b7944f239a91032379a39eec"
 
+# User authentication KV namespaces
+# Create with: wrangler kv namespace create USERS
+[[kv_namespaces]]
+binding = "USERS"
+id = "PLACEHOLDER_USERS_ID"
+
+# Create with: wrangler kv namespace create AUTH_SESSIONS
+[[kv_namespaces]]
+binding = "AUTH_SESSIONS"
+id = "PLACEHOLDER_AUTH_SESSIONS_ID"
+
 # Environment variables (non-secret)
 [vars]
 ALLOW_DUPLICATE_EMAILS = "true"  # For testing - allows same email for multiple signers
+EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"  # Sender address for emails
 
 # Secrets (set via wrangler secret put):
-# wrangler secret put DOCSIGN_API_KEY
-# wrangler secret put TOKEN_SECRET
+# wrangler secret put DOCSIGN_API_KEY      # API key for protected endpoints
+# wrangler secret put TOKEN_SECRET         # Secret for signing recipient tokens
+# wrangler secret put RESEND_API_KEY       # Resend API key for email sending
+# wrangler secret put JWT_SECRET           # Secret for signing JWT auth tokens (min 32 bytes)
 
 # =============================================================
 # Production environment
@@ -42,6 +56,9 @@ routes = [
   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
 ]
 # Production: ALLOW_DUPLICATE_EMAILS not set = defaults to false (prevents same email for multiple signers)
+
+[env.production.vars]
+EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"
 
 [[env.production.kv_namespaces]]
 binding = "SESSIONS"
@@ -54,3 +71,11 @@ id = "9384f737469a494db2f447c5c57743f4"
 [[env.production.kv_namespaces]]
 binding = "VERIFICATIONS"
 id = "1929d880b7944f239a91032379a39eec"
+
+[[env.production.kv_namespaces]]
+binding = "USERS"
+id = "PLACEHOLDER_USERS_ID"
+
+[[env.production.kv_namespaces]]
+binding = "AUTH_SESSIONS"
+id = "PLACEHOLDER_AUTH_SESSIONS_ID"

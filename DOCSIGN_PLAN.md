@@ -1,6 +1,6 @@
 # DOCSIGN_PLAN: Geriatric-Friendly Document Signing Platform
 
-> **Version:** 1.8 | **Target:** Late 2025 / Early 2026
+> **Version:** 2.0 | **Target:** Q1 2026
 > **Related Plans:** [PLAN0.md](./PLAN0.md), [UX_IMPROVEMENT_PLAN.md](./UX_IMPROVEMENT_PLAN.md)
 > **Development Guidelines:** See [CLAUDE.md](./CLAUDE.md) for test-first development practices.
 
@@ -74,9 +74,7 @@
 - [x] Tauri Desktop: `apps/docsign-tauri` (run with `cargo tauri dev`)
 - [x] Updater Keys: Located at `~/.tauri-private-key` (keep safe!)
 - [x] Public Key: Configured in `tauri.conf.json`
-- [x] Email Proxy Lambda: Deployed to AWS (see [AWS_NOTES.md](./AWS_NOTES.md))
-- [x] AWS SES: Domain verified with DKIM
-- [ ] AWS SES Production Access: Pending approval (sandbox mode - verified emails only)
+- [x] Email: Resend API integrated into Cloudflare Worker
 - [ ] Deploy backend to production server
 - [ ] Configure update endpoint at releases.getsignatures.org
 
@@ -84,34 +82,47 @@
 
 ## Email Infrastructure
 
-### Architecture
+### Architecture (Updated 2026-01)
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    EMAIL FLOW                                   │
+│                    EMAIL FLOW (Resend)                          │
 ├─────────────────────────────────────────────────────────────────┤
-│  Cloudflare Worker    →    AWS Lambda (email-proxy)    →    SES │
-│  (docsign-web)             (Rust + cargo-lambda)                │
+│  Cloudflare Worker    →    Resend API    →    Recipient         │
+│  (docsign-web)             (HTTP POST)                          │
+│       ↓                                                         │
+│   KV (rate limits: 100/day, 3000/month)                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Email Proxy Lambda
-- **Endpoint**: `https://5wbbpgjw7acyu4sgjqksmsqtvq0zajks.lambda-url.us-east-2.on.aws`
-- **Code**: `crates/email-proxy/`
-- **Documentation**: [AWS_NOTES.md](./AWS_NOTES.md)
+### Email Module
+- **Location**: `apps/docsign-web/worker/src/email/`
+- **Provider**: Resend (provider-agnostic abstraction for future AWS SES/Postmark)
+- **Rate Limits**: 100 emails/day, 3000 emails/month (matches Resend free tier)
 
-### Production Access Status
-- **Requested**: 2025-12-31
-- **Status**: Pending AWS approval (typically 24-48 hours)
-- **Current Limitation**: Can only send to verified email addresses
-- **After Approval**: Can send to any recipient
-
-### Verified Test Emails
-- `bobamatchasolutions@gmail.com`
-
-To verify additional test emails during sandbox mode:
+### Provider Configuration
 ```bash
-aws ses verify-email-identity --email-address test@example.com
+# Set Resend API key (required)
+wrangler secret put RESEND_API_KEY
+# Key format: re_xxxxxxxxxx
 ```
+
+### Rate Limit Details
+- **Daily**: 100 emails/day (resets at midnight UTC)
+- **Monthly**: 3000 emails/month (resets on 1st)
+- **Storage**: Cloudflare KV (`RATE_LIMITS` namespace)
+- **Key**: `email_rate_limit:global`
+
+### Future Provider Support
+The email module uses a provider abstraction pattern. To add a new provider:
+1. Add variant to `EmailProvider` enum in `email/mod.rs`
+2. Create provider file (e.g., `email/postmark.rs`)
+3. Implement `send_via_{provider}()` function
+4. Add dispatch case in `send_email()`
+
+### Migration Notes (AWS SES → Resend)
+- **Reason**: AWS SES production access rejected
+- **Deprecated**: `crates/email-proxy/` (Lambda + SES) - commented out in workspace
+- **AWS_NOTES.md**: Retained for reference if SES access approved later
 
 ---
 
@@ -1549,6 +1560,130 @@ apps/docsign-tauri/
 | Security audit | P0 | ✅ DONE |
 | Documentation | P1 | ✅ DONE |
 
+---
+
+### Phase 6: User Authentication & Resend Direct Integration 🚧 IN PROGRESS
+
+**Goal:** Add user accounts for senders with free tier limits, replace Mayo with direct Resend API.
+
+| Task | Priority | Status |
+|------|----------|--------|
+| Add USERS and AUTH_SESSIONS KV namespaces | P0 | ⏳ PENDING |
+| Create auth module (Argon2 password hashing) | P0 | ⏳ PENDING |
+| Create JWT token generation/validation | P0 | ⏳ PENDING |
+| Add register/login/logout endpoints | P0 | ⏳ PENDING |
+| Add email verification endpoint | P0 | ⏳ PENDING |
+| Create direct Resend API client (resend.rs) | P0 | ⏳ PENDING |
+| Add global email quota tracking (100/day, 3000/month) | P0 | ⏳ PENDING |
+| Create frontend auth.ts module | P0 | ⏳ PENDING |
+| Create auth.html page (geriatric UX) | P0 | ⏳ PENDING |
+| Update index.html to require auth for senders | P0 | ⏳ PENDING |
+| Enforce 1 doc/day limit for free tier | P0 | ⏳ PENDING |
+| Delete mayo.rs and remove Mayo references | P1 | ⏳ PENDING |
+
+**Phase 6 Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    USER AUTHENTICATION FLOW                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  SENDER (auth.html)                                              │
+│       ↓                                                          │
+│  1. Register (email, password, name)                             │
+│       → POST /auth/register                                      │
+│       → Argon2id password hash stored in KV                      │
+│       → Verification email sent via Resend                       │
+│       ↓                                                          │
+│  2. Verify email (click link)                                    │
+│       → GET /auth/verify-email?token=xxx                         │
+│       → email_verified = true                                    │
+│       ↓                                                          │
+│  3. Login                                                        │
+│       → POST /auth/login                                         │
+│       → Returns JWT access_token (7d) + refresh_token (30d)      │
+│       → Stored in localStorage                                   │
+│       ↓                                                          │
+│  4. Create signing session (requires auth)                       │
+│       → POST /session (Authorization: Bearer {token})            │
+│       → Check: email_verified? daily_doc_count < limit?          │
+│       → Increment daily_doc_count                                │
+│                                                                  │
+│  RECIPIENT (sign.html) - No changes                              │
+│       → Magic link auth continues (session + recipient + key)    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**KV Schema:**
+
+```
+USERS namespace:
+  user:{user_id} → {
+    id, email, email_verified, password_hash,
+    tier: "free"|"pro", created_at,
+    daily_document_count, daily_reset_at
+  }
+  user_email:{email} → user_id (index)
+
+AUTH_SESSIONS namespace:
+  auth_session:{token} → {user_id, created_at, expires_at}  TTL: 7d
+  refresh_token:{token} → {user_id, session_id, expires_at}  TTL: 30d
+
+RATE_LIMITS namespace (existing):
+  email_quota:global → {daily_count, daily_reset_at, monthly_count, monthly_reset_at}
+```
+
+**Free Tier Limits:**
+- 1 document signing session per 24 hours
+- Resets at midnight UTC
+- Pro tier (future): unlimited documents
+
+**Email Quota (Global):**
+- 100 emails/day (Resend free tier)
+- 3000 emails/month (Resend free tier)
+- Tracked in RATE_LIMITS KV namespace
+
+**Files to Create:**
+```
+apps/docsign-web/worker/src/auth/
+├── mod.rs          # Module exports
+├── password.rs     # Argon2id hashing
+├── jwt.rs          # JWT generation/validation
+└── handlers.rs     # HTTP route handlers
+
+apps/docsign-web/worker/src/email/
+└── resend.rs       # Direct Resend API client (replaces mayo.rs)
+
+apps/docsign-web/src/ts/
+└── auth.ts         # Frontend auth module
+
+apps/docsign-web/www/
+└── auth.html       # Login/register page
+```
+
+**Files to Modify:**
+```
+apps/docsign-web/worker/wrangler.toml    # Add USERS, AUTH_SESSIONS bindings
+apps/docsign-web/worker/Cargo.toml       # Add argon2, jsonwebtoken deps
+apps/docsign-web/worker/src/lib.rs       # Add auth routes, session auth check
+apps/docsign-web/worker/src/email/mod.rs # Switch to resend, add quota check
+apps/docsign-web/src/ts/main.ts          # Export auth module
+apps/docsign-web/www/index.html          # Require auth, show user state
+```
+
+**Dependencies to Add (worker/Cargo.toml):**
+```toml
+argon2 = { version = "0.5", default-features = false, features = ["std"] }
+jsonwebtoken = "9.2"
+```
+
+**Secrets to Configure:**
+```bash
+wrangler secret put RESEND_API_KEY   # From resend.com dashboard
+wrangler secret put JWT_SECRET       # openssl rand -base64 32
+```
+
 **Phase 5 Deliverables (Dec 30, 2025):**
 
 ```
@@ -1884,8 +2019,8 @@ apps/docsign-tauri/             # Desktop application ✅ Phase 4
 ---
 
 **Document Identifier:** DOCSIGN_PLAN
-**Version:** 1.7
-**Last Updated:** December 30, 2025
+**Version:** 2.0
+**Last Updated:** January 3, 2026
 **Authors:** Claude Code (AI-assisted planning)
 
 ---
@@ -1894,6 +2029,9 @@ apps/docsign-tauri/             # Desktop application ✅ Phase 4
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.0 | 2026-01-03 | **User Auth & Resend Direct**: Added user accounts (Argon2 + JWT), email verification, 1 doc/day free tier limit, direct Resend API (replacing Mayo), global email quota enforcement. |
+| 1.9 | 2026-01-01 | **Email Migration**: AWS SES → Resend API. Provider-agnostic email module in Cloudflare Worker. Rate limits: 100/day, 3000/month. Deprecated `crates/email-proxy/`. |
+| 1.8 | 2025-12-31 | Production deployment preparation, DDoS mitigations |
 | 1.7 | 2025-12-30 | UX fixes applied: 18px fonts, simplified consent, typed signature default, modal confirmation, 8 browser regression tests, 42 property tests |
 | 1.6 | 2025-12-30 | **ALL PHASES COMPLETE**: Accessibility audit, security audit, performance optimization, documentation, 381 total tests |
 | 1.5 | 2025-12-30 | Phase 4 complete: Tauri desktop app, native file dialogs, printing, system tray, auto-update, 105 property tests |

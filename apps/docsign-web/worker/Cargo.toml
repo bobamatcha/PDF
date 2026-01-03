@@ -19,5 +19,11 @@ worker = "0.7"
 hmac = "0.12"
 sha2 = "0.10"
 
+# User authentication
+argon2 = { version = "0.5", default-features = false, features = ["std"] }
+jsonwebtoken = "9.2"
+uuid = { version = "1", default-features = false, features = ["v4", "js"] }
+getrandom = { version = "0.2", features = ["js"] }
+
 [dev-dependencies]
 proptest = { workspace = true }
