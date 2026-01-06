@@ -313,40 +313,39 @@
             color: var(--text-secondary);
         }
 
-        /* Show password toggle */
+        /* Show password toggle - placed BELOW input to avoid browser password manager icon overlap */
         .password-wrapper {
-            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
         }
 
-        /* CRITICAL: Prevent placeholder text from overlapping Show button */
         .password-wrapper .form-input {
-            padding-right: 85px;
-            text-overflow: ellipsis;
-            overflow: hidden;
-            white-space: nowrap;
+            width: 100%;
         }
 
-        /* Placeholder text truncation for password fields */
-        .password-wrapper .form-input::placeholder {
-            text-overflow: ellipsis;
-            overflow: hidden;
-            white-space: nowrap;
+        .show-password-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            user-select: none;
         }
 
-        .show-password-btn {
-            position: absolute;
-            right: 1rem;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
+        .show-password-toggle input[type="checkbox"] {
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            accent-color: var(--accent-primary);
+        }
+
+        .show-password-toggle label {
+            font-size: 16px;
             color: var(--text-secondary);
             cursor: pointer;
-            padding: 0.5rem;
-            font-size: 16px;
         }
 
-        .show-password-btn:hover {
+        .show-password-toggle:hover label {
             color: var(--accent-primary);
         }
 
@@ -415,7 +414,10 @@
                                required
                                autocomplete="current-password"
                                placeholder="Enter your password">
-                        <button type="button" class="show-password-btn" onclick="togglePassword('loginPassword', this)">Show</button>
+                        <div class="show-password-toggle">
+                            <input type="checkbox" id="showLoginPassword" onchange="togglePasswordCheckbox('loginPassword', this.checked)">
+                            <label for="showLoginPassword">Show password</label>
+                        </div>
                     </div>
                 </div>
 
@@ -463,7 +465,10 @@
                                autocomplete="new-password"
                                placeholder="Create a password"
                                oninput="validatePasswordInput()">
-                        <button type="button" class="show-password-btn" onclick="togglePassword('registerPassword', this)">Show</button>
+                        <div class="show-password-toggle">
+                            <input type="checkbox" id="showRegisterPassword" onchange="togglePasswordCheckbox('registerPassword', this.checked)">
+                            <label for="showRegisterPassword">Show password</label>
+                        </div>
                     </div>
                     <ul class="password-requirements" id="passwordRequirements">
                         <li id="req-length">At least 8 characters</li>
@@ -482,7 +487,10 @@
                                required
                                autocomplete="new-password"
                                placeholder="Confirm password">
-                        <button type="button" class="show-password-btn" onclick="togglePassword('registerConfirm', this)">Show</button>
+                        <div class="show-password-toggle">
+                            <input type="checkbox" id="showRegisterConfirm" onchange="togglePasswordCheckbox('registerConfirm', this.checked)">
+                            <label for="showRegisterConfirm">Show password</label>
+                        </div>
                     </div>
                     <p class="form-error" id="confirmError">Passwords do not match</p>
                 </div>
@@ -490,11 +498,6 @@
                 <button type="submit" class="btn btn-primary" id="registerBtn">
                     Create Account
                 </button>
-
-                <p style="text-align: center; margin-top: 1.5rem; font-size: 16px; color: var(--text-secondary); font-style: italic; line-height: 1.5; padding: 0 1rem;">
-                    All accounts enjoy a daily complimentary signing ceremony<br>
-                    <span style="font-size: 14px;">(no credit card required)</span>
-                </p>
             </form>
 
             <!-- Forgot Password Form -->
@@ -525,15 +528,10 @@
                 </div>
             </form>
         </div>
-
-        <!-- Back to main site -->
-        <div class="back-link">
-            <a href="index.html" class="btn-link">Back to Document Signing</a>
-        </div>
     </main>
 
     <!-- Scripts -->
-    <script src="js/bundle.js"></script>
+    <script type="module" src="js/bundle.js"></script>
     <script>
         // Wait for DocSign to be available
         function waitForDocSign() {
@@ -587,16 +585,10 @@
             document.getElementById('alert').classList.remove('visible');
         }
 
-        // Toggle password visibility
-        function togglePassword(inputId, btn) {
+        // Toggle password visibility (checkbox-based to avoid browser password manager icon overlap)
+        function togglePasswordCheckbox(inputId, show) {
             const input = document.getElementById(inputId);
-            if (input.type === 'password') {
-                input.type = 'text';
-                btn.textContent = 'Hide';
-            } else {
-                input.type = 'password';
-                btn.textContent = 'Show';
-            }
+            input.type = show ? 'text' : 'password';
         }
 
         // Validate password requirements in real-time
@@ -743,8 +735,15 @@
                 window.location.href = 'index.html';
             }
 
-            // Check URL for verification success
+            // Check URL params
             const params = new URLSearchParams(window.location.search);
+
+            // Handle tab selection from URL (e.g., ?tab=register)
+            if (params.get('tab') === 'register') {
+                showForm('register');
+            }
+
+            // Check for verification success
             if (params.get('verified') === 'true') {
                 showAlert('Email verified successfully! You can now sign in.', 'success');
             }

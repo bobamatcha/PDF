@@ -18,6 +18,16 @@ echo "🔍 Running pre-commit checks..."
 
 cd "$PROJECT_ROOT"
 
+# Check for misconfigured build output directories
+# docsign-web should output to www/dist, NOT dist/
+if [[ -d "$PROJECT_ROOT/apps/docsign-web/dist" ]]; then
+    echo "❌ apps/docsign-web/dist/ exists but shouldn't!"
+    echo "   Trunk should output to www/dist/, not dist/"
+    echo "   This usually means Trunk.toml was misconfigured."
+    echo "   Fix: Remove dist/ and ensure Trunk.toml has: dist = \"www/dist\""
+    exit 1
+fi
+
 # Format check
 echo "  Checking formatting..."
 if ! cargo fmt --all -- --check; then

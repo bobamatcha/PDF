@@ -1,5 +1,6 @@
 //! Authentication types and data structures
 
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 /// User tier for rate limiting
@@ -30,11 +31,12 @@ pub struct User {
     /// Name for display purposes
     #[serde(default)]
     pub name: String,
-    /// Number of documents created today (free tier limit)
-    #[serde(default)]
-    pub daily_document_count: u32,
-    /// When the daily counter resets (ISO 8601)
-    pub daily_reset_at: String,
+    /// Number of documents created this week (free tier limit: 1/week)
+    #[serde(default, alias = "daily_document_count")]
+    pub weekly_document_count: u32,
+    /// When the weekly counter resets (ISO 8601, Monday 00:00 UTC)
+    #[serde(alias = "daily_reset_at")]
+    pub weekly_reset_at: String,
     /// Last login timestamp
     #[serde(default)]
     pub last_login_at: Option<String>,
@@ -46,8 +48,17 @@ pub struct User {
 impl User {
     /// Create a new user with default values
     pub fn new(id: String, email: String, password_hash: String, name: String) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
-        let tomorrow = (chrono::Utc::now() + chrono::Duration::days(1))
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
+
+        // Calculate next Monday at 00:00 UTC for weekly reset
+        let days_until_monday = (8 - now.weekday().num_days_from_monday()) % 7;
+        let days_until_monday = if days_until_monday == 0 {
+            7
+        } else {
+            days_until_monday
+        };
+        let next_monday = (now + chrono::Duration::days(days_until_monday as i64))
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .unwrap()
@@ -60,11 +71,11 @@ impl User {
             email_verified: false,
             password_hash,
             tier: UserTier::Free,
-            created_at: now.clone(),
-            updated_at: now,
+            created_at: now_str.clone(),
+            updated_at: now_str,
             name,
-            daily_document_count: 0,
-            daily_reset_at: tomorrow,
+            weekly_document_count: 0,
+            weekly_reset_at: next_monday,
             last_login_at: None,
             login_count: 0,
         }
@@ -74,16 +85,16 @@ impl User {
     pub fn can_create_document(&self) -> bool {
         match self.tier {
             UserTier::Pro => true,
-            UserTier::Free => self.daily_document_count < 1,
+            UserTier::Free => self.weekly_document_count < 1,
         }
     }
 
-    /// Get remaining documents for today
+    /// Get remaining documents for this week
     pub fn documents_remaining(&self) -> u32 {
         match self.tier {
             UserTier::Pro => u32::MAX,
             UserTier::Free => {
-                if self.daily_document_count >= 1 {
+                if self.weekly_document_count >= 1 {
                     0
                 } else {
                     1
@@ -221,17 +232,22 @@ pub struct UserPublic {
     pub email: String,
     pub name: String,
     pub tier: UserTier,
-    pub daily_documents_remaining: u32,
+    pub weekly_documents_remaining: u32,
+    /// Backward compat: also include under old name
+    #[serde(rename = "daily_documents_remaining")]
+    pub _daily_documents_remaining: u32,
 }
 
 impl From<&User> for UserPublic {
     fn from(user: &User) -> Self {
+        let remaining = user.documents_remaining();
         Self {
             id: user.id.clone(),
             email: user.email.clone(),
             name: user.name.clone(),
             tier: user.tier,
-            daily_documents_remaining: user.documents_remaining(),
+            weekly_documents_remaining: remaining,
+            _daily_documents_remaining: remaining,
         }
     }
 }
@@ -253,8 +269,8 @@ mod tests {
         assert!(user.can_create_document());
         assert_eq!(user.documents_remaining(), 1);
 
-        // After using 1 document
-        user.daily_document_count = 1;
+        // After using 1 document this week
+        user.weekly_document_count = 1;
         assert!(!user.can_create_document());
         assert_eq!(user.documents_remaining(), 0);
 
@@ -275,5 +291,30 @@ mod tests {
         let json = serde_json::to_string(&user).unwrap();
         assert!(json.contains("test@example.com"));
         assert!(json.contains("free")); // tier serialized as lowercase
+        assert!(json.contains("weekly_document_count"));
+    }
+
+    #[test]
+    fn test_weekly_reset_calculation() {
+        let user = User::new(
+            "test-id".to_string(),
+            "test@example.com".to_string(),
+            "hash".to_string(),
+            "Test".to_string(),
+        );
+
+        // weekly_reset_at should be a valid RFC3339 timestamp
+        let reset_time = chrono::DateTime::parse_from_rfc3339(&user.weekly_reset_at);
+        assert!(
+            reset_time.is_ok(),
+            "weekly_reset_at should be valid RFC3339"
+        );
+
+        // It should be in the future
+        let reset = reset_time.unwrap();
+        assert!(
+            reset > chrono::Utc::now(),
+            "weekly_reset_at should be in the future"
+        );
     }
 }

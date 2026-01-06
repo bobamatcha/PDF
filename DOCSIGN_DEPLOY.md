@@ -146,7 +146,7 @@ npm run build
 trunk build --release
 ```
 
-This creates a `dist/` folder with all the files.
+This creates a `www/dist/` folder with all the files.
 
 ### Step 6: Deploy Frontend to Cloudflare Pages
 
@@ -154,7 +154,7 @@ This creates a `dist/` folder with all the files.
 
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com) → Pages
 2. Create new project → "Upload assets"
-3. Upload the `apps/docsign-web/dist/` folder
+3. Upload the `apps/docsign-web/www/dist/` folder
 4. Set custom domain to `getsignatures.org`
 
 **Option B: Via CLI**
@@ -163,7 +163,7 @@ This creates a `dist/` folder with all the files.
 cd apps/docsign-web
 
 # Deploy to Pages (first time creates the project)
-wrangler pages deploy dist --project-name=getsignatures
+wrangler pages deploy www/dist --project-name=getsignatures
 ```
 
 ### Step 7: Configure DNS
@@ -317,7 +317,7 @@ wrangler rollback
 cd apps/docsign-web/worker && wrangler deploy
 
 # Deploy frontend
-cd apps/docsign-web && trunk build --release && wrangler pages deploy dist
+cd apps/docsign-web && trunk build --release && wrangler pages deploy www/dist
 
 # Check worker logs
 wrangler tail

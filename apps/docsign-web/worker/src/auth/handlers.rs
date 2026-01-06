@@ -2,6 +2,8 @@
 //!
 //! Implements: register, verify-email, login, refresh, logout, forgot-password, reset-password
 
+use chrono::Datelike;
+
 use super::jwt::{
     extract_bearer_token, generate_access_token, generate_refresh_token, validate_access_token,
     validate_refresh_token, ACCESS_TOKEN_EXPIRY,
@@ -403,12 +405,19 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Check and reset daily document counter if needed
+    // Check and reset weekly document counter if needed
     let now = chrono::Utc::now();
-    if let Ok(reset_at) = chrono::DateTime::parse_from_rfc3339(&user.daily_reset_at) {
-        if now > reset_at {
-            user.daily_document_count = 0;
-            user.daily_reset_at = (now + chrono::Duration::days(1))
+    if let Ok(reset_at) = chrono::DateTime::parse_from_rfc3339(&user.weekly_reset_at) {
+        if now >= reset_at {
+            user.weekly_document_count = 0;
+            // Calculate next Monday at 00:00 UTC
+            let days_until_monday = (8 - now.weekday().num_days_from_monday()) % 7;
+            let days_until_monday = if days_until_monday == 0 {
+                7
+            } else {
+                days_until_monday
+            };
+            user.weekly_reset_at = (now + chrono::Duration::days(days_until_monday as i64))
                 .date_naive()
                 .and_hms_opt(0, 0, 0)
                 .unwrap()

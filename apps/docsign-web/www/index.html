@@ -22,6 +22,8 @@
     <!-- PDF.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="ltv-timestamp.js" defer></script>
+    <!-- TypeScript bundle for auth and other features -->
+    <script type="module" src="js/bundle.js"></script>
     <style>
         :root {
             --bg-primary: #f5f5f5;
@@ -1377,6 +1379,129 @@
             border-radius: 6px;
             background: white;
         }
+
+        /* Landing Page - shown when not authenticated */
+        .landing-page {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+
+        .landing-content {
+            text-align: center;
+            padding: 2rem;
+            max-width: 600px;
+        }
+
+        .landing-title {
+            font-size: 48px;
+            color: white;
+            margin-bottom: 1rem;
+            font-weight: 700;
+        }
+
+        .landing-tagline {
+            font-size: 24px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 3rem;
+            line-height: 1.4;
+        }
+
+        .landing-buttons {
+            display: flex;
+            gap: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .landing-btn {
+            min-width: 200px;
+            padding: 1rem 2rem;
+            font-size: 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 60px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .landing-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .landing-btn.btn-primary {
+            background: #1e40af;
+            color: white;
+            border: none;
+        }
+
+        .landing-btn.btn-secondary {
+            background: transparent;
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+        }
+
+        .landing-btn.btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: white;
+        }
+
+        /* Responsive landing page */
+        @media (max-width: 600px) {
+            .landing-title {
+                font-size: 36px;
+            }
+            .landing-tagline {
+                font-size: 20px;
+            }
+            .landing-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            .landing-btn {
+                width: 100%;
+                max-width: 300px;
+            }
+        }
+
+        /* App container - hidden when not authenticated */
+        #app-container.hidden {
+            display: none !important;
+        }
+
+        /* Rotating tagline animation - fade with blur effect */
+        .tagline-text {
+            display: inline-block;
+            transition: opacity 0.5s ease, filter 0.5s ease;
+        }
+
+        .tagline-text.fade-out {
+            opacity: 0;
+            filter: blur(4px);
+        }
+
+        .tagline-text.fade-in {
+            opacity: 1;
+            filter: blur(0);
+        }
+
+        /* Respect reduced motion preference */
+        @media (prefers-reduced-motion: reduce) {
+            .tagline-text {
+                transition: none;
+            }
+            .tagline-text.fade-out,
+            .tagline-text.fade-in {
+                opacity: 1;
+                filter: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1385,13 +1510,61 @@
 
     <div id="loading-overlay" class="loading-overlay" role="alert" aria-live="polite" aria-label="Loading application">
         <div class="spinner" aria-hidden="true"></div>
-        <span class="sr-only">Loading Get Signatures...</span>
+        <p id="loading-message" style="color: white; font-size: 18px; margin-top: 16px;">Loading Get Signatures...</p>
     </div>
 
-    <!-- Ghost field for placement -->
-    <div id="ghost-field" class="ghost-field hidden" aria-hidden="true"></div>
+    <!-- Landing Page - shown when NOT authenticated -->
+    <div id="landing-page" class="landing-page hidden">
+        <div class="landing-content">
+            <h1 class="landing-title">Get Signatures</h1>
+            <p class="landing-tagline" aria-live="polite"><span class="tagline-text">Less friction. Faster signatures.</span></p>
+            <div class="landing-buttons">
+                <a href="auth.html" class="landing-btn btn-primary">Sign In</a>
+                <a href="auth.html?tab=register" class="landing-btn btn-secondary">Create Account</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        // Rotating taglines - purely client-side, no server cost
+        (function() {
+            const taglines = [
+                "Less friction. Faster signatures.",
+                "Fewer steps. Faster signing.",
+                "Get documents signed, faster",
+                "Signing without unnecessary steps",
+                "Faster signing from start to finish"
+            ];
 
-    <header class="header" role="banner">
+            let currentIndex = 0;
+
+            function rotateTagline() {
+                const taglineEl = document.querySelector('.tagline-text');
+                if (!taglineEl) return;
+
+                taglineEl.classList.add('fade-out');
+
+                setTimeout(() => {
+                    currentIndex = (currentIndex + 1) % taglines.length;
+                    taglineEl.textContent = taglines[currentIndex];
+                    taglineEl.classList.remove('fade-out');
+                }, 500);
+            }
+
+            // Start rotation after page loads, rotate every 4 seconds
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => setInterval(rotateTagline, 4000));
+            } else {
+                setInterval(rotateTagline, 4000);
+            }
+        })();
+    </script>
+
+    <!-- App Container - shown when authenticated -->
+    <div id="app-container" class="hidden">
+        <!-- Ghost field for placement -->
+        <div id="ghost-field" class="ghost-field hidden" aria-hidden="true"></div>
+
+        <header class="header" role="banner">
         <h1>Get Signatures</h1>
         <div class="header-actions">
             <span id="doc-name" style="color: rgba(255,255,255,0.8); font-size: 0.875rem;"></span>
@@ -1883,6 +2056,8 @@
         </div>
     </div>
 
+    </div><!-- End app-container -->
+
     <script type="module">
         // Wait for trunk's WASM module to complete initialization
         // Trunk exposes bindings on window.wasmBindings after init
@@ -2109,9 +2284,9 @@
             ]);
 
             try {
-                console.log('Starting WASM init...');
-                await timeout(init(), 10000, 'WASM init');
-                console.log('WASM init complete, starting storage...');
+                // Note: WASM module is already initialized by Trunk's generated code
+                // (see the <script type="module"> in <head> that calls init())
+                console.log('WASM already initialized by Trunk, starting storage...');
 
                 try {
                     state.storage = await timeout(init_storage(), 5000, 'Storage init');
@@ -2133,6 +2308,11 @@
                     await checkForSigningLink();
                 } else {
                     // Sender flow - requires authentication
+                    const loadingMessage = document.getElementById('loading-message');
+                    if (loadingMessage) {
+                        loadingMessage.textContent = 'Checking authentication...';
+                    }
+
                     // Wait for DocSign namespace to be available
                     let authCheckAttempts = 0;
                     while (!window.DocSign?.isAuthenticated && authCheckAttempts < 20) {
@@ -2142,10 +2322,22 @@
 
                     // Check if authenticated
                     if (window.DocSign?.isAuthenticated && !window.DocSign.isAuthenticated()) {
-                        // Not authenticated - redirect to auth page
-                        console.log('User not authenticated, redirecting to auth.html');
-                        window.location.href = 'auth.html';
+                        // Not authenticated - show landing page
+                        console.log('User not authenticated, showing landing page');
+                        elements.loadingOverlay.classList.add('hidden');
+                        const landingPage = document.getElementById('landing-page');
+                        const appContainer = document.getElementById('app-container');
+                        if (landingPage) {
+                            landingPage.classList.remove('hidden');
+                        }
+                        if (appContainer) {
+                            appContainer.classList.add('hidden');
+                        }
                         return;
+                    }
+
+                    if (loadingMessage) {
+                        loadingMessage.textContent = 'Loading application...';
                     }
 
                     // Show user info in header
@@ -2158,7 +2350,7 @@
 
                             if (userInfoEl && userEmailEl && docsRemainingEl) {
                                 userEmailEl.textContent = user.email;
-                                docsRemainingEl.textContent = `(${user.daily_documents_remaining} doc${user.daily_documents_remaining !== 1 ? 's' : ''} left today)`;
+                                docsRemainingEl.textContent = `(${user.weekly_documents_remaining ?? user.daily_documents_remaining} doc${(user.weekly_documents_remaining ?? user.daily_documents_remaining) !== 1 ? 's' : ''} left this week)`;
                                 userInfoEl.classList.remove('hidden');
                                 userInfoEl.style.display = 'flex';
                             }
@@ -2187,6 +2379,12 @@
                             console.error('Failed to load agentPDF document:', loadErr);
                             showToast('Failed to load document: ' + loadErr.message);
                         }
+                    }
+
+                    // Show the app container
+                    const appContainer = document.getElementById('app-container');
+                    if (appContainer) {
+                        appContainer.classList.remove('hidden');
                     }
 
                     elements.loadingOverlay.classList.add('hidden');

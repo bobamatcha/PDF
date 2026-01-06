@@ -10,6 +10,8 @@
 
 | Date | Phase | Milestone | Details |
 |------|-------|-----------|---------|
+| 2026-01-06 | UX Overhaul | ✅ Landing Page Redesign + CORS Fix | Fixed CORS headers (Authorization), clean landing page with Sign In/Create Account buttons, removed "free account" text, removed back links from auth page |
+| 2026-01-05 | Bugfixes | ✅ Init Error + Auth UX + Weekly Limits | Fixed WASM init error, added auth-required modal, changed rate limit from 1/day to 1/week |
 | 2025-12-30 | Phase 0 | ✅ Foundation Complete | TypeScript build, PDF preview, property tests, geriatric CSS |
 | 2025-12-30 | Phase 1 | ✅ Geriatric UX Overhaul | Integrated geriatric.css, 60px buttons, error system, 39 property tests |
 | 2025-12-30 | Phase 2 | ✅ Local-First Session | LocalSessionManager, offline signing, SyncManager, 55 property tests |

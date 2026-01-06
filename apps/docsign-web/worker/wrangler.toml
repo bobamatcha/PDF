@@ -29,12 +29,12 @@ id = "1929d880b7944f239a91032379a39eec"
 # Create with: wrangler kv namespace create USERS
 [[kv_namespaces]]
 binding = "USERS"
-id = "PLACEHOLDER_USERS_ID"
+id = "bfa8b86b600641b18c8b326b7245384b"
 
 # Create with: wrangler kv namespace create AUTH_SESSIONS
 [[kv_namespaces]]
 binding = "AUTH_SESSIONS"
-id = "PLACEHOLDER_AUTH_SESSIONS_ID"
+id = "4eb009c51065436fb761c3b640400da3"
 
 # Environment variables (non-secret)
 [vars]
@@ -74,8 +74,8 @@ id = "1929d880b7944f239a91032379a39eec"
 
 [[env.production.kv_namespaces]]
 binding = "USERS"
-id = "PLACEHOLDER_USERS_ID"
+id = "bfa8b86b600641b18c8b326b7245384b"
 
 [[env.production.kv_namespaces]]
 binding = "AUTH_SESSIONS"
-id = "PLACEHOLDER_AUTH_SESSIONS_ID"
+id = "4eb009c51065436fb761c3b640400da3"
