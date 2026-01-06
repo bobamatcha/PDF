@@ -213,6 +213,20 @@ import type {
   AuthStateChangeEvent,
 } from "./auth";
 
+// Import loading overlay with jokes
+import {
+  initLoadingOverlay,
+  showLoadingOverlay,
+  hideLoadingOverlay,
+  updateLoadingStatus,
+  withLoadingOverlay,
+  initLoadingNamespace,
+} from "./loading-overlay";
+
+// Import jokes module
+import { getRandomJoke, resetJokeHistory, JOKES } from "./jokes";
+import type { Joke } from "./jokes";
+
 // Re-export for backwards compatibility and external access
 export {
   // PDF modules
@@ -291,6 +305,16 @@ export {
   validateEmail,
   onAuthStateChange,
   initAuthNamespace,
+  // Loading overlay exports
+  initLoadingOverlay,
+  showLoadingOverlay,
+  hideLoadingOverlay,
+  updateLoadingStatus,
+  withLoadingOverlay,
+  initLoadingNamespace,
+  getRandomJoke,
+  resetJokeHistory,
+  JOKES,
 };
 
 export type {
@@ -341,6 +365,8 @@ export type {
   RefreshResponse,
   AuthResponse,
   AuthStateChangeEvent,
+  // Loading overlay types
+  Joke,
 };
 
 /**
@@ -363,6 +389,10 @@ function init(): void {
 
   // Initialize authentication module on window.DocSign
   initAuthNamespace();
+
+  // Initialize loading overlay with jokes
+  initLoadingOverlay();
+  initLoadingNamespace();
 
   // Initialize SyncManager with configurable endpoint
   const syncEndpoint =
@@ -426,6 +456,7 @@ function init(): void {
   log.debug("SignatureCaptureModal available:", typeof SignatureCaptureModal !== "undefined");
   log.debug("Auth module available:", typeof isAuthenticated !== "undefined");
   log.debug("User authenticated:", isAuthenticated());
+  log.debug("Loading overlay available:", typeof showLoadingOverlay !== "undefined");
 }
 
 // Initialize when DOM is ready

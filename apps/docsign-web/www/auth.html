@@ -716,7 +716,8 @@
 
             try {
                 const result = await window.DocSign.forgotPassword(email);
-                showAlert(result.message, 'success');
+                // Show success or error based on result
+                showAlert(result.message, result.success ? 'success' : 'error');
                 btn.disabled = false;
                 btn.textContent = 'Send Reset Link';
             } catch (error) {

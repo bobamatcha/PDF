@@ -26,8 +26,8 @@ const REFRESH_TOKEN_KEY = "docsign_refresh_token";
 /** Storage key for user data */
 const USER_KEY = "docsign_user";
 
-/** API base URL - Cloudflare Worker */
-const API_BASE = "https://docsign-worker.orlandodowntownhome.workers.dev";
+/** API base URL - Cloudflare Worker (production) */
+const API_BASE = "https://api.getsignatures.org";
 
 // ============================================
 // Types
@@ -438,7 +438,7 @@ export async function authenticatedFetch(
  * Request password reset email
  *
  * @param email - Email address to send reset link
- * @returns Result (always success to prevent email enumeration)
+ * @returns Result with explicit error if email not found
  */
 export async function forgotPassword(email: string): Promise<AuthResponse> {
   try {
@@ -451,9 +451,19 @@ export async function forgotPassword(email: string): Promise<AuthResponse> {
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+      // Return the error message from backend (e.g., "No account found with this email")
+      log.warn("Forgot password failed:", data.message);
+      return {
+        success: false,
+        message: data.message || "Unable to process request. Please try again.",
+      };
+    }
+
     return {
       success: true,
-      message: data.message || "If an account exists, a reset link has been sent.",
+      message: data.message || "A password reset link has been sent to your email.",
     };
   } catch (error) {
     log.error("Forgot password error:", error);

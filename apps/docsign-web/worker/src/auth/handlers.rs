@@ -682,16 +682,16 @@ pub async fn handle_logout(req: Request, env: Env) -> Result<Response> {
 /// POST /auth/forgot-password
 ///
 /// Initiates password reset flow.
+/// Returns explicit error if email not found (UX clarity over email enumeration protection).
 pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Response> {
     let body: ForgotPasswordRequest = match req.json().await {
         Ok(b) => b,
         Err(_) => {
-            // Always return success to prevent email enumeration
             return json_response(
-                200,
+                400,
                 &AuthResponse {
-                    success: true,
-                    message: "If an account exists, a reset link has been sent.".to_string(),
+                    success: false,
+                    message: "Invalid request. Please enter your email address.".to_string(),
                 },
             );
         }
@@ -699,39 +699,49 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
 
     let users_kv = env.kv("USERS")?;
 
-    // Check if user exists
-    if let Some(user) = get_user_by_email(&users_kv, &body.email).await? {
-        // Create password reset token
-        let reset_token = generate_token();
-        let reset = PasswordReset {
-            user_id: user.id.clone(),
-            email: user.email.clone(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            expires_at: (chrono::Utc::now() + chrono::Duration::seconds(PASSWORD_RESET_TTL as i64))
-                .to_rfc3339(),
-        };
+    // Check if user exists - return explicit error if not found
+    let user = match get_user_by_email(&users_kv, &body.email).await? {
+        Some(u) => u,
+        None => {
+            return json_response(
+                404,
+                &AuthResponse {
+                    success: false,
+                    message: "No account found with this email address. Please check the email or create a new account.".to_string(),
+                },
+            );
+        }
+    };
 
-        let verifications_kv = env.kv("VERIFICATIONS")?;
-        let reset_key = format!("password_reset:{}", reset_token);
-        verifications_kv
-            .put(&reset_key, serde_json::to_string(&reset)?)?
-            .expiration_ttl(PASSWORD_RESET_TTL)
-            .execute()
-            .await?;
+    // Create password reset token
+    let reset_token = generate_token();
+    let reset = PasswordReset {
+        user_id: user.id.clone(),
+        email: user.email.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        expires_at: (chrono::Utc::now() + chrono::Duration::seconds(PASSWORD_RESET_TTL as i64))
+            .to_rfc3339(),
+    };
 
-        // TODO: Send password reset email via Resend
-        console_log!(
-            "Password reset link: /auth/reset-password?token={}",
-            reset_token
-        );
-    }
+    let verifications_kv = env.kv("VERIFICATIONS")?;
+    let reset_key = format!("password_reset:{}", reset_token);
+    verifications_kv
+        .put(&reset_key, serde_json::to_string(&reset)?)?
+        .expiration_ttl(PASSWORD_RESET_TTL)
+        .execute()
+        .await?;
 
-    // Always return same response to prevent email enumeration
+    // TODO: Send password reset email via Resend
+    console_log!(
+        "Password reset link: /auth/reset-password?token={}",
+        reset_token
+    );
+
     json_response(
         200,
         &AuthResponse {
             success: true,
-            message: "If an account exists, a reset link has been sent.".to_string(),
+            message: "A password reset link has been sent to your email.".to_string(),
         },
     )
 }

@@ -15,6 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:perf": "vitest run --testNamePattern='performance'",
+    "test:worker": "cd worker && npm test",
+    "test:worker:watch": "cd worker && npm run test:watch",
+    "test:all": "npm test && npm run test:worker",
     "verify-dist": "./scripts/verify-dist.sh",
     "verify-dist:build": "./scripts/verify-dist.sh --build"
   },
