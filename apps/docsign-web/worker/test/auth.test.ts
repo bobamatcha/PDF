@@ -236,6 +236,100 @@ describe("Auth API Integration", () => {
     });
   });
 
+  describe("Email Verification Integration", () => {
+    it("should send verification email on registration", async () => {
+      // Register a user
+      const response = await SELF.fetch("https://worker/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "emailverify@example.com",
+          password: "ValidPass123",
+          name: "Email Verify Test",
+        }),
+      });
+
+      // Registration should succeed
+      expect(response.status).toBe(201);
+
+      const data = await response.json() as {
+        success: boolean;
+        message: string;
+        user_id: string;
+        email_sent?: boolean;
+      };
+      expect(data.success).toBe(true);
+
+      // FAILING TEST: The response should indicate email was attempted
+      // Currently the code just logs to console and doesn't report email status
+      // After fix: response should include email_sent field
+      expect(data.email_sent).toBeDefined();
+    });
+
+    it("should have resend-verification endpoint", async () => {
+      // First register a user
+      const registerResponse = await SELF.fetch("https://worker/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "resendtest@example.com",
+          password: "ValidPass123",
+          name: "Resend Test",
+        }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      // FAILING TEST: Try to resend verification email
+      // This endpoint doesn't exist yet - should return 200, not 404
+      const resendResponse = await SELF.fetch("https://worker/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "resendtest@example.com" }),
+      });
+
+      // Currently this will return 404 because the endpoint doesn't exist
+      // After fix: should return 200 (or 400/404 with proper error message)
+      expect(resendResponse.status).not.toBe(404);
+    });
+  });
+
+  describe("Password Reset Email Integration", () => {
+    it("should send password reset email when user exists", async () => {
+      // First register a user
+      const registerResponse = await SELF.fetch("https://worker/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "resetemailtest@example.com",
+          password: "ValidPass123",
+          name: "Reset Email Test",
+        }),
+      });
+      expect(registerResponse.status).toBe(201);
+
+      // Request password reset
+      const resetResponse = await SELF.fetch("https://worker/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "resetemailtest@example.com" }),
+      });
+
+      expect(resetResponse.status).toBe(200);
+
+      const data = await resetResponse.json() as {
+        success: boolean;
+        message: string;
+        email_sent?: boolean;
+      };
+      expect(data.success).toBe(true);
+
+      // FAILING TEST: Response should indicate email was attempted
+      // Currently the code just logs to console and doesn't report email status
+      // After fix: response should include email_sent field
+      expect(data.email_sent).toBeDefined();
+    });
+  });
+
   describe("Rate Limiting", () => {
     it("should have rate limit headers after multiple requests", async () => {
       // Make several requests to trigger rate limit tracking

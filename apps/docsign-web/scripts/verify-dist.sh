@@ -103,6 +103,41 @@ check_file "signature-pad.js" "Signature capture"
 check_file "sw.js" "Service worker for offline"
 
 echo ""
+echo "HTML content verification:"
+echo "--------------------------"
+
+# CRITICAL: Check that index.html was processed by Trunk (not raw source)
+# If data-trunk attributes exist, it means source HTML was deployed instead of build output
+if grep -q 'data-trunk' "$DIST_DIR/index.html" 2>/dev/null; then
+    echo -e "${RED}✗${NC} index.html contains 'data-trunk' attributes!"
+    echo -e "   This means the SOURCE file was deployed, not the Trunk build output."
+    echo -e "   The site will be stuck on 'Loading...' because WASM won't load."
+    echo -e "   Fix: Run 'trunk build --release' and deploy from www/dist"
+    FAILED=$((FAILED + 1))
+else
+    echo -e "${GREEN}✓${NC} index.html - no data-trunk attributes (properly built)"
+fi
+
+# Check that wasmBindings initialization exists (proves WASM loading code was injected)
+if grep -q 'wasmBindings' "$DIST_DIR/index.html" 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} index.html - contains wasmBindings init"
+else
+    echo -e "${RED}✗${NC} index.html missing wasmBindings initialization!"
+    echo -e "   WASM loading code was not injected by Trunk."
+    FAILED=$((FAILED + 1))
+fi
+
+# Check sign.html was also processed
+if [[ -f "$DIST_DIR/sign.html" ]]; then
+    if grep -q 'data-trunk' "$DIST_DIR/sign.html" 2>/dev/null; then
+        echo -e "${RED}✗${NC} sign.html contains 'data-trunk' attributes!"
+        FAILED=$((FAILED + 1))
+    else
+        echo -e "${GREEN}✓${NC} sign.html - no data-trunk attributes (properly copied)"
+    fi
+fi
+
+echo ""
 echo "Optional files:"
 echo "---------------"
 

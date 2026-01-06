@@ -38,8 +38,8 @@ id = "4eb009c51065436fb761c3b640400da3"
 
 # Environment variables (non-secret)
 [vars]
-ALLOW_DUPLICATE_EMAILS = "true"  # For testing - allows same email for multiple signers
-EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"  # Sender address for emails
+ALLOW_DUPLICATE_EMAILS = "false"  # Prevent same email for multiple signers
+EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"
 
 # Secrets (set via wrangler secret put):
 # wrangler secret put DOCSIGN_API_KEY      # API key for protected endpoints
@@ -55,10 +55,10 @@ workers_dev = false
 routes = [
   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
 ]
-# Production: ALLOW_DUPLICATE_EMAILS not set = defaults to false (prevents same email for multiple signers)
 
 [env.production.vars]
 EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"
+ALLOW_DUPLICATE_EMAILS = "false"
 
 [[env.production.kv_namespaces]]
 binding = "SESSIONS"

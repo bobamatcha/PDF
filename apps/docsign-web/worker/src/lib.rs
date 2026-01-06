@@ -1201,6 +1201,15 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         (Method::Post, "/auth/reset-password") => {
             cors_response(auth::handle_reset_password(req, env).await)
         }
+        (Method::Post, "/auth/resend-verification") => {
+            // Rate limit to prevent spam
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
+            cors_response(auth::handle_resend_verification(req, env).await)
+        }
 
         // Protected endpoints - require API key
         (Method::Post, "/send") => {

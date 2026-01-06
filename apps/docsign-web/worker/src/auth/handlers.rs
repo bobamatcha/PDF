@@ -1,6 +1,6 @@
 //! HTTP handlers for authentication endpoints
 //!
-//! Implements: register, verify-email, login, refresh, logout, forgot-password, reset-password
+//! Implements: register, verify-email, login, refresh, logout, forgot-password, reset-password, resend-verification
 
 use chrono::Datelike;
 
@@ -10,6 +10,7 @@ use super::jwt::{
 };
 use super::password::{hash_password, validate_email, validate_password_strength, verify_password};
 use super::types::*;
+use crate::email::{send_email, EmailSendRequest};
 use serde_json::json;
 use worker::{console_log, kv::KvStore, Env, Request, Response, Result};
 
@@ -108,6 +109,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                     success: false,
                     user_id: None,
                     message: "Invalid request body".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -121,6 +123,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 success: false,
                 user_id: None,
                 message: e,
+                email_sent: None,
             },
         );
     }
@@ -133,6 +136,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 success: false,
                 user_id: None,
                 message: e,
+                email_sent: None,
             },
         );
     }
@@ -146,6 +150,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 success: false,
                 user_id: None,
                 message: "Name must be between 1 and 100 characters".to_string(),
+                email_sent: None,
             },
         );
     }
@@ -160,6 +165,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 success: false,
                 user_id: None,
                 message: "An account with this email already exists".to_string(),
+                email_sent: None,
             },
         );
     }
@@ -175,6 +181,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                     success: false,
                     user_id: None,
                     message: "Registration failed. Please try again.".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -198,6 +205,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 success: false,
                 user_id: None,
                 message: "Registration failed. Please try again.".to_string(),
+                email_sent: None,
             },
         );
     }
@@ -220,8 +228,58 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         .execute()
         .await?;
 
-    // TODO: Send verification email via Resend
-    // For now, log the verification link
+    // Send verification email via Resend
+    let verification_url = format!(
+        "https://getsignatures.org/verify?token={}",
+        verification_token
+    );
+    let email_request = EmailSendRequest {
+        to: vec![user.email.clone()],
+        subject: "Verify your GetSignatures account".to_string(),
+        html: format!(
+            r#"<h2>Welcome to GetSignatures!</h2>
+            <p>Hi {},</p>
+            <p>Thank you for creating an account. Please click the link below to verify your email address:</p>
+            <p><a href="{}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Verify Email</a></p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>{}</p>
+            <p>This link will expire in 24 hours.</p>
+            <p>If you didn't create this account, you can safely ignore this email.</p>
+            <p>Best,<br>The GetSignatures Team</p>"#,
+            user.name, verification_url, verification_url
+        ),
+        text: Some(format!(
+            "Welcome to GetSignatures!\n\nHi {},\n\nPlease verify your email by visiting: {}\n\nThis link expires in 24 hours.\n\nIf you didn't create this account, ignore this email.",
+            user.name, verification_url
+        )),
+        reply_to: None,
+        tags: vec![
+            ("type".to_string(), "verification".to_string()),
+            ("user_id".to_string(), user_id.clone()),
+        ],
+    };
+
+    let email_result = send_email(&env, email_request).await;
+    let email_sent = match &email_result {
+        Ok(result) if result.success => {
+            console_log!(
+                "Verification email sent to {}: id={}",
+                user.email,
+                result.id
+            );
+            true
+        }
+        Ok(result) => {
+            console_log!("Failed to send verification email: {:?}", result.error);
+            false
+        }
+        Err(e) => {
+            console_log!("Email send error: {:?}", e);
+            false
+        }
+    };
+
+    // Also log for debugging
     console_log!(
         "Verification link: /auth/verify-email?token={}",
         verification_token
@@ -232,7 +290,12 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         &RegisterResponse {
             success: true,
             user_id: Some(user_id),
-            message: "Account created. Please check your email to verify your account.".to_string(),
+            message: if email_sent {
+                "Account created. Please check your email to verify your account.".to_string()
+            } else {
+                "Account created but we couldn't send the verification email. Please use the resend option to verify your account.".to_string()
+            },
+            email_sent: Some(email_sent),
         },
     )
 }
@@ -255,6 +318,7 @@ pub async fn handle_verify_email(req: Request, env: Env) -> Result<Response> {
                 &AuthResponse {
                     success: false,
                     message: "Missing verification token".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -276,6 +340,7 @@ pub async fn handle_verify_email(req: Request, env: Env) -> Result<Response> {
                 &AuthResponse {
                     success: false,
                     message: "Invalid or expired verification link".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -291,6 +356,7 @@ pub async fn handle_verify_email(req: Request, env: Env) -> Result<Response> {
                 &AuthResponse {
                     success: false,
                     message: "User not found".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -310,6 +376,7 @@ pub async fn handle_verify_email(req: Request, env: Env) -> Result<Response> {
         &AuthResponse {
             success: true,
             message: "Email verified successfully. You can now log in.".to_string(),
+            email_sent: None,
         },
     )
 }
@@ -645,6 +712,7 @@ pub async fn handle_logout(req: Request, env: Env) -> Result<Response> {
                 &AuthResponse {
                     success: true,
                     message: "Logged out".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -658,6 +726,7 @@ pub async fn handle_logout(req: Request, env: Env) -> Result<Response> {
                 &AuthResponse {
                     success: true,
                     message: "Logged out".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -675,6 +744,7 @@ pub async fn handle_logout(req: Request, env: Env) -> Result<Response> {
         &AuthResponse {
             success: true,
             message: "Logged out successfully".to_string(),
+            email_sent: None,
         },
     )
 }
@@ -692,6 +762,7 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
                 &AuthResponse {
                     success: false,
                     message: "Invalid request. Please enter your email address.".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -708,6 +779,7 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
                 &AuthResponse {
                     success: false,
                     message: "No account found with this email address. Please check the email or create a new account.".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -731,7 +803,58 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
         .execute()
         .await?;
 
-    // TODO: Send password reset email via Resend
+    // Send password reset email via Resend
+    let reset_url = format!(
+        "https://getsignatures.org/reset-password?token={}",
+        reset_token
+    );
+    let email_request = EmailSendRequest {
+        to: vec![user.email.clone()],
+        subject: "Reset your GetSignatures password".to_string(),
+        html: format!(
+            r#"<h2>Password Reset Request</h2>
+            <p>Hi {},</p>
+            <p>We received a request to reset your password. Click the link below to set a new password:</p>
+            <p><a href="{}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Reset Password</a></p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>{}</p>
+            <p>This link will expire in 1 hour.</p>
+            <p>If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
+            <p>Best,<br>The GetSignatures Team</p>"#,
+            user.name, reset_url, reset_url
+        ),
+        text: Some(format!(
+            "Password Reset Request\n\nHi {},\n\nReset your password by visiting: {}\n\nThis link expires in 1 hour.\n\nIf you didn't request this, ignore this email.",
+            user.name, reset_url
+        )),
+        reply_to: None,
+        tags: vec![
+            ("type".to_string(), "password_reset".to_string()),
+            ("user_id".to_string(), user.id.clone()),
+        ],
+    };
+
+    let email_result = send_email(&env, email_request).await;
+    let email_sent = match &email_result {
+        Ok(result) if result.success => {
+            console_log!(
+                "Password reset email sent to {}: id={}",
+                user.email,
+                result.id
+            );
+            true
+        }
+        Ok(result) => {
+            console_log!("Failed to send password reset email: {:?}", result.error);
+            false
+        }
+        Err(e) => {
+            console_log!("Email send error: {:?}", e);
+            false
+        }
+    };
+
+    // Also log for debugging
     console_log!(
         "Password reset link: /auth/reset-password?token={}",
         reset_token
@@ -741,7 +864,12 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
         200,
         &AuthResponse {
             success: true,
-            message: "A password reset link has been sent to your email.".to_string(),
+            message: if email_sent {
+                "A password reset link has been sent to your email.".to_string()
+            } else {
+                "We couldn't send the reset email. Please try again later.".to_string()
+            },
+            email_sent: Some(email_sent),
         },
     )
 }
@@ -758,6 +886,7 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
                 &AuthResponse {
                     success: false,
                     message: "Invalid request body".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -770,6 +899,7 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
             &AuthResponse {
                 success: false,
                 message: e,
+                email_sent: None,
             },
         );
     }
@@ -790,6 +920,7 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
                 &AuthResponse {
                     success: false,
                     message: "Invalid or expired reset link".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -805,6 +936,7 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
                 &AuthResponse {
                     success: false,
                     message: "User not found".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -819,6 +951,7 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
                 &AuthResponse {
                     success: false,
                     message: "Failed to reset password. Please try again.".to_string(),
+                    email_sent: None,
                 },
             );
         }
@@ -838,6 +971,142 @@ pub async fn handle_reset_password(mut req: Request, env: Env) -> Result<Respons
         &AuthResponse {
             success: true,
             message: "Password reset successfully. You can now log in.".to_string(),
+            email_sent: None,
+        },
+    )
+}
+
+/// POST /auth/resend-verification
+///
+/// Resends the verification email for an unverified account.
+pub async fn handle_resend_verification(mut req: Request, env: Env) -> Result<Response> {
+    let body: ResendVerificationRequest = match req.json().await {
+        Ok(b) => b,
+        Err(_) => {
+            return json_response(
+                400,
+                &AuthResponse {
+                    success: false,
+                    message: "Invalid request. Please enter your email address.".to_string(),
+                    email_sent: None,
+                },
+            );
+        }
+    };
+
+    let users_kv = env.kv("USERS")?;
+
+    // Get user by email
+    let user = match get_user_by_email(&users_kv, &body.email).await? {
+        Some(u) => u,
+        None => {
+            return json_response(
+                404,
+                &AuthResponse {
+                    success: false,
+                    message: "No account found with this email address.".to_string(),
+                    email_sent: None,
+                },
+            );
+        }
+    };
+
+    // Check if already verified
+    if user.email_verified {
+        return json_response(
+            400,
+            &AuthResponse {
+                success: false,
+                message: "This email is already verified. You can log in.".to_string(),
+                email_sent: None,
+            },
+        );
+    }
+
+    // Create new verification token
+    let verification_token = generate_token();
+    let verification = EmailVerification {
+        user_id: user.id.clone(),
+        email: user.email.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        expires_at: (chrono::Utc::now() + chrono::Duration::seconds(VERIFICATION_TTL as i64))
+            .to_rfc3339(),
+    };
+
+    let verifications_kv = env.kv("VERIFICATIONS")?;
+    let verification_key = format!("email_verify:{}", verification_token);
+    verifications_kv
+        .put(&verification_key, serde_json::to_string(&verification)?)?
+        .expiration_ttl(VERIFICATION_TTL)
+        .execute()
+        .await?;
+
+    // Send verification email via Resend
+    let verification_url = format!(
+        "https://getsignatures.org/verify?token={}",
+        verification_token
+    );
+    let email_request = EmailSendRequest {
+        to: vec![user.email.clone()],
+        subject: "Verify your GetSignatures account".to_string(),
+        html: format!(
+            r#"<h2>Verify Your Email</h2>
+            <p>Hi {},</p>
+            <p>You requested a new verification link. Click below to verify your email address:</p>
+            <p><a href="{}" style="background-color: #4F46E5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Verify Email</a></p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>{}</p>
+            <p>This link will expire in 24 hours.</p>
+            <p>Best,<br>The GetSignatures Team</p>"#,
+            user.name, verification_url, verification_url
+        ),
+        text: Some(format!(
+            "Verify Your Email\n\nHi {},\n\nVerify your email by visiting: {}\n\nThis link expires in 24 hours.",
+            user.name, verification_url
+        )),
+        reply_to: None,
+        tags: vec![
+            ("type".to_string(), "verification_resend".to_string()),
+            ("user_id".to_string(), user.id.clone()),
+        ],
+    };
+
+    let email_result = send_email(&env, email_request).await;
+    let email_sent = match &email_result {
+        Ok(result) if result.success => {
+            console_log!(
+                "Verification email resent to {}: id={}",
+                user.email,
+                result.id
+            );
+            true
+        }
+        Ok(result) => {
+            console_log!("Failed to resend verification email: {:?}", result.error);
+            false
+        }
+        Err(e) => {
+            console_log!("Email send error: {:?}", e);
+            false
+        }
+    };
+
+    // Also log for debugging
+    console_log!(
+        "Verification link: /auth/verify-email?token={}",
+        verification_token
+    );
+
+    json_response(
+        200,
+        &AuthResponse {
+            success: true,
+            message: if email_sent {
+                "Verification email sent. Please check your inbox.".to_string()
+            } else {
+                "We couldn't send the verification email. Please try again later.".to_string()
+            },
+            email_sent: Some(email_sent),
         },
     )
 }

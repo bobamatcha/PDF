@@ -122,6 +122,30 @@ else
     echo "  ⏭️  Skipping frontend tests (no TypeScript changes)"
 fi
 
+# Check if docsign-web build-related files changed (wasm, trunk config, www source)
+DOCSIGN_BUILD_CHANGED=false
+if echo "$STAGED_FILES" | grep -qE "^apps/docsign-web/(wasm/|www/index\.html|www/sign\.html|Trunk\.toml)"; then
+    DOCSIGN_BUILD_CHANGED=true
+fi
+
+# Verify docsign-web dist output if build files changed
+# This prevents deploying unbuilt source files (the #1 cause of "Loading..." stuck bugs)
+if [ "$DOCSIGN_BUILD_CHANGED" = true ]; then
+    echo "  Verifying docsign-web build output (build files changed)..."
+    if [ -d "$PROJECT_ROOT/apps/docsign-web/www/dist" ]; then
+        cd "$PROJECT_ROOT/apps/docsign-web"
+        if ! ./scripts/verify-dist.sh 2>/dev/null; then
+            echo "❌ Build verification failed. Run 'trunk build --release' in apps/docsign-web"
+            exit 1
+        fi
+        cd "$PROJECT_ROOT"
+    else
+        echo "  ⚠️  www/dist not found - run 'trunk build --release' in apps/docsign-web before deploying"
+    fi
+else
+    echo "  ⏭️  Skipping build verification (no build files changed)"
+fi
+
 # Run docsign-web worker tests if relevant files changed
 if [ "$DOCSIGN_WORKER_CHANGED" = true ]; then
     echo "  Running docsign-web worker tests (Worker files changed)..."

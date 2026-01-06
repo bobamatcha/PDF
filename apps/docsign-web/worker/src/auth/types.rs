@@ -174,6 +174,12 @@ pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
+/// Resend verification email request
+#[derive(Debug, Deserialize)]
+pub struct ResendVerificationRequest {
+    pub email: String,
+}
+
 /// Password reset with token
 #[derive(Debug, Deserialize)]
 pub struct ResetPasswordRequest {
@@ -188,6 +194,9 @@ pub struct RegisterResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     pub message: String,
+    /// Whether verification email was sent successfully
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_sent: Option<bool>,
 }
 
 /// Login response
@@ -223,6 +232,9 @@ pub struct RefreshResponse {
 pub struct AuthResponse {
     pub success: bool,
     pub message: String,
+    /// Whether an email was sent (for forgot-password, resend-verification)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_sent: Option<bool>,
 }
 
 /// Public user info (safe to send to client)

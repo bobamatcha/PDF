@@ -10,6 +10,7 @@
 
 | Date | Phase | Milestone | Details |
 |------|-------|-----------|---------|
+| 2026-01-06 | Bugfix | ✅ Email Verification Fix | Fixed critical bug: verification/password-reset emails were never sent (TODO comments instead of actual send_email calls). Added `/auth/resend-verification` endpoint. Set `RESEND_API_KEY` secret in production. Added `email_sent` field to API responses. 3 regression tests added. |
 | 2026-01-06 | UX Overhaul | ✅ Landing Page Redesign + CORS Fix | Fixed CORS headers (Authorization), clean landing page with Sign In/Create Account buttons, removed "free account" text, removed back links from auth page |
 | 2026-01-05 | Bugfixes | ✅ Init Error + Auth UX + Weekly Limits | Fixed WASM init error, added auth-required modal, changed rate limit from 1/day to 1/week |
 | 2025-12-30 | Phase 0 | ✅ Foundation Complete | TypeScript build, PDF preview, property tests, geriatric CSS |
