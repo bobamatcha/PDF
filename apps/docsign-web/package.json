@@ -18,6 +18,7 @@
     "test:worker": "cd worker && npm test",
     "test:worker:watch": "cd worker && npm run test:watch",
     "test:all": "npm test && npm run test:worker",
+    "test:parallel": "concurrently --names 'frontend,worker' -c 'blue,green' 'npm test' 'npm run test:worker'",
     "verify-dist": "./scripts/verify-dist.sh",
     "verify-dist:build": "./scripts/verify-dist.sh --build"
   },

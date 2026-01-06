@@ -37,13 +37,30 @@ describe('Auth Page UX Compliance', () => {
     if (!styleTag) return null;
 
     const cssText = styleTag.textContent || '';
-    // Simple regex to find property value - not perfect but works for tests
-    const selectorRegex = new RegExp(
-      `${selector.replace('.', '\\.')}\\s*\\{[^}]*${property}\\s*:\\s*([^;]+)`,
-      'i'
+
+    // Strategy 1: Direct selector match
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const directRegex = new RegExp(
+      `${escapedSelector}[^{]*\\{[^}]*${property}\\s*:\\s*([^;!}]+)`,
+      'im'
     );
-    const match = cssText.match(selectorRegex);
-    return match ? match[1].trim() : null;
+    let match = cssText.match(directRegex);
+    if (match) return match[1].trim();
+
+    // Strategy 2: Multi-selector match (handles .a,\n.b,\n.c { ... })
+    const ruleBlocks = cssText.match(/[^{}]+\{[^}]+\}/g) || [];
+    for (const block of ruleBlocks) {
+      const [selectorPart, ...rest] = block.split('{');
+      const propsPart = rest.join('{');
+
+      if (selectorPart.includes(selector.replace(/\\/g, ''))) {
+        const propRegex = new RegExp(`${property}\\s*:\\s*([^;!}]+)`, 'i');
+        const propMatch = propsPart.match(propRegex);
+        if (propMatch) return propMatch[1].trim();
+      }
+    }
+
+    return null;
   }
 
   // Helper to get CSS variable value
@@ -214,41 +231,34 @@ describe('Auth Page UX Compliance', () => {
     });
   });
 
-  describe('Text Overflow Prevention', () => {
-    it('UX-14: Password inputs with toggle button must have sufficient padding-right', () => {
-      // Password inputs have a Show/Hide button inside them
-      // The input needs padding-right to prevent placeholder text from overlapping the button
-      const paddingRight = getCssProperty('.password-wrapper .form-input', 'padding-right') ||
-                          getCssProperty('.password-wrapper input', 'padding-right');
+  describe('Password Toggle UX', () => {
+    // Note: The auth page uses a checkbox toggle BELOW the input (not inside)
+    // This is a better UX pattern that avoids overlap with browser password managers
 
-      expect(paddingRight).not.toBeNull();
-
-      // Should be at least 70px to accommodate the Show button (~60px) plus spacing
-      const paddingValue = parseInt(paddingRight?.replace(/[^0-9]/g, '') || '0');
-      expect(paddingValue).toBeGreaterThanOrEqual(70);
+    it('UX-14: Password wrapper should use flex column layout', () => {
+      const flexDirection = getCssProperty('.password-wrapper', 'flex-direction');
+      expect(flexDirection).toBe('column');
     });
 
-    it('UX-15: Show/Hide toggle button should be positioned absolutely', () => {
-      // The class is .show-password-btn in auth.html
-      const position = getCssProperty('.show-password-btn', 'position');
-      expect(position).toBe('absolute');
+    it('UX-15: Password wrapper should have gap for spacing', () => {
+      const gap = getCssProperty('.password-wrapper', 'gap');
+      expect(gap).not.toBeNull();
     });
 
-    it('UX-16: Show/Hide toggle should be positioned on the right side', () => {
-      // The class is .show-password-btn in auth.html
-      const right = getCssProperty('.show-password-btn', 'right');
-      expect(right).not.toBeNull();
+    it('UX-16: Show password toggle should be clickable', () => {
+      const cursor = getCssProperty('.show-password-toggle', 'cursor');
+      expect(cursor).toBe('pointer');
     });
 
-    it('UX-17: Password wrapper should have relative positioning for absolute child', () => {
-      const position = getCssProperty('.password-wrapper', 'position');
-      expect(position).toBe('relative');
+    it('UX-17: Show password checkbox should be large enough to tap (24px)', () => {
+      const width = getCssProperty('.show-password-toggle input[type="checkbox"]', 'width');
+      const widthValue = parseInt(width?.replace(/[^0-9]/g, '') || '0');
+      expect(widthValue).toBeGreaterThanOrEqual(24);
     });
 
-    it('UX-18: Placeholder text should not overflow - text-overflow ellipsis', () => {
-      // Ensure long placeholder text is truncated rather than overflowing
-      const textOverflow = getCssProperty('.password-wrapper .form-input', 'text-overflow');
-      expect(textOverflow).toBe('ellipsis');
+    it('UX-18: Show password toggle should have proper accent color', () => {
+      const accentColor = getCssProperty('.show-password-toggle input[type="checkbox"]', 'accent-color');
+      expect(accentColor).not.toBeNull();
     });
   });
 });

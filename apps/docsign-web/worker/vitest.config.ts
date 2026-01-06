@@ -2,7 +2,6 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
 
 export default defineWorkersConfig({
   test: {
-    // Run tests sequentially to avoid KV conflicts
     poolOptions: {
       workers: {
         wrangler: {
@@ -11,13 +10,16 @@ export default defineWorkersConfig({
         // Isolated storage ensures each test gets fresh KV state
         // This means NO rate limiting between tests!
         isolatedStorage: true,
-        // Single threaded for predictable test execution
-        singleWorker: true,
+        // Enable parallel test execution within worker pool
+        // Each test file can run in parallel with isolated storage
+        singleWorker: false,
       },
     },
     // Test file patterns
     include: ["test/**/*.test.ts"],
     // Increase timeout for worker tests
     testTimeout: 30000,
+    // Run test files in parallel
+    fileParallelism: true,
   },
 });
