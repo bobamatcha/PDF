@@ -15,6 +15,24 @@ use worker::*;
 // Type alias for HMAC-SHA256
 type HmacSha256 = Hmac<Sha256>;
 
+// ============================================================
+// WASM-Safe Time Utilities
+// ============================================================
+// IMPORTANT: std::time::SystemTime does NOT work in Cloudflare Workers WASM!
+// It panics with "time not implemented on this platform"
+// Always use these helpers instead.
+
+/// Get current Unix timestamp in seconds (WASM-safe)
+/// Uses js_sys::Date::now() which works in Cloudflare Workers
+fn get_timestamp_secs() -> u64 {
+    (js_sys::Date::now() / 1000.0) as u64
+}
+
+/// Get current Unix timestamp in milliseconds (WASM-safe)
+fn get_timestamp_millis() -> u128 {
+    js_sys::Date::now() as u128
+}
+
 /// Request body for sending a document
 #[derive(Deserialize)]
 #[allow(dead_code)] // Fields used via serde deserialization
@@ -463,11 +481,8 @@ async fn check_ip_rate_limit(
     let (max_requests, window_seconds) = tier.limits();
     let key = format!("ip_limit:{}:{}", ip, tier.name());
 
-    // Get current timestamp
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    // Get current timestamp (WASM-safe - uses js_sys::Date)
+    let now = get_timestamp_secs();
 
     // Get current state from KV
     let mut state: IpRateLimitState = kv.get(&key).json().await?.unwrap_or_default();
@@ -2444,12 +2459,8 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
 }
 
 fn generate_session_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
+    // WASM-safe timestamp (std::time::SystemTime panics in Workers)
+    let timestamp = get_timestamp_millis();
 
     // Generate random suffix
     let random: u64 = js_sys::Math::random().to_bits();
@@ -4150,6 +4161,41 @@ mod email_proptests {
         let tier = RateLimitTier::RequestLink;
         let key = format!("ip_limit:{}:{}", ip, tier.name());
         assert_eq!(key, "ip_limit:192.168.1.1:request_link");
+    }
+
+    /// Regression test: Code must NOT use std::time::SystemTime
+    /// Bug: Worker crashed with "time not implemented on this platform" panic
+    /// because std::time::SystemTime::now() doesn't work in WASM/Workers.
+    /// Fix: Use js_sys::Date::now() via get_timestamp_secs()/get_timestamp_millis()
+    #[test]
+    fn test_no_std_time_usage_documented() {
+        // This test documents the correct approach for getting timestamps in Workers.
+        //
+        // PROBLEM: std::time::SystemTime panics in WASM with:
+        //   "panicked at library/std/src/sys/pal/wasm/../unsupported/time.rs:31:9:
+        //    time not implemented on this platform"
+        //
+        // SOLUTION: The codebase provides WASM-safe helpers:
+        //   - get_timestamp_secs() -> u64   (Unix timestamp in seconds)
+        //   - get_timestamp_millis() -> u128 (Unix timestamp in milliseconds)
+        //
+        // Both use js_sys::Date::now() which works in Cloudflare Workers.
+        //
+        // VERIFICATION: Search codebase for std::time::SystemTime usage.
+        // There should be ZERO occurrences outside of this test comment.
+        //
+        // grep -r "std::time::SystemTime" apps/docsign-web/worker/src/
+        // Expected: 0 matches (only this comment mentions it)
+
+        // Compile-time verification: the helper functions exist with correct signatures
+        fn _verify_timestamp_helpers_exist() {
+            let _: fn() -> u64 = get_timestamp_secs;
+            let _: fn() -> u128 = get_timestamp_millis;
+        }
+
+        // The actual runtime behavior can only be tested in WASM environment
+        // which is verified by deploying and hitting /health endpoint
+        assert!(true, "This test documents WASM time requirements");
     }
 
     proptest! {

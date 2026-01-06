@@ -346,7 +346,7 @@ export type {
 /**
  * Default sync endpoint - can be overridden via window.DOCSIGN_SYNC_ENDPOINT
  */
-const DEFAULT_SYNC_ENDPOINT = "/api/signatures/sync";
+const DEFAULT_SYNC_ENDPOINT = "https://docsign-worker.orlandodowntownhome.workers.dev/signatures/sync";
 
 /**
  * Initialize DocSign application

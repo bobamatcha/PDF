@@ -5312,7 +5312,7 @@ var log6 = createLogger("Auth");
 var ACCESS_TOKEN_KEY = "docsign_access_token";
 var REFRESH_TOKEN_KEY = "docsign_refresh_token";
 var USER_KEY = "docsign_user";
-var API_BASE = "/api";
+var API_BASE = "https://docsign-worker.orlandodowntownhome.workers.dev";
 var authListeners = [];
 function onAuthStateChange(listener) {
   authListeners.push(listener);
@@ -5627,7 +5627,7 @@ function initAuthNamespace() {
 
 // src/ts/main.ts
 var log7 = createLogger("DocSign");
-var DEFAULT_SYNC_ENDPOINT = "/api/signatures/sync";
+var DEFAULT_SYNC_ENDPOINT = "https://docsign-worker.orlandodowntownhome.workers.dev/signatures/sync";
 function init() {
   perf.mark(PERF_MARKS.NAMESPACE_INIT);
   initDocSignNamespace();

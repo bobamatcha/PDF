@@ -26,8 +26,8 @@ const REFRESH_TOKEN_KEY = "docsign_refresh_token";
 /** Storage key for user data */
 const USER_KEY = "docsign_user";
 
-/** API base path (relative to current origin) */
-const API_BASE = "/api";
+/** API base URL - Cloudflare Worker */
+const API_BASE = "https://docsign-worker.orlandodowntownhome.workers.dev";
 
 // ============================================
 // Types
