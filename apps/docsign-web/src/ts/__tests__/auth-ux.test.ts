@@ -261,4 +261,35 @@ describe('Auth Page UX Compliance', () => {
       expect(accentColor).not.toBeNull();
     });
   });
+
+  describe('Reset Password Form', () => {
+    it('UX-25: Reset password form should exist', () => {
+      const form = document.getElementById('resetPasswordForm');
+      expect(form).not.toBeNull();
+    });
+
+    it('UX-26: Reset password form should have show password toggle for new password', () => {
+      const toggle = document.getElementById('showNewPassword');
+      expect(toggle).not.toBeNull();
+      expect(toggle?.getAttribute('type')).toBe('checkbox');
+    });
+
+    it('UX-27: Reset password form should have show password toggle for confirm password', () => {
+      const toggle = document.getElementById('showConfirmNewPassword');
+      expect(toggle).not.toBeNull();
+      expect(toggle?.getAttribute('type')).toBe('checkbox');
+    });
+
+    it('UX-28: New password field should be wrapped in password-wrapper', () => {
+      const input = document.getElementById('newPassword');
+      const wrapper = input?.closest('.password-wrapper');
+      expect(wrapper).not.toBeNull();
+    });
+
+    it('UX-29: Confirm password field should be wrapped in password-wrapper', () => {
+      const input = document.getElementById('confirmNewPassword');
+      const wrapper = input?.closest('.password-wrapper');
+      expect(wrapper).not.toBeNull();
+    });
+  });
 });

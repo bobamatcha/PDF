@@ -429,7 +429,7 @@ enum RateLimitTier {
     SessionRead,
     /// Session write (PUT signed/decline/consent): 5 req/min per IP
     SessionWrite,
-    /// Request link: 3 req/hour per IP (prevents email spam)
+    /// Request link: 100 req/day per IP (generous daily limit, bound by global email budget)
     RequestLink,
 }
 
@@ -437,10 +437,10 @@ impl RateLimitTier {
     /// Returns (max_requests, window_seconds) for this tier
     fn limits(&self) -> (u32, u64) {
         match self {
-            RateLimitTier::Health => (100, 60),      // 100/min
-            RateLimitTier::SessionRead => (30, 60),  // 30/min
-            RateLimitTier::SessionWrite => (5, 60),  // 5/min
-            RateLimitTier::RequestLink => (3, 3600), // 3/hour
+            RateLimitTier::Health => (100, 60),         // 100/min
+            RateLimitTier::SessionRead => (30, 60),     // 30/min
+            RateLimitTier::SessionWrite => (5, 60),     // 5/min
+            RateLimitTier::RequestLink => (100, 86400), // 100/day - generous for UX, global email limits handle cost
         }
     }
 
@@ -1209,6 +1209,15 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 return response;
             }
             cors_response(auth::handle_resend_verification(req, env).await)
+        }
+        (Method::Post, "/auth/check-email") => {
+            // Rate limit: Use SessionRead tier (30/min) - lightweight lookup
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionRead).await
+            {
+                return response;
+            }
+            cors_response(auth::handle_check_email(req, env).await)
         }
 
         // Protected endpoints - require API key
@@ -4118,10 +4127,10 @@ mod email_proptests {
         assert_eq!(max, 5);
         assert_eq!(window, 60);
 
-        // RequestLink: 3 req/hour
+        // RequestLink: 100 req/day (generous per-IP, global email quota handles cost)
         let (max, window) = RateLimitTier::RequestLink.limits();
-        assert_eq!(max, 3);
-        assert_eq!(window, 3600);
+        assert_eq!(max, 100);
+        assert_eq!(window, 86400);
     }
 
     #[test]
@@ -4137,7 +4146,7 @@ mod email_proptests {
         assert_eq!(RateLimitTier::Health.retry_after_seconds(), 60);
         assert_eq!(RateLimitTier::SessionRead.retry_after_seconds(), 60);
         assert_eq!(RateLimitTier::SessionWrite.retry_after_seconds(), 60);
-        assert_eq!(RateLimitTier::RequestLink.retry_after_seconds(), 3600);
+        assert_eq!(RateLimitTier::RequestLink.retry_after_seconds(), 86400); // 1 day
     }
 
     #[test]

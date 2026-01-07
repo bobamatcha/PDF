@@ -360,6 +360,64 @@
             font-weight: 600;
             margin-top: 0.5rem;
         }
+
+        /* Email exists alert - for email-first UX */
+        .email-exists-alert {
+            background: #fff8e6;
+            border: 2px solid #d69e2e;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 0.75rem;
+        }
+
+        .email-exists-alert p {
+            font-size: 16px;
+            color: #744210;
+            margin-bottom: 1rem;
+        }
+
+        .email-exists-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .email-exists-actions .btn {
+            width: 100%;
+            text-align: center;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+        }
+
+        /* Desktop: side-by-side buttons */
+        @media (min-width: 500px) {
+            .email-exists-actions {
+                flex-direction: row;
+                flex-wrap: wrap;
+            }
+            .email-exists-actions .btn {
+                flex: 1;
+                min-width: 140px;
+                width: auto;
+            }
+        }
+
+        /* Secondary button style */
+        .btn-secondary {
+            background: white;
+            color: var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+        }
+
+        .btn-secondary:hover {
+            background: #f0f7ff;
+        }
+
+        /* Email checking spinner */
+        .email-checking {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -434,14 +492,36 @@
 
             <!-- Register Form -->
             <form id="registerForm" class="auth-form" role="tabpanel" aria-labelledby="registerTab" onsubmit="handleRegister(event)">
-                <div class="form-group">
-                    <label class="form-label" for="registerName">Your Name</label>
-                    <input type="text"
-                           id="registerName"
-                           class="form-input"
-                           required
-                           autocomplete="name"
-                           placeholder="Enter your full name">
+                <!-- Name fields row -->
+                <div class="form-group" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <div style="flex: 2; min-width: 140px;">
+                        <label class="form-label" for="registerFirstName">First Name</label>
+                        <input type="text"
+                               id="registerFirstName"
+                               class="form-input"
+                               required
+                               autocomplete="given-name"
+                               placeholder="First name">
+                    </div>
+                    <div style="flex: 1; min-width: 80px; max-width: 100px;">
+                        <label class="form-label" for="registerMiddleInitial">M.I.</label>
+                        <input type="text"
+                               id="registerMiddleInitial"
+                               class="form-input"
+                               maxlength="2"
+                               autocomplete="additional-name"
+                               placeholder="MI"
+                               style="text-transform: uppercase;">
+                    </div>
+                    <div style="flex: 2; min-width: 140px;">
+                        <label class="form-label" for="registerLastName">Last Name</label>
+                        <input type="text"
+                               id="registerLastName"
+                               class="form-input"
+                               required
+                               autocomplete="family-name"
+                               placeholder="Last name">
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -451,53 +531,73 @@
                            class="form-input"
                            required
                            autocomplete="email"
-                           placeholder="Enter your email">
-                    <p class="form-hint">We'll send a verification link to this address</p>
-                </div>
+                           placeholder="Enter your email"
+                           onblur="checkEmailOnBlur(this.value)">
+                    <p class="form-hint" id="emailHint">We'll send a verification link to this address</p>
 
-                <div class="form-group">
-                    <label class="form-label" for="registerPassword">Password</label>
-                    <div class="password-wrapper">
-                        <input type="password"
-                               id="registerPassword"
-                               class="form-input"
-                               required
-                               autocomplete="new-password"
-                               placeholder="Create a password"
-                               oninput="validatePasswordInput()">
-                        <div class="show-password-toggle">
-                            <input type="checkbox" id="showRegisterPassword" onchange="togglePasswordCheckbox('registerPassword', this.checked)">
-                            <label for="showRegisterPassword">Show password</label>
+                    <!-- Email exists alert - hidden by default -->
+                    <div id="emailExistsAlert" class="email-exists-alert" style="display: none;">
+                        <p id="emailExistsMessage">This email is already registered.</p>
+                        <div class="email-exists-actions">
+                            <button type="button" id="resendVerifyBtn" class="btn btn-primary" style="display: none;" onclick="resendVerificationFromAlert()">
+                                Resend Verification Email
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="showForm('login'); document.getElementById('loginEmail').value = document.getElementById('registerEmail').value;">
+                                Sign In
+                            </button>
+                            <button type="button" class="btn btn-secondary" onclick="showForm('forgot'); document.getElementById('forgotEmail').value = document.getElementById('registerEmail').value;">
+                                Reset Password
+                            </button>
                         </div>
                     </div>
-                    <ul class="password-requirements" id="passwordRequirements">
-                        <li id="req-length">At least 8 characters</li>
-                        <li id="req-upper">One uppercase letter</li>
-                        <li id="req-lower">One lowercase letter</li>
-                        <li id="req-number">One number</li>
-                    </ul>
                 </div>
 
-                <div class="form-group">
-                    <label class="form-label" for="registerConfirm">Confirm Password</label>
-                    <div class="password-wrapper">
-                        <input type="password"
-                               id="registerConfirm"
-                               class="form-input"
-                               required
-                               autocomplete="new-password"
-                               placeholder="Confirm password">
-                        <div class="show-password-toggle">
-                            <input type="checkbox" id="showRegisterConfirm" onchange="togglePasswordCheckbox('registerConfirm', this.checked)">
-                            <label for="showRegisterConfirm">Show password</label>
+                <!-- Password fields - hidden when email exists -->
+                <div id="passwordFields">
+                    <div class="form-group">
+                        <label class="form-label" for="registerPassword">Password</label>
+                        <div class="password-wrapper">
+                            <input type="password"
+                                   id="registerPassword"
+                                   class="form-input"
+                                   required
+                                   autocomplete="new-password"
+                                   placeholder="Create a password"
+                                   oninput="validatePasswordInput()">
+                            <div class="show-password-toggle">
+                                <input type="checkbox" id="showRegisterPassword" onchange="togglePasswordCheckbox('registerPassword', this.checked)">
+                                <label for="showRegisterPassword">Show password</label>
+                            </div>
                         </div>
+                        <ul class="password-requirements" id="passwordRequirements">
+                            <li id="req-length">At least 8 characters</li>
+                            <li id="req-upper">One uppercase letter</li>
+                            <li id="req-lower">One lowercase letter</li>
+                            <li id="req-number">One number</li>
+                        </ul>
                     </div>
-                    <p class="form-error" id="confirmError">Passwords do not match</p>
-                </div>
 
-                <button type="submit" class="btn btn-primary" id="registerBtn">
-                    Create Account
-                </button>
+                    <div class="form-group">
+                        <label class="form-label" for="registerConfirm">Confirm Password</label>
+                        <div class="password-wrapper">
+                            <input type="password"
+                                   id="registerConfirm"
+                                   class="form-input"
+                                   required
+                                   autocomplete="new-password"
+                                   placeholder="Confirm password">
+                            <div class="show-password-toggle">
+                                <input type="checkbox" id="showRegisterConfirm" onchange="togglePasswordCheckbox('registerConfirm', this.checked)">
+                                <label for="showRegisterConfirm">Show password</label>
+                            </div>
+                        </div>
+                        <p class="form-error" id="confirmError">Passwords do not match</p>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" id="registerBtn">
+                        Create Account
+                    </button>
+                </div>
             </form>
 
             <!-- Forgot Password Form -->
@@ -526,6 +626,58 @@
                         Back to Sign In
                     </button>
                 </div>
+            </form>
+
+            <!-- Reset Password Form (shown when user clicks email link) -->
+            <form id="resetPasswordForm" class="auth-form" onsubmit="handleResetPassword(event)">
+                <h2 style="font-size: 24px; margin-bottom: 1rem;">Set New Password</h2>
+                <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">
+                    Enter your new password below.
+                </p>
+                <input type="hidden" id="resetToken" value="">
+
+                <div class="form-group">
+                    <label class="form-label" for="newPassword">New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password"
+                               id="newPassword"
+                               class="form-input"
+                               required
+                               autocomplete="new-password"
+                               placeholder="Enter new password"
+                               oninput="validateNewPasswordInput()">
+                        <div class="show-password-toggle">
+                            <input type="checkbox" id="showNewPassword" onchange="togglePasswordCheckbox('newPassword', this.checked)">
+                            <label for="showNewPassword">Show password</label>
+                        </div>
+                    </div>
+                    <ul class="password-requirements" id="newPasswordRequirements">
+                        <li id="new-req-length">At least 8 characters</li>
+                        <li id="new-req-upper">One uppercase letter</li>
+                        <li id="new-req-lower">One lowercase letter</li>
+                        <li id="new-req-number">One number</li>
+                    </ul>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="confirmNewPassword">Confirm New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password"
+                               id="confirmNewPassword"
+                               class="form-input"
+                               required
+                               autocomplete="new-password"
+                               placeholder="Confirm new password">
+                        <div class="show-password-toggle">
+                            <input type="checkbox" id="showConfirmNewPassword" onchange="togglePasswordCheckbox('confirmNewPassword', this.checked)">
+                            <label for="showConfirmNewPassword">Show password</label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" id="resetPasswordBtn">
+                    Set New Password
+                </button>
             </form>
         </div>
     </main>
@@ -580,9 +732,156 @@
             alert.className = 'alert visible alert-' + type;
         }
 
+        // Show alert with resend verification button
+        function showAlertWithResend(message, email) {
+            const alertDiv = document.getElementById('alert');
+            alertDiv.innerHTML = `
+                <div style="margin-bottom: 12px;">${message}</div>
+                <button onclick="resendVerification('${email}')"
+                        class="resend-btn"
+                        style="background: #4F46E5; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 1rem;">
+                    Resend Verification Email
+                </button>
+            `;
+            alertDiv.className = 'alert alert-error visible';
+        }
+
+        // Resend verification email
+        async function resendVerification(email) {
+            try {
+                const result = await window.DocSign.resendVerification(email);
+                if (result.success) {
+                    showAlert(result.message || 'Verification email sent! Please check your inbox.', 'success');
+                } else {
+                    showAlert(result.message || 'Failed to send email. Please try again.', 'error');
+                }
+            } catch (error) {
+                showAlert('An error occurred. Please try again later.', 'error');
+            }
+        }
+
+        // Resend verification from email-exists alert (uses email from register form)
+        async function resendVerificationFromAlert() {
+            const email = document.getElementById('registerEmail').value.trim();
+            if (!email) {
+                showAlert('Please enter your email address first.', 'error');
+                return;
+            }
+            const btn = document.getElementById('resendVerifyBtn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Sending...';
+            btn.disabled = true;
+            try {
+                await resendVerification(email);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Show rate limit countdown
+        function showRateLimitCountdown(seconds) {
+            const alertDiv = document.getElementById('alert');
+            let remaining = seconds;
+
+            const updateCountdown = () => {
+                const mins = Math.floor(remaining / 60);
+                const secs = remaining % 60;
+                const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+                alertDiv.innerHTML = `
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.1rem; margin-bottom: 8px;">
+                            Too many attempts. Please wait before trying again.
+                        </div>
+                        <div style="font-size: 1.5rem; font-weight: bold; color: #4F46E5;">
+                            ${timeStr}
+                        </div>
+                    </div>
+                `;
+                alertDiv.className = 'alert alert-error visible';
+
+                if (remaining > 0) {
+                    remaining--;
+                    setTimeout(updateCountdown, 1000);
+                } else {
+                    showAlert('You can try again now!', 'success');
+                }
+            };
+
+            updateCountdown();
+        }
+
         // Hide alert
         function hideAlert() {
             document.getElementById('alert').classList.remove('visible');
+        }
+
+        // Email-first UX: Check if email exists on blur
+        let emailCheckTimeout = null;
+        async function checkEmailOnBlur(email) {
+            // Clear any pending check
+            if (emailCheckTimeout) {
+                clearTimeout(emailCheckTimeout);
+            }
+
+            const emailHint = document.getElementById('emailHint');
+            const emailExistsAlert = document.getElementById('emailExistsAlert');
+            const emailExistsMessage = document.getElementById('emailExistsMessage');
+            const passwordFields = document.getElementById('passwordFields');
+
+            // Reset state
+            emailExistsAlert.style.display = 'none';
+            passwordFields.style.display = 'block';
+
+            // Don't check empty or invalid emails
+            if (!email || !email.includes('@') || email.length < 5) {
+                emailHint.textContent = "We'll send a verification link to this address";
+                emailHint.className = 'form-hint';
+                return;
+            }
+
+            // Show checking state
+            emailHint.textContent = 'Checking email...';
+            emailHint.className = 'form-hint email-checking';
+
+            // Debounce the check
+            emailCheckTimeout = setTimeout(async () => {
+                try {
+                    await waitForDocSign();
+                    const result = await window.DocSign.checkEmail(email);
+
+                    if (result.exists) {
+                        // Email exists - show options
+                        emailHint.style.display = 'none';
+                        passwordFields.style.display = 'none';
+                        const resendBtn = document.getElementById('resendVerifyBtn');
+
+                        if (result.verified) {
+                            emailExistsMessage.textContent = 'This email is already registered.';
+                            resendBtn.style.display = 'none';
+                        } else {
+                            emailExistsMessage.textContent = 'This email is registered but not verified.';
+                            resendBtn.style.display = 'block';
+                        }
+                        emailExistsAlert.style.display = 'block';
+                    } else {
+                        // Email is new - show password fields
+                        emailHint.textContent = "We'll send a verification link to this address";
+                        emailHint.className = 'form-hint';
+                        emailHint.style.display = 'block';
+                        emailExistsAlert.style.display = 'none';
+                        passwordFields.style.display = 'block';
+                    }
+                } catch (error) {
+                    // On error, just show the form normally
+                    console.error('Email check error:', error);
+                    emailHint.textContent = "We'll send a verification link to this address";
+                    emailHint.className = 'form-hint';
+                    emailHint.style.display = 'block';
+                    passwordFields.style.display = 'block';
+                }
+            }, 300); // 300ms debounce
         }
 
         // Toggle password visibility (checkbox-based to avoid browser password manager icon overlap)
@@ -630,12 +929,23 @@
                         window.location.href = 'index.html';
                     }, 1000);
                 } else {
-                    showAlert(result.error || 'Login failed. Please check your email and password.', 'error');
+                    // Check if verification is needed - show resend button
+                    if (result.needs_verification) {
+                        showAlertWithResend(result.error || 'Please verify your email.', result.email || email);
+                    } else {
+                        showAlert(result.error || 'Login failed. Please check your email and password.', 'error');
+                    }
                     btn.disabled = false;
                     btn.textContent = 'Sign In';
                 }
             } catch (error) {
-                showAlert('An error occurred. Please try again.', 'error');
+                // Check for rate limit (429)
+                if (error.status === 429) {
+                    const data = await error.json().catch(() => ({}));
+                    showRateLimitCountdown(data.retry_after_seconds || 3600);
+                } else {
+                    showAlert('An error occurred. Please try again.', 'error');
+                }
                 btn.disabled = false;
                 btn.textContent = 'Sign In';
             }
@@ -647,10 +957,24 @@
             await waitForDocSign();
 
             const btn = document.getElementById('registerBtn');
-            const name = document.getElementById('registerName').value;
+            const firstName = document.getElementById('registerFirstName').value.trim();
+            const middleInitial = document.getElementById('registerMiddleInitial').value.trim().toUpperCase();
+            const lastName = document.getElementById('registerLastName').value.trim();
             const email = document.getElementById('registerEmail').value;
             const password = document.getElementById('registerPassword').value;
             const confirm = document.getElementById('registerConfirm').value;
+
+            // Construct full name for API (backend stores as single name field)
+            const name = middleInitial
+                ? `${firstName} ${middleInitial}. ${lastName}`
+                : `${firstName} ${lastName}`;
+
+            // Store individual name parts for recipient auto-population
+            localStorage.setItem('docsign_user_names', JSON.stringify({
+                firstName,
+                middleInitial,
+                lastName
+            }));
 
             // Validate passwords match
             if (password !== confirm) {
@@ -692,12 +1016,23 @@
                         document.getElementById('loginEmail').value = email;
                     }, 2000);
                 } else {
-                    showAlert(result.message || 'Registration failed. Please try again.', 'error');
+                    // Check if verification is needed (account exists but unverified)
+                    if (result.needs_verification) {
+                        showAlertWithResend(result.message || 'Please verify your email.', email);
+                    } else {
+                        showAlert(result.message || 'Registration failed. Please try again.', 'error');
+                    }
                     btn.disabled = false;
                     btn.textContent = 'Create Account';
                 }
             } catch (error) {
-                showAlert('An error occurred. Please try again.', 'error');
+                // Check for rate limit (429)
+                if (error.status === 429) {
+                    const data = await error.json().catch(() => ({}));
+                    showRateLimitCountdown(data.retry_after_seconds || 3600);
+                } else {
+                    showAlert('An error occurred. Please try again.', 'error');
+                }
                 btn.disabled = false;
                 btn.textContent = 'Create Account';
             }
@@ -727,6 +1062,67 @@
             }
         }
 
+        // Handle reset password (from email link)
+        async function handleResetPassword(event) {
+            event.preventDefault();
+            await waitForDocSign();
+
+            const btn = document.getElementById('resetPasswordBtn');
+            const token = document.getElementById('resetToken').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmNewPassword').value;
+
+            if (newPassword !== confirmPassword) {
+                showAlert('Passwords do not match.', 'error');
+                return;
+            }
+
+            const validationError = window.DocSign.validatePassword(newPassword);
+            if (validationError) {
+                showAlert(validationError, 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Resetting...';
+
+            try {
+                const result = await window.DocSign.resetPassword(token, newPassword);
+                if (result.success) {
+                    showAlert('Password reset! You can now sign in.', 'success');
+                    showForm('login');
+                } else {
+                    showAlert(result.message, 'error');
+                }
+                btn.disabled = false;
+                btn.textContent = 'Set New Password';
+            } catch (error) {
+                showAlert('An error occurred. Please try again.', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Set New Password';
+            }
+        }
+
+        // Validate new password input (for reset form)
+        function validateNewPasswordInput() {
+            const password = document.getElementById('newPassword').value;
+            document.getElementById('new-req-length').className = password.length >= 8 ? 'valid' : '';
+            document.getElementById('new-req-upper').className = /[A-Z]/.test(password) ? 'valid' : '';
+            document.getElementById('new-req-lower').className = /[a-z]/.test(password) ? 'valid' : '';
+            document.getElementById('new-req-number').className = /[0-9]/.test(password) ? 'valid' : '';
+        }
+
+        // Verify email via API
+        async function verifyEmail(token) {
+            try {
+                const response = await fetch('https://api.getsignatures.org/auth/verify-email?token=' + encodeURIComponent(token));
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                return { success: false, message: 'Could not verify email. Please try again.' };
+            }
+        }
+
         // Check if already authenticated on page load
         async function checkAuth() {
             await waitForDocSign();
@@ -738,13 +1134,38 @@
 
             // Check URL params
             const params = new URLSearchParams(window.location.search);
+            const action = params.get('action');
+            const token = params.get('token');
+
+            // Handle email verification from link
+            if (action === 'verify' && token) {
+                showAlert('Verifying your email...', 'success');
+                const result = await verifyEmail(token);
+                if (result.success) {
+                    showAlert('Email verified! You can now sign in.', 'success');
+                    // Clean URL
+                    window.history.replaceState({}, '', 'auth.html');
+                } else {
+                    showAlert(result.message || 'Verification failed. The link may have expired.', 'error');
+                }
+                return;
+            }
+
+            // Handle password reset from link
+            if (action === 'reset' && token) {
+                document.getElementById('resetToken').value = token;
+                showForm('resetPassword');
+                // Clean URL but keep on page
+                window.history.replaceState({}, '', 'auth.html?action=reset');
+                return;
+            }
 
             // Handle tab selection from URL (e.g., ?tab=register)
             if (params.get('tab') === 'register') {
                 showForm('register');
             }
 
-            // Check for verification success
+            // Check for verification success (legacy)
             if (params.get('verified') === 'true') {
                 showAlert('Email verified successfully! You can now sign in.', 'success');
             }

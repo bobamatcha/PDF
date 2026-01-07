@@ -342,7 +342,9 @@ describe('Mobile & Elder UX Compliance', () => {
 
     it('MOB-43: Register form should have name, email, and password fields', () => {
       const registerForm = document.querySelector('#registerForm');
-      expect(registerForm?.querySelector('#registerName')).not.toBeNull();
+      // Name is now split into First Name, Middle Initial, Last Name
+      expect(registerForm?.querySelector('#registerFirstName')).not.toBeNull();
+      expect(registerForm?.querySelector('#registerLastName')).not.toBeNull();
       expect(registerForm?.querySelector('#registerEmail')).not.toBeNull();
       expect(registerForm?.querySelector('#registerPassword')).not.toBeNull();
     });

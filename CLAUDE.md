@@ -4,6 +4,18 @@
 
 This file defines development practices for Claude Code when working in this repository.
 
+## DO NOT DEPLOY
+
+**CRITICAL: Claude must NEVER run deployment commands.**
+
+Do not run:
+- `wrangler deploy`
+- `wrangler pages deploy`
+- `trunk build --release` for production
+- Any command that pushes code to production
+
+**Instead**: When code changes are ready to deploy, tell the user exactly what commands to run and let them execute the deployment themselves. This prevents accidental breakage of production systems.
+
 ## Puppeteer MCP Testing
 
 When verifying UI functionality with Puppeteer MCP:

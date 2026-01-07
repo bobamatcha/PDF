@@ -16,6 +16,8 @@
     <!-- Trunk: Copy additional HTML pages -->
     <link data-trunk rel="copy-file" href="sign.html" />
     <link data-trunk rel="copy-file" href="auth.html" />
+    <link data-trunk rel="copy-file" href="verify.html" />
+    <link data-trunk rel="copy-file" href="reset-password.html" />
     <!-- Trunk: Copy CSS and TypeScript bundle (required by sign.html) -->
     <link data-trunk rel="copy-file" href="geriatric.css" />
     <link data-trunk rel="copy-dir" href="js" />
@@ -1510,7 +1512,7 @@
 
     <div id="loading-overlay" class="loading-overlay" role="alert" aria-live="polite" aria-label="Loading application">
         <div class="spinner" aria-hidden="true"></div>
-        <p id="loading-message" style="color: white; font-size: 18px; margin-top: 16px;">Loading Get Signatures...</p>
+        <p id="loading-message" style="color: var(--text-primary); font-size: 18px; margin-top: 16px;">Loading Get Signatures...</p>
     </div>
 
     <!-- Landing Page - shown when NOT authenticated -->
@@ -1656,7 +1658,25 @@
                     <div class="card-header">
                         <h3 id="add-recipients-heading">Add Recipients</h3>
                     </div>
+
+                    <!-- Add myself as recipient section -->
+                    <div id="add-myself-section" class="card-body" style="border-bottom: 1px solid #e5e7eb; background: var(--bg-tertiary);">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <input type="checkbox" id="add-myself-checkbox"
+                                   style="width: 24px; height: 24px; cursor: pointer; accent-color: var(--accent-primary);">
+                            <label for="add-myself-checkbox" style="cursor: pointer; font-size: 1rem; font-weight: 500;">
+                                Add myself as a signer
+                            </label>
+                        </div>
+                        <p style="margin-top: 0.5rem; font-size: 0.875rem; color: var(--text-secondary);">
+                            You'll be added as the first signer using your account info
+                        </p>
+                    </div>
+
                     <div class="card-body" role="form" aria-labelledby="add-recipients-heading">
+                        <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                            Add other people who need to sign or receive a copy:
+                        </p>
                         <div class="form-group" style="display: flex; gap: 0.5rem;">
                             <div style="flex: 1;">
                                 <label for="recipient-first-name">First Name</label>
@@ -1703,6 +1723,33 @@
                         <h3>Document Preview</h3>
                     </div>
                     <div class="card-body">
+                        <!-- Preview Toolbar -->
+                        <div id="preview-toolbar" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+                            <!-- Zoom Controls -->
+                            <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                <button id="preview-zoom-out" type="button" aria-label="Zoom out"
+                                        style="width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center;">
+                                    −
+                                </button>
+                                <span id="preview-zoom-level" style="min-width: 50px; text-align: center; font-size: 0.875rem; color: var(--text-secondary);">100%</span>
+                                <button id="preview-zoom-in" type="button" aria-label="Zoom in"
+                                        style="width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center;">
+                                    +
+                                </button>
+                            </div>
+                            <!-- Page Navigation -->
+                            <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                <button id="preview-prev-page" type="button" aria-label="Previous page"
+                                        style="width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">
+                                    ◀
+                                </button>
+                                <span id="preview-page-indicator" style="min-width: 60px; text-align: center; font-size: 0.875rem; color: var(--text-secondary);">1 / 1</span>
+                                <button id="preview-next-page" type="button" aria-label="Next page"
+                                        style="width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">
+                                    ▶
+                                </button>
+                            </div>
+                        </div>
                         <div id="preview-container" class="pdf-preview-small"></div>
                     </div>
                 </div>
@@ -1889,11 +1936,11 @@
             <button id="btn-next" class="btn btn-primary hidden" aria-label="Continue to next step">
                 Next →
             </button>
-            <button id="btn-generate-links" class="btn btn-secondary hidden" aria-label="Generate signing links for recipients">
-                🔗 Generate Links
+            <button id="btn-generate-links" class="btn btn-primary hidden" aria-label="Send document for signing">
+                📤 Send for Signing
             </button>
             <button id="btn-send" class="btn btn-success hidden" aria-label="Sign the document">
-                Send for Signing
+                ✍️ Sign Now
             </button>
             <button id="btn-download" class="btn btn-primary hidden" aria-label="Download the signed PDF document">
                 Download Signed PDF
@@ -2056,6 +2103,59 @@
         </div>
     </div>
 
+    <!-- Consent Modal for Remote Signers -->
+    <div id="consent-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); color: white; border-radius: 12px 12px 0 0;">
+                <h3 id="consent-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.5rem;">✍️</span>
+                    Electronic Signature Consent
+                </h3>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <p style="font-size: 1rem; line-height: 1.6; color: #334155; margin: 0;">
+                        By clicking "I Agree & Sign", you consent to sign this document electronically.
+                        Your electronic signature has the same legal effect as a handwritten signature.
+                    </p>
+                </div>
+
+                <div style="margin-bottom: 1rem;">
+                    <h4 style="font-size: 0.875rem; font-weight: 600; color: #475569; margin-bottom: 0.5rem;">
+                        You are agreeing to:
+                    </h4>
+                    <ul style="margin: 0; padding-left: 1.25rem; color: #64748b; font-size: 0.875rem; line-height: 1.8;">
+                        <li>Sign the document "<span id="consent-doc-name" style="font-weight: 500; color: #1e293b;">-</span>"</li>
+                        <li>Your signature will be legally binding</li>
+                        <li>A record of your signature will be kept</li>
+                    </ul>
+                </div>
+
+                <div style="background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <p style="font-size: 0.8125rem; color: #92400e; margin: 0; display: flex; align-items: flex-start; gap: 0.5rem;">
+                        <span style="font-size: 1rem;">⚠️</span>
+                        <span>If you do not wish to sign electronically, please decline and contact the document sender.</span>
+                    </p>
+                </div>
+
+                <label style="display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background: white;">
+                    <input type="checkbox" id="consent-checkbox" style="width: 20px; height: 20px; margin-top: 2px; accent-color: #1e40af;">
+                    <span style="font-size: 0.9375rem; color: #334155; line-height: 1.5;">
+                        I have read and understand this consent form. I agree to sign this document electronically.
+                    </span>
+                </label>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 0.75rem; justify-content: flex-end; padding: 1rem 1.5rem; background: #f8fafc; border-radius: 0 0 12px 12px;">
+                <button class="btn btn-secondary" onclick="declineConsent()" style="min-width: 100px;">
+                    Decline
+                </button>
+                <button id="consent-agree-btn" class="btn btn-primary" onclick="acceptConsent()" disabled style="min-width: 140px; background: #1e40af;">
+                    ✍️ I Agree & Sign
+                </button>
+            </div>
+        </div>
+    </div>
+
     </div><!-- End app-container -->
 
     <script type="module">
@@ -2105,7 +2205,8 @@
                 encryptionKey: null, // CryptoKey for AES-GCM
                 isRemoteSigner: false, // True when loaded from signing link
                 recipientId: null, // Current recipient's ID when signing remotely
-                expiresAt: null // ISO date string for session expiration
+                expiresAt: null, // ISO date string for session expiration
+                hasConsented: false // True after user accepts consent to sign
             }
         };
 
@@ -2506,6 +2607,7 @@
             // Run step-specific logic
             if (step === 2) {
                 renderPreview();
+                setupAddMyselfCheckbox();
             } else if (step === 3) {
                 populateRecipientSelector();
                 renderAllPages();
@@ -2674,7 +2776,7 @@
                             required: true,
                             value: null
                         };
-                        state.fields.push(docSignField);
+                        state.placedFields.push(docSignField);
                     });
                     // Re-render to show imported fields
                     await renderPage(state.currentPage);
@@ -2774,7 +2876,93 @@
             }
         }
 
-        // Recipients
+        // Recipients - Add Myself as Signer
+        function setupAddMyselfCheckbox() {
+            const checkbox = document.getElementById('add-myself-checkbox');
+            const section = document.getElementById('add-myself-section');
+            if (!checkbox || !section) return;
+
+            // Get current user info
+            const currentUser = window.DocSign?.getCurrentUser?.();
+            const userNames = JSON.parse(localStorage.getItem('docsign_user_names') || '{}');
+
+            // If no user logged in, hide the section
+            if (!currentUser) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+
+            // Check if user already added as recipient - sync checkbox state
+            const userAlreadyAdded = state.recipients.some(r => r.email === currentUser.email);
+            checkbox.checked = userAlreadyAdded; // Only checked if user manually added themselves
+
+            // Add event listener (remove any existing to avoid duplicates)
+            checkbox.removeEventListener('change', handleAddMyselfChange);
+            checkbox.addEventListener('change', handleAddMyselfChange);
+
+            // No auto-add - user must click checkbox to add themselves
+        }
+
+        function handleAddMyselfChange(e) {
+            const currentUser = window.DocSign?.getCurrentUser?.();
+            if (!currentUser) return;
+
+            if (e.target.checked) {
+                // Add user if not already added
+                const userAlreadyAdded = state.recipients.some(r => r.email === currentUser.email);
+                if (!userAlreadyAdded) {
+                    addMyselfAsRecipient();
+                }
+            } else {
+                // Remove user from recipients
+                state.recipients = state.recipients.filter(r => r.email !== currentUser.email);
+                renderRecipientList();
+            }
+        }
+
+        function addMyselfAsRecipient() {
+            const currentUser = window.DocSign?.getCurrentUser?.();
+            if (!currentUser) return;
+
+            // Get individual name fields if available
+            const userNames = JSON.parse(localStorage.getItem('docsign_user_names') || '{}');
+            let firstName = userNames.firstName || '';
+            let lastName = userNames.lastName || '';
+
+            // Fallback: parse from full name
+            if (!firstName && currentUser.name) {
+                const nameParts = currentUser.name.trim().split(/\s+/);
+                firstName = nameParts[0] || '';
+                lastName = nameParts.slice(1).join(' ') || '';
+            }
+
+            const fullName = currentUser.name || `${firstName} ${lastName}`.trim();
+
+            // Add as first recipient (signer)
+            state.recipients.unshift({
+                id: Date.now(),
+                firstName,
+                lastName,
+                name: fullName,
+                email: currentUser.email,
+                role: 'signer',
+                order: 1,
+                color: recipientColors[0],
+                isCurrentUser: true
+            });
+
+            // Update order numbers for other recipients
+            state.recipients.forEach((r, i) => {
+                r.order = i + 1;
+                r.color = recipientColors[i % recipientColors.length];
+            });
+
+            renderRecipientList();
+        }
+
+        // Recipients - Manual Add
         function addRecipient() {
             const firstName = elements.recipientFirstName.value.trim();
             const lastName = elements.recipientLastName.value.trim();
@@ -3008,25 +3196,125 @@
         window.removeRecipient = removeRecipient;
         window.moveRecipient = moveRecipient;
 
-        // PDF Preview (Step 2)
+        // PDF Preview (Step 2) - All pages with zoom and navigation
+        const previewState = {
+            zoom: 1.0, // 100%
+            currentPage: 1,
+            minZoom: 0.25,
+            maxZoom: 3.0
+        };
+
         async function renderPreview() {
             if (!state.pdfDoc) return;
 
-            elements.previewContainer.innerHTML = '';
-            const page = await state.pdfDoc.getPage(1);
-            const viewport = page.getViewport({ scale: 0.5 });
+            const container = elements.previewContainer;
+            container.innerHTML = '';
 
-            const canvas = document.createElement('canvas');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
+            // Render all pages for scrolling
+            for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+                const page = await state.pdfDoc.getPage(pageNum);
+                const baseScale = 0.5; // Base scale for preview
+                const viewport = page.getViewport({ scale: baseScale * previewState.zoom });
 
-            await page.render({
-                canvasContext: canvas.getContext('2d'),
-                viewport
-            }).promise;
+                const pageDiv = document.createElement('div');
+                pageDiv.className = 'preview-page';
+                pageDiv.dataset.page = pageNum;
+                pageDiv.style.cssText = `
+                    margin-bottom: 0.5rem;
+                    background: white;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                `;
 
-            elements.previewContainer.appendChild(canvas);
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                canvas.style.display = 'block';
+
+                pageDiv.appendChild(canvas);
+                container.appendChild(pageDiv);
+
+                // Render in background for performance
+                page.render({
+                    canvasContext: canvas.getContext('2d'),
+                    viewport
+                }).promise;
+            }
+
+            updatePreviewUI();
         }
+
+        function updatePreviewUI() {
+            const zoomLevel = document.getElementById('preview-zoom-level');
+            const pageIndicator = document.getElementById('preview-page-indicator');
+            const prevBtn = document.getElementById('preview-prev-page');
+            const nextBtn = document.getElementById('preview-next-page');
+
+            if (zoomLevel) {
+                zoomLevel.textContent = Math.round(previewState.zoom * 100) + '%';
+            }
+            if (pageIndicator) {
+                pageIndicator.textContent = `${previewState.currentPage} / ${state.totalPages || 1}`;
+            }
+            if (prevBtn) {
+                prevBtn.disabled = previewState.currentPage <= 1;
+            }
+            if (nextBtn) {
+                nextBtn.disabled = previewState.currentPage >= state.totalPages;
+            }
+        }
+
+        function setupPreviewControls() {
+            const zoomIn = document.getElementById('preview-zoom-in');
+            const zoomOut = document.getElementById('preview-zoom-out');
+            const prevPage = document.getElementById('preview-prev-page');
+            const nextPage = document.getElementById('preview-next-page');
+
+            if (zoomIn) {
+                zoomIn.onclick = () => {
+                    if (previewState.zoom < previewState.maxZoom) {
+                        previewState.zoom = Math.min(previewState.maxZoom, previewState.zoom + 0.25);
+                        renderPreview();
+                    }
+                };
+            }
+            if (zoomOut) {
+                zoomOut.onclick = () => {
+                    if (previewState.zoom > previewState.minZoom) {
+                        previewState.zoom = Math.max(previewState.minZoom, previewState.zoom - 0.25);
+                        renderPreview();
+                    }
+                };
+            }
+            if (prevPage) {
+                prevPage.onclick = () => {
+                    if (previewState.currentPage > 1) {
+                        previewState.currentPage--;
+                        scrollToPreviewPage(previewState.currentPage);
+                        updatePreviewUI();
+                    }
+                };
+            }
+            if (nextPage) {
+                nextPage.onclick = () => {
+                    if (previewState.currentPage < state.totalPages) {
+                        previewState.currentPage++;
+                        scrollToPreviewPage(previewState.currentPage);
+                        updatePreviewUI();
+                    }
+                };
+            }
+        }
+
+        function scrollToPreviewPage(pageNum) {
+            const container = elements.previewContainer;
+            const pageDiv = container.querySelector(`[data-page="${pageNum}"]`);
+            if (pageDiv) {
+                pageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        // Initialize preview controls on DOM ready
+        document.addEventListener('DOMContentLoaded', setupPreviewControls);
 
         // PDF Editor (Step 3) - Render ALL pages for scrolling
         function populateRecipientSelector() {
@@ -3393,6 +3681,19 @@
         // Update Signing Button
         function updateSigningButton() {
             const signers = state.recipients.filter(r => r.role === 'signer');
+
+            // For SENDER flow (not remote signer): NO immediate signing allowed
+            // Show only "Send for Signing" which opens modal
+            if (!state.remoteSession.isRemoteSigner) {
+                // Hide "Sign as X" button entirely in sender flow
+                elements.btnSend.classList.add('hidden');
+                // Show generate links button instead
+                elements.btnGenerateLinks.classList.remove('hidden');
+                elements.btnDownload.classList.add('hidden');
+                return;
+            }
+
+            // For REMOTE SIGNER flow: allow immediate signing
             if (signers.length === 0) {
                 elements.btnSend.classList.add('hidden');
                 return;
@@ -3453,11 +3754,28 @@
                 if (expirationInfo) expirationInfo.classList.add('hidden');
             }
 
-            // Recipients with signing status
+            // Hide audit log and LTV card for sender flow (not needed for dispatch)
+            const auditPanel = document.querySelector('.audit-panel');
+            const ltvCard = document.getElementById('ltv-timestamp-card');
+            if (!state.remoteSession.isRemoteSigner) {
+                if (auditPanel) auditPanel.style.display = 'none';
+                if (ltvCard) ltvCard.style.display = 'none';
+            } else {
+                // Show for remote signers
+                if (auditPanel) auditPanel.style.display = '';
+                if (ltvCard) ltvCard.style.display = '';
+            }
+
+            // Recipients with field navigation (modern DocuSign-style)
             const signers = state.recipients.filter(r => r.role === 'signer');
             elements.reviewRecipients.innerHTML = state.recipients.map((r, index) => {
+                // Get fields for this recipient
+                const recipientFields = state.placedFields.filter(f => f.recipientId === r.id);
+                const fieldCount = recipientFields.length;
+
+                // Status badge only for remote signer flow
                 let statusBadge = '';
-                if (r.role === 'signer') {
+                if (state.remoteSession.isRemoteSigner && r.role === 'signer') {
                     const signerIndex = signers.findIndex(s => s.id === r.id);
                     if (state.signingStatus.completedSigners.includes(r.id)) {
                         statusBadge = '<span style="padding:0.125rem 0.5rem;background:#10b981;color:white;border-radius:4px;font-size:0.625rem;font-weight:600;">SIGNED</span>';
@@ -3467,15 +3785,61 @@
                         statusBadge = '<span style="padding:0.125rem 0.5rem;background:#9ca3af;color:white;border-radius:4px;font-size:0.625rem;font-weight:600;">PENDING</span>';
                     }
                 }
+
+                // Build clickable field list for sender flow
+                let fieldListHtml = '';
+                if (!state.remoteSession.isRemoteSigner && fieldCount > 0) {
+                    fieldListHtml = `
+                        <div class="recipient-field-list" style="margin-top: 0.5rem; padding-left: 1rem; border-left: 2px solid ${r.color};">
+                            ${recipientFields.map((field, fieldIndex) => {
+                                const icon = getFieldIcon(field.type);
+                                const typeName = field.type.charAt(0).toUpperCase() + field.type.slice(1);
+                                return `
+                                    <button
+                                        type="button"
+                                        onclick="scrollToField('${field.id}')"
+                                        class="field-nav-btn"
+                                        style="
+                                            display: flex;
+                                            align-items: center;
+                                            gap: 0.5rem;
+                                            width: 100%;
+                                            padding: 0.375rem 0.5rem;
+                                            margin: 0.25rem 0;
+                                            background: transparent;
+                                            border: 1px solid #e5e7eb;
+                                            border-radius: 4px;
+                                            font-size: 0.8125rem;
+                                            cursor: pointer;
+                                            text-align: left;
+                                            transition: background 0.2s, border-color 0.2s;
+                                        "
+                                        onmouseover="this.style.background='#f3f4f6';this.style.borderColor='${r.color}';"
+                                        onmouseout="this.style.background='transparent';this.style.borderColor='#e5e7eb';"
+                                    >
+                                        <span style="font-size: 1rem;">${icon}</span>
+                                        <span>${typeName}</span>
+                                        <span style="margin-left: auto; color: #9ca3af; font-size: 0.75rem;">Page ${field.page}</span>
+                                    </button>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                }
+
                 return `
-                    <div class="summary-item">
-                        <span class="summary-label" style="display:flex;align-items:center;gap:0.5rem;">
-                            <span style="width:8px;height:8px;background:${r.color};border-radius:50%;"></span>
-                            ${r.name}
-                        </span>
-                        <span class="summary-value" style="display:flex;align-items:center;gap:0.5rem;">
-                            ${statusBadge || (r.role === 'signer' ? 'Signs' : 'Copy')}
-                        </span>
+                    <div class="recipient-card" style="margin-bottom: 0.75rem; padding-bottom: 0.75rem; border-bottom: 1px solid #f3f4f6;">
+                        <div class="summary-item" style="margin-bottom: 0;">
+                            <span class="summary-label" style="display:flex;align-items:center;gap:0.5rem;">
+                                <span style="width:10px;height:10px;background:${r.color};border-radius:50%;"></span>
+                                <span style="font-weight: 500;">${r.name}</span>
+                                ${fieldCount > 0 ? `<span style="background:#e5e7eb;padding:0.125rem 0.5rem;border-radius:10px;font-size:0.75rem;">${fieldCount} field${fieldCount !== 1 ? 's' : ''}</span>` : ''}
+                            </span>
+                            <span class="summary-value" style="display:flex;align-items:center;gap:0.5rem;">
+                                ${statusBadge || (r.role === 'signer' ? 'Signer' : 'CC')}
+                            </span>
+                        </div>
+                        ${fieldListHtml}
                     </div>
                 `;
             }).join('');
@@ -3531,6 +3895,7 @@
                     const scaledHeight = field.height * scaleRatio;
 
                     fieldOverlay.className = 'review-field-overlay';
+                    fieldOverlay.dataset.fieldId = field.id;
                     fieldOverlay.style.cssText = `
                         position: absolute;
                         left: ${scaledX}px;
@@ -3577,6 +3942,45 @@
                 checkbox: '☑️'
             };
             return icons[type] || '📌';
+        }
+
+        // Field navigation - scroll to field and highlight
+        window.scrollToField = function(fieldId) {
+            // Find the field overlay by data-field-id
+            const targetOverlay = document.querySelector(`.review-field-overlay[data-field-id="${fieldId}"]`);
+            if (!targetOverlay) return;
+
+            // Find the page container and scroll to it
+            const pageContainer = targetOverlay.closest('.review-page-container');
+            if (pageContainer) {
+                // Scroll to bring the field into view
+                targetOverlay.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+
+            // Highlight the field briefly
+            highlightFieldOverlay(targetOverlay);
+        };
+
+        function highlightFieldOverlay(overlay) {
+            // Store original styles
+            const originalBorder = overlay.style.border;
+            const originalBoxShadow = overlay.style.boxShadow;
+            const originalTransform = overlay.style.transform;
+
+            // Apply highlight
+            overlay.style.border = '3px solid #fbbf24';
+            overlay.style.boxShadow = '0 0 20px rgba(251, 191, 36, 0.6)';
+            overlay.style.transform = 'scale(1.05)';
+            overlay.style.transition = 'all 0.3s ease';
+            overlay.style.zIndex = '10';
+
+            // Remove highlight after delay
+            setTimeout(() => {
+                overlay.style.border = originalBorder;
+                overlay.style.boxShadow = originalBoxShadow || 'none';
+                overlay.style.transform = originalTransform || 'none';
+                overlay.style.zIndex = '';
+            }, 1500);
         }
 
         function updateAuditLog() {
@@ -3676,6 +4080,15 @@
             if (signatureFields.length === 0) {
                 showToast(`No signature fields for ${currentSigner.name}`);
                 return;
+            }
+
+            // Show consent modal for remote signers (REQUIRED before signing)
+            if (state.remoteSession.isRemoteSigner && !state.remoteSession.hasConsented) {
+                const consented = await showConsentModal();
+                if (!consented) {
+                    return; // User declined
+                }
+                state.remoteSession.hasConsented = true;
             }
 
             try {
@@ -3841,6 +4254,53 @@
         function closeSettingsModal() {
             document.getElementById('settings-modal').classList.add('hidden');
         }
+
+        // Consent Modal for Remote Signers
+        let consentResolve = null;
+
+        function showConsentModal() {
+            return new Promise((resolve) => {
+                consentResolve = resolve;
+
+                // Update document name
+                const docNameEl = document.getElementById('consent-doc-name');
+                if (docNameEl) docNameEl.textContent = state.fileName || 'Document';
+
+                // Reset checkbox
+                const checkbox = document.getElementById('consent-checkbox');
+                const agreeBtn = document.getElementById('consent-agree-btn');
+                if (checkbox) {
+                    checkbox.checked = false;
+                    checkbox.onchange = () => {
+                        agreeBtn.disabled = !checkbox.checked;
+                    };
+                }
+                if (agreeBtn) agreeBtn.disabled = true;
+
+                // Show modal
+                document.getElementById('consent-modal').classList.remove('hidden');
+            });
+        }
+
+        function closeConsentModal() {
+            document.getElementById('consent-modal').classList.add('hidden');
+            consentResolve = null;
+        }
+
+        window.declineConsent = function() {
+            closeConsentModal();
+            if (consentResolve) {
+                consentResolve(false);
+            }
+            showToast('You declined to sign. Please contact the document sender if you have questions.');
+        };
+
+        window.acceptConsent = function() {
+            closeConsentModal();
+            if (consentResolve) {
+                consentResolve(true);
+            }
+        };
 
         async function importCertificate() {
             const certFileInput = document.getElementById('cert-file-input');
@@ -4396,18 +4856,26 @@
                         signed: false,
                         signed_at: null
                     })),
-                    fields: state.placedFields.map(f => ({
-                        id: f.id,
-                        field_type: f.type,
-                        recipient_id: f.recipientId.toString(),
-                        page: f.page,
-                        x_percent: f.xPercent || (f.x / (state.pageDimensions[f.page]?.width || 612)) * 100,
-                        y_percent: f.yPercent || (f.y / (state.pageDimensions[f.page]?.height || 792)) * 100,
-                        width_percent: f.widthPercent || (f.width / (state.pageDimensions[f.page]?.width || 612)) * 100,
-                        height_percent: f.heightPercent || (f.height / (state.pageDimensions[f.page]?.height || 792)) * 100,
-                        required: f.required !== false,
-                        value: f.value || null
-                    })),
+                    fields: state.placedFields.map(f => {
+                        // Use canvas dimensions for pixel-to-percent conversion
+                        // Fields placed locally have x/y in canvas pixels (scaled by state.scale)
+                        const pageDims = state.pageDimensions[f.page] || {};
+                        const canvasW = pageDims.canvasWidth || (612 * state.scale);
+                        const canvasH = pageDims.canvasHeight || (792 * state.scale);
+
+                        return {
+                            id: f.id,
+                            field_type: f.type,
+                            recipient_id: f.recipientId.toString(),
+                            page: f.page,
+                            x_percent: f.xPercent || (f.x / canvasW) * 100,
+                            y_percent: f.yPercent || (f.y / canvasH) * 100,
+                            width_percent: f.widthPercent || (f.width / canvasW) * 100,
+                            height_percent: f.heightPercent || (f.height / canvasH) * 100,
+                            required: f.required !== false,
+                            value: f.value || null
+                        };
+                    }),
                     expiry_hours: expiryHours
                 };
 
@@ -4792,8 +5260,37 @@
                     value: f.value
                 }));
 
-                // Load PDF
-                await loadPdf(pdfBytes);
+                // Load PDF with PDF.js
+                const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+                state.pdfDoc = await loadingTask.promise;
+                state.totalPages = state.pdfDoc.numPages;
+
+                // Cache page dimensions for coordinate conversion
+                for (let i = 1; i <= state.totalPages; i++) {
+                    const page = await state.pdfDoc.getPage(i);
+                    const viewport = page.getViewport({ scale: state.scale });
+                    state.pageDimensions[i] = {
+                        width: viewport.width / state.scale,
+                        height: viewport.height / state.scale,
+                        canvasWidth: viewport.width,
+                        canvasHeight: viewport.height
+                    };
+                }
+
+                // Convert percentage-based fields to pixel coordinates
+                state.placedFields = state.placedFields.map(f => {
+                    const pageDims = state.pageDimensions[f.page] || {};
+                    const canvasW = pageDims.canvasWidth || (612 * state.scale);
+                    const canvasH = pageDims.canvasHeight || (792 * state.scale);
+
+                    return {
+                        ...f,
+                        x: (f.xPercent / 100) * canvasW,
+                        y: (f.yPercent / 100) * canvasH,
+                        width: (f.widthPercent / 100) * canvasW,
+                        height: (f.heightPercent / 100) * canvasH
+                    };
+                });
 
                 // Find current recipient and set signing status
                 const currentRecipient = result.session.recipients.find(r => r.id === recipientId);

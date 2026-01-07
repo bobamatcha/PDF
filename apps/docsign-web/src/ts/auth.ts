@@ -58,6 +58,8 @@ export interface RegisterResponse {
   user_id?: string;
   message: string;
   error?: string;
+  /** True if account exists but needs email verification */
+  needs_verification?: boolean;
 }
 
 /** Login response */
@@ -68,6 +70,10 @@ export interface LoginResponse {
   expires_in?: number;
   user?: User;
   error?: string;
+  /** True if login failed due to unverified email */
+  needs_verification?: boolean;
+  /** Email for resend verification flow */
+  email?: string;
 }
 
 /** Refresh response */
@@ -82,6 +88,35 @@ export interface RefreshResponse {
 export interface AuthResponse {
   success: boolean;
   message: string;
+  /** Seconds until rate limit resets (for rate limit errors) */
+  retry_after_seconds?: number;
+}
+
+/**
+ * Format a user-friendly error message from API response
+ *
+ * Best practices (WCAG 3.3.1, 3.3.3):
+ * - Be specific about what went wrong
+ * - Provide actionable guidance on how to fix it
+ * - Never blame the user for server-side issues
+ * - Use plain language, no jargon
+ */
+function formatErrorMessage(data: Record<string, unknown>, fallback: string): string {
+  // Handle rate limit responses with specific, helpful messaging
+  if (data.retry_after_seconds && typeof data.retry_after_seconds === "number") {
+    const seconds = data.retry_after_seconds as number;
+    if (seconds >= 3600) {
+      const hours = Math.ceil(seconds / 3600);
+      return `You've reached the hourly limit for this action. You can try again in ${hours} hour${hours > 1 ? "s" : ""}.`;
+    } else if (seconds >= 60) {
+      const minutes = Math.ceil(seconds / 60);
+      return `You've reached the limit for this action. You can try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`;
+    } else {
+      return `Please wait ${seconds} seconds before trying again.`;
+    }
+  }
+  // Check both message and error fields - prefer message as it's usually more descriptive
+  return (data.message as string) || (data.error as string) || fallback;
 }
 
 /** Auth state change event */
@@ -248,11 +283,16 @@ export async function register(
     const data = await response.json();
 
     if (!response.ok) {
-      log.warn("Registration failed:", data.message);
+      // Handle both message and error fields - API uses message for most errors,
+      // but rate limit responses use error field
+      const errorMsg = data.message || data.error || "Registration failed";
+      log.warn("Registration failed:", errorMsg);
       return {
         success: false,
-        message: data.message || "Registration failed",
-        error: data.message,
+        message: errorMsg,
+        error: errorMsg,
+        // CRITICAL: Pass through needs_verification so UI can show resend button
+        needs_verification: data.needs_verification,
       };
     }
 
@@ -266,9 +306,47 @@ export async function register(
     log.error("Registration error:", error);
     return {
       success: false,
-      message: "Network error. Please check your connection and try again.",
+      message: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
       error: String(error),
     };
+  }
+}
+
+/**
+ * Check if an email is already registered (email-first UX)
+ *
+ * @param email - Email address to check
+ * @returns Whether email exists and if it's verified
+ */
+export interface CheckEmailResponse {
+  exists: boolean;
+  verified: boolean;
+}
+
+export async function checkEmail(email: string): Promise<CheckEmailResponse> {
+  try {
+    log.info("Checking email:", email);
+
+    const response = await fetch(`${API_BASE}/auth/check-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      log.warn("Check email failed:", response.status);
+      return { exists: false, verified: false };
+    }
+
+    return {
+      exists: data.exists ?? false,
+      verified: data.verified ?? false,
+    };
+  } catch (error) {
+    log.error("Check email error:", error);
+    return { exists: false, verified: false };
   }
 }
 
@@ -296,6 +374,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
       return {
         success: false,
         error: data.error || "Login failed",
+        // CRITICAL: Pass through needs_verification and email so UI can show resend button
+        needs_verification: data.needs_verification,
+        email: data.email,
       };
     }
 
@@ -318,7 +399,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
     log.error("Login error:", error);
     return {
       success: false,
-      error: "Network error. Please check your connection and try again.",
+      error: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
     };
   }
 }
@@ -453,11 +534,12 @@ export async function forgotPassword(email: string): Promise<AuthResponse> {
     const data = await response.json();
 
     if (!response.ok) {
-      // Return the error message from backend (e.g., "No account found with this email")
-      log.warn("Forgot password failed:", data.message);
+      const errorMsg = formatErrorMessage(data, "Unable to send reset email. Please try again.");
+      log.warn("Forgot password failed:", errorMsg);
       return {
         success: false,
-        message: data.message || "Unable to process request. Please try again.",
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds as number | undefined,
       };
     }
 
@@ -469,7 +551,51 @@ export async function forgotPassword(email: string): Promise<AuthResponse> {
     log.error("Forgot password error:", error);
     return {
       success: false,
-      message: "Network error. Please try again.",
+      message: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
+    };
+  }
+}
+
+/**
+ * Resend email verification link
+ *
+ * Use this when a user needs a new verification email (e.g., after login failure
+ * due to unverified email, or re-registration with existing unverified account).
+ *
+ * @param email - Email address to send verification link
+ * @returns Result with success/error message
+ */
+export async function resendVerification(email: string): Promise<AuthResponse> {
+  try {
+    log.info("Requesting verification resend for:", email);
+
+    const response = await fetch(`${API_BASE}/auth/resend-verification`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Unable to send verification email. Please try again.");
+      log.warn("Resend verification failed:", errorMsg);
+      return {
+        success: false,
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds as number | undefined,
+      };
+    }
+
+    return {
+      success: true,
+      message: data.message || "Verification email sent! Please check your inbox.",
+    };
+  } catch (error) {
+    log.error("Resend verification error:", error);
+    return {
+      success: false,
+      message: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
     };
   }
 }
@@ -497,22 +623,24 @@ export async function resetPassword(
     const data = await response.json();
 
     if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Password reset failed. The link may have expired.");
       return {
         success: false,
-        message: data.message || "Password reset failed",
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds as number | undefined,
       };
     }
 
     log.info("Password reset successful");
     return {
       success: true,
-      message: data.message || "Password reset successfully",
+      message: data.message || "Password reset successfully! You can now sign in.",
     };
   } catch (error) {
     log.error("Reset password error:", error);
     return {
       success: false,
-      message: "Network error. Please try again.",
+      message: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
     };
   }
 }
@@ -594,6 +722,8 @@ export function initAuthNamespace(): void {
     docSign.refreshToken = refreshToken;
     docSign.forgotPassword = forgotPassword;
     docSign.resetPassword = resetPassword;
+    docSign.resendVerification = resendVerification;
+    docSign.checkEmail = checkEmail;
 
     // Authenticated fetch
     docSign.authenticatedFetch = authenticatedFetch;

@@ -180,6 +180,21 @@ pub struct ResendVerificationRequest {
     pub email: String,
 }
 
+/// Check email request (email-first UX)
+#[derive(Debug, Deserialize)]
+pub struct CheckEmailRequest {
+    pub email: String,
+}
+
+/// Check email response (email-first UX)
+#[derive(Debug, Serialize)]
+pub struct CheckEmailResponse {
+    /// Whether an account exists with this email
+    pub exists: bool,
+    /// Whether the account is verified (only meaningful if exists=true)
+    pub verified: bool,
+}
+
 /// Password reset with token
 #[derive(Debug, Deserialize)]
 pub struct ResetPasswordRequest {
@@ -197,6 +212,9 @@ pub struct RegisterResponse {
     /// Whether verification email was sent successfully
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email_sent: Option<bool>,
+    /// True if account exists but needs email verification (for resend flow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_verification: Option<bool>,
 }
 
 /// Login response
@@ -213,6 +231,12 @@ pub struct LoginResponse {
     pub user: Option<UserPublic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// True if login failed due to unverified email (for resend flow)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_verification: Option<bool>,
+    /// Email address for resend verification flow
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 /// Refresh response

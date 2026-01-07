@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use worker::{console_log, kv::KvStore, Env, Result};
 
 /// Default from address for emails
+/// NOTE: Using getsignatures.org (not mail.getsignatures.org) - DNS verified for Resend
 pub const DEFAULT_FROM_ADDRESS: &str = "GetSignatures <noreply@getsignatures.org>";
 
 /// Daily email limit (Resend free tier)
@@ -244,23 +245,23 @@ pub async fn send_email(env: &Env, request: EmailSendRequest) -> Result<EmailSen
     // Check if under quota
     if quota.daily_count >= DAILY_EMAIL_LIMIT {
         console_log!(
-            "Daily email quota exceeded: {}/{}",
+            "ALERT: Daily email quota exceeded: {}/{}",
             quota.daily_count,
             DAILY_EMAIL_LIMIT
         );
         return Ok(EmailSendResult::error(
-            "Daily email limit reached. Please try again tomorrow.",
+            "We ran out of emails for today. Try again tomorrow, or hit us up at bobamatchsolutions @ gmail dot com if it's urgent.",
         ));
     }
 
     if quota.monthly_count >= MONTHLY_EMAIL_LIMIT {
         console_log!(
-            "Monthly email quota exceeded: {}/{}",
+            "ALERT: Monthly email quota exceeded: {}/{}",
             quota.monthly_count,
             MONTHLY_EMAIL_LIMIT
         );
         return Ok(EmailSendResult::error(
-            "Monthly email limit reached. Please try again next month.",
+            "We ran out of emails for the month. Try again next month, or email bobamatchsolutions @ gmail dot com and we'll sort it out.",
         ));
     }
 

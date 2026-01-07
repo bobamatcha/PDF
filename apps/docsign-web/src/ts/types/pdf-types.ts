@@ -68,6 +68,18 @@ export interface PDFJSViewport {
   width: number;
   height: number;
   scale: number;
+  /** Page rotation in degrees (0, 90, 180, 270) */
+  rotation?: number;
+  /** The viewBox [xMin, yMin, xMax, yMax] */
+  viewBox?: [number, number, number, number];
+  /** Transform matrix */
+  transform?: number[];
+  /** X offset */
+  offsetX?: number;
+  /** Y offset */
+  offsetY?: number;
+  /** Clone the viewport with optional scale override */
+  clone?(params?: { scale?: number }): PDFJSViewport;
   /** Convert PDF coordinates to viewport (DOM) coordinates */
   convertToViewportPoint(x: number, y: number): [number, number];
   /** Convert viewport (DOM) coordinates to PDF coordinates */

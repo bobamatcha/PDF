@@ -110,6 +110,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                     user_id: None,
                     message: "Invalid request body".to_string(),
                     email_sent: None,
+                    needs_verification: None,
                 },
             );
         }
@@ -124,6 +125,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 user_id: None,
                 message: e,
                 email_sent: None,
+                needs_verification: None,
             },
         );
     }
@@ -137,6 +139,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 user_id: None,
                 message: e,
                 email_sent: None,
+                needs_verification: None,
             },
         );
     }
@@ -151,6 +154,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 user_id: None,
                 message: "Name must be between 1 and 100 characters".to_string(),
                 email_sent: None,
+                needs_verification: None,
             },
         );
     }
@@ -158,14 +162,30 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
     let users_kv = env.kv("USERS")?;
 
     // Check if email already exists
-    if get_user_by_email(&users_kv, &body.email).await?.is_some() {
+    if let Some(existing_user) = get_user_by_email(&users_kv, &body.email).await? {
+        if !existing_user.email_verified {
+            // Account exists but is unverified - friendly message with resend option
+            return json_response(
+                409,
+                &RegisterResponse {
+                    success: false,
+                    user_id: None,
+                    message: "An account with this email already exists but hasn't been verified yet. Please check your email for a verification link, or request a new one.".to_string(),
+                    email_sent: None,
+                    needs_verification: Some(true),
+                },
+            );
+        }
+        // Account exists and is verified
         return json_response(
             409,
             &RegisterResponse {
                 success: false,
                 user_id: None,
-                message: "An account with this email already exists".to_string(),
+                message: "An account with this email already exists. Please sign in instead."
+                    .to_string(),
                 email_sent: None,
+                needs_verification: Some(false),
             },
         );
     }
@@ -182,6 +202,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                     user_id: None,
                     message: "Registration failed. Please try again.".to_string(),
                     email_sent: None,
+                    needs_verification: None,
                 },
             );
         }
@@ -206,6 +227,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
                 user_id: None,
                 message: "Registration failed. Please try again.".to_string(),
                 email_sent: None,
+                needs_verification: None,
             },
         );
     }
@@ -230,7 +252,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
 
     // Send verification email via Resend
     let verification_url = format!(
-        "https://getsignatures.org/verify?token={}",
+        "https://getsignatures.org/auth.html?action=verify&token={}",
         verification_token
     );
     let email_request = EmailSendRequest {
@@ -260,22 +282,22 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
     };
 
     let email_result = send_email(&env, email_request).await;
-    let email_sent = match &email_result {
+    let (email_sent, email_error) = match &email_result {
         Ok(result) if result.success => {
             console_log!(
                 "Verification email sent to {}: id={}",
                 user.email,
                 result.id
             );
-            true
+            (true, None)
         }
         Ok(result) => {
             console_log!("Failed to send verification email: {:?}", result.error);
-            false
+            (false, result.error.clone())
         }
         Err(e) => {
             console_log!("Email send error: {:?}", e);
-            false
+            (false, Some(format!("{:?}", e)))
         }
     };
 
@@ -285,17 +307,23 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         verification_token
     );
 
+    let message = if email_sent {
+        "Account created. Please check your email to verify your account.".to_string()
+    } else if let Some(err) = email_error {
+        format!("Account created, but: {}", err)
+    } else {
+        "Account created but we couldn't send the verification email. Try the resend option."
+            .to_string()
+    };
+
     json_response(
         201,
         &RegisterResponse {
             success: true,
             user_id: Some(user_id),
-            message: if email_sent {
-                "Account created. Please check your email to verify your account.".to_string()
-            } else {
-                "Account created but we couldn't send the verification email. Please use the resend option to verify your account.".to_string()
-            },
+            message,
             email_sent: Some(email_sent),
+            needs_verification: None,
         },
     )
 }
@@ -397,6 +425,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                     expires_in: None,
                     user: None,
                     error: Some("Invalid request body".to_string()),
+                    needs_verification: None,
+                    email: None,
                 },
             );
         }
@@ -418,6 +448,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                     expires_in: None,
                     user: None,
                     error: Some("Invalid email or password".to_string()),
+                    needs_verification: None,
+                    email: None,
                 },
             );
         }
@@ -434,6 +466,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                 expires_in: None,
                 user: None,
                 error: Some("Invalid email or password".to_string()),
+                needs_verification: None,
+                email: None,
             },
         );
     }
@@ -448,7 +482,9 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                 refresh_token: None,
                 expires_in: None,
                 user: None,
-                error: Some("Please verify your email before logging in".to_string()),
+                error: Some("Your email address hasn't been verified yet. Please check your inbox for a verification link, or click below to send a new one.".to_string()),
+                needs_verification: Some(true),
+                email: Some(user.email.clone()),
             },
         );
     }
@@ -467,6 +503,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                     expires_in: None,
                     user: None,
                     error: Some("Server configuration error".to_string()),
+                    needs_verification: None,
+                    email: None,
                 },
             );
         }
@@ -521,6 +559,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                     expires_in: None,
                     user: None,
                     error: Some("Failed to create session".to_string()),
+                    needs_verification: None,
+                    email: None,
                 },
             );
         }
@@ -539,6 +579,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
                     expires_in: None,
                     user: None,
                     error: Some("Failed to create session".to_string()),
+                    needs_verification: None,
+                    email: None,
                 },
             );
         }
@@ -596,6 +638,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
             expires_in: Some(ACCESS_TOKEN_EXPIRY),
             user: Some(UserPublic::from(&user)),
             error: None,
+            needs_verification: None,
+            email: None,
         },
     )
 }
@@ -805,7 +849,7 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
 
     // Send password reset email via Resend
     let reset_url = format!(
-        "https://getsignatures.org/reset-password?token={}",
+        "https://getsignatures.org/auth.html?action=reset&token={}",
         reset_token
     );
     let email_request = EmailSendRequest {
@@ -835,22 +879,22 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
     };
 
     let email_result = send_email(&env, email_request).await;
-    let email_sent = match &email_result {
+    let (email_sent, email_error) = match &email_result {
         Ok(result) if result.success => {
             console_log!(
                 "Password reset email sent to {}: id={}",
                 user.email,
                 result.id
             );
-            true
+            (true, None)
         }
         Ok(result) => {
             console_log!("Failed to send password reset email: {:?}", result.error);
-            false
+            (false, result.error.clone())
         }
         Err(e) => {
             console_log!("Email send error: {:?}", e);
-            false
+            (false, Some(format!("{:?}", e)))
         }
     };
 
@@ -860,15 +904,19 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
         reset_token
     );
 
+    let message = if email_sent {
+        "A password reset link has been sent to your email.".to_string()
+    } else if let Some(err) = email_error {
+        err
+    } else {
+        "Couldn't send the reset email. Try again in a bit.".to_string()
+    };
+
     json_response(
-        200,
+        if email_sent { 200 } else { 500 },
         &AuthResponse {
-            success: true,
-            message: if email_sent {
-                "A password reset link has been sent to your email.".to_string()
-            } else {
-                "We couldn't send the reset email. Please try again later.".to_string()
-            },
+            success: email_sent,
+            message,
             email_sent: Some(email_sent),
         },
     )
@@ -1043,7 +1091,7 @@ pub async fn handle_resend_verification(mut req: Request, env: Env) -> Result<Re
 
     // Send verification email via Resend
     let verification_url = format!(
-        "https://getsignatures.org/verify?token={}",
+        "https://getsignatures.org/auth.html?action=verify&token={}",
         verification_token
     );
     let email_request = EmailSendRequest {
@@ -1072,22 +1120,22 @@ pub async fn handle_resend_verification(mut req: Request, env: Env) -> Result<Re
     };
 
     let email_result = send_email(&env, email_request).await;
-    let email_sent = match &email_result {
+    let (email_sent, email_error) = match &email_result {
         Ok(result) if result.success => {
             console_log!(
                 "Verification email resent to {}: id={}",
                 user.email,
                 result.id
             );
-            true
+            (true, None)
         }
         Ok(result) => {
             console_log!("Failed to resend verification email: {:?}", result.error);
-            false
+            (false, result.error.clone())
         }
         Err(e) => {
             console_log!("Email send error: {:?}", e);
-            false
+            (false, Some(format!("{:?}", e)))
         }
     };
 
@@ -1097,18 +1145,75 @@ pub async fn handle_resend_verification(mut req: Request, env: Env) -> Result<Re
         verification_token
     );
 
+    let message = if email_sent {
+        "Verification email sent. Please check your inbox.".to_string()
+    } else if let Some(err) = email_error {
+        err
+    } else {
+        "Couldn't send the email. Try again in a bit.".to_string()
+    };
+
     json_response(
-        200,
+        if email_sent { 200 } else { 500 },
         &AuthResponse {
-            success: true,
-            message: if email_sent {
-                "Verification email sent. Please check your inbox.".to_string()
-            } else {
-                "We couldn't send the verification email. Please try again later.".to_string()
-            },
+            success: email_sent,
+            message,
             email_sent: Some(email_sent),
         },
     )
+}
+
+/// POST /auth/check-email
+/// Check if an email is already registered (for email-first UX)
+///
+/// Returns { exists: bool, verified: bool }
+pub async fn handle_check_email(mut req: Request, env: Env) -> Result<Response> {
+    // Parse request body
+    let body: CheckEmailRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            console_log!("Invalid check-email request body: {}", e);
+            return json_response(
+                400,
+                &CheckEmailResponse {
+                    exists: false,
+                    verified: false,
+                },
+            );
+        }
+    };
+
+    // Validate email format
+    let email = body.email.trim().to_lowercase();
+    if validate_email(&email).is_err() {
+        return json_response(
+            400,
+            &CheckEmailResponse {
+                exists: false,
+                verified: false,
+            },
+        );
+    }
+
+    // Check if user exists
+    let users_kv = env.kv("USERS")?;
+
+    match get_user_by_email(&users_kv, &email).await? {
+        Some(user) => json_response(
+            200,
+            &CheckEmailResponse {
+                exists: true,
+                verified: user.email_verified,
+            },
+        ),
+        None => json_response(
+            200,
+            &CheckEmailResponse {
+                exists: false,
+                verified: false,
+            },
+        ),
+    }
 }
 
 /// Middleware: Extract and validate user from request

@@ -5313,6 +5313,21 @@ var ACCESS_TOKEN_KEY = "docsign_access_token";
 var REFRESH_TOKEN_KEY = "docsign_refresh_token";
 var USER_KEY = "docsign_user";
 var API_BASE = "https://api.getsignatures.org";
+function formatErrorMessage(data, fallback) {
+  if (data.retry_after_seconds && typeof data.retry_after_seconds === "number") {
+    const seconds = data.retry_after_seconds;
+    if (seconds >= 3600) {
+      const hours = Math.ceil(seconds / 3600);
+      return `You've reached the hourly limit for this action. You can try again in ${hours} hour${hours > 1 ? "s" : ""}.`;
+    } else if (seconds >= 60) {
+      const minutes = Math.ceil(seconds / 60);
+      return `You've reached the limit for this action. You can try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`;
+    } else {
+      return `Please wait ${seconds} seconds before trying again.`;
+    }
+  }
+  return data.message || data.error || fallback;
+}
 var authListeners = [];
 function onAuthStateChange(listener) {
   authListeners.push(listener);
@@ -5398,11 +5413,14 @@ async function register(email, password, name) {
     });
     const data = await response.json();
     if (!response.ok) {
-      log6.warn("Registration failed:", data.message);
+      const errorMsg = data.message || data.error || "Registration failed";
+      log6.warn("Registration failed:", errorMsg);
       return {
         success: false,
-        message: data.message || "Registration failed",
-        error: data.message
+        message: errorMsg,
+        error: errorMsg,
+        // CRITICAL: Pass through needs_verification so UI can show resend button
+        needs_verification: data.needs_verification
       };
     }
     log6.info("Registration successful, verification email sent");
@@ -5415,9 +5433,31 @@ async function register(email, password, name) {
     log6.error("Registration error:", error);
     return {
       success: false,
-      message: "Network error. Please check your connection and try again.",
+      message: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment.",
       error: String(error)
     };
+  }
+}
+async function checkEmail(email) {
+  try {
+    log6.info("Checking email:", email);
+    const response = await fetch(`${API_BASE}/auth/check-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      log6.warn("Check email failed:", response.status);
+      return { exists: false, verified: false };
+    }
+    return {
+      exists: data.exists ?? false,
+      verified: data.verified ?? false
+    };
+  } catch (error) {
+    log6.error("Check email error:", error);
+    return { exists: false, verified: false };
   }
 }
 async function login(email, password) {
@@ -5433,7 +5473,10 @@ async function login(email, password) {
       log6.warn("Login failed:", data.error);
       return {
         success: false,
-        error: data.error || "Login failed"
+        error: data.error || "Login failed",
+        // CRITICAL: Pass through needs_verification and email so UI can show resend button
+        needs_verification: data.needs_verification,
+        email: data.email
       };
     }
     if (data.access_token && data.refresh_token && data.user) {
@@ -5453,7 +5496,7 @@ async function login(email, password) {
     log6.error("Login error:", error);
     return {
       success: false,
-      error: "Network error. Please check your connection and try again."
+      error: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment."
     };
   }
 }
@@ -5536,10 +5579,12 @@ async function forgotPassword(email) {
     });
     const data = await response.json();
     if (!response.ok) {
-      log6.warn("Forgot password failed:", data.message);
+      const errorMsg = formatErrorMessage(data, "Unable to send reset email. Please try again.");
+      log6.warn("Forgot password failed:", errorMsg);
       return {
         success: false,
-        message: data.message || "Unable to process request. Please try again."
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds
       };
     }
     return {
@@ -5550,7 +5595,37 @@ async function forgotPassword(email) {
     log6.error("Forgot password error:", error);
     return {
       success: false,
-      message: "Network error. Please try again."
+      message: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment."
+    };
+  }
+}
+async function resendVerification(email) {
+  try {
+    log6.info("Requesting verification resend for:", email);
+    const response = await fetch(`${API_BASE}/auth/resend-verification`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Unable to send verification email. Please try again.");
+      log6.warn("Resend verification failed:", errorMsg);
+      return {
+        success: false,
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds
+      };
+    }
+    return {
+      success: true,
+      message: data.message || "Verification email sent! Please check your inbox."
+    };
+  } catch (error) {
+    log6.error("Resend verification error:", error);
+    return {
+      success: false,
+      message: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment."
     };
   }
 }
@@ -5564,21 +5639,23 @@ async function resetPassword(token, newPassword) {
     });
     const data = await response.json();
     if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Password reset failed. The link may have expired.");
       return {
         success: false,
-        message: data.message || "Password reset failed"
+        message: errorMsg,
+        retry_after_seconds: data.retry_after_seconds
       };
     }
     log6.info("Password reset successful");
     return {
       success: true,
-      message: data.message || "Password reset successfully"
+      message: data.message || "Password reset successfully! You can now sign in."
     };
   } catch (error) {
     log6.error("Reset password error:", error);
     return {
       success: false,
-      message: "Network error. Please try again."
+      message: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment."
     };
   }
 }
@@ -5624,6 +5701,8 @@ function initAuthNamespace() {
     docSign.refreshToken = refreshToken;
     docSign.forgotPassword = forgotPassword;
     docSign.resetPassword = resetPassword;
+    docSign.resendVerification = resendVerification;
+    docSign.checkEmail = checkEmail;
     docSign.authenticatedFetch = authenticatedFetch;
     docSign.validatePassword = validatePassword;
     docSign.validateEmail = validateEmail;
