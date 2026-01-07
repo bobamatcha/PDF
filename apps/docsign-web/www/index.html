@@ -510,7 +510,7 @@
         }
 
         .pdf-preview-small canvas {
-            max-width: 100%;
+            /* Removed max-width: 100% - it blocks horizontal scroll when zoomed > 100% */
             height: auto;
             display: block;
             margin: 0 auto;
@@ -865,7 +865,7 @@
         }
 
         .review-pdf-body canvas {
-            max-width: 100%;
+            /* Removed max-width: 100% - it blocks horizontal scroll when zoomed > 100% */
             display: block;
             margin: 0 auto 1rem;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -1624,9 +1624,9 @@
             <div class="step-label">Recipients</div>
         </div>
         <div class="step-connector" aria-hidden="true"></div>
-        <div class="step" data-step="3" role="button" tabindex="0" aria-label="Step 3: Fields">
+        <div class="step" data-step="3" role="button" tabindex="0" aria-label="Step 3: Add Fields">
             <div class="step-circle" aria-hidden="true">3</div>
-            <div class="step-label">Fields</div>
+            <div class="step-label">Add Fields</div>
         </div>
         <div class="step-connector" aria-hidden="true"></div>
         <div class="step" data-step="4" role="button" tabindex="0" aria-label="Step 4: Review">
@@ -1794,7 +1794,7 @@
                             <div class="field-type-label">Checkbox</div>
                         </div>
                     </div>
-                    <div class="field-toolbar-header" style="border-top: 1px solid #e5e7eb; margin-top: 0.5rem;">
+                    <div class="field-toolbar-header" style="display: none; border-top: 1px solid #e5e7eb; margin-top: 0.5rem;">
                         <h3 style="margin-bottom: 0.75rem;" id="field-options-heading">Field Options</h3>
                         <label for="field-required" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer;">
                             <input type="checkbox" id="field-required" checked style="width: auto; cursor: pointer;" aria-describedby="field-required-desc">
@@ -1802,7 +1802,7 @@
                         </label>
                         <span id="field-required-desc" class="sr-only">Mark this field as required for the signer to fill</span>
                     </div>
-                    <div class="template-buttons">
+                    <div class="template-buttons" style="display: none;">
                         <button id="btn-save-template" class="btn btn-secondary btn-sm" aria-label="Save current fields as a reusable template">
                             Save as Template
                         </button>
@@ -1813,7 +1813,15 @@
                 </aside>
 
                 <div class="pdf-editor" role="application" aria-label="PDF document editor">
-                    <div class="pdf-editor-header">
+                    <div class="pdf-editor-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                        <!-- Zoom Controls for Step 3 -->
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                            <button id="fields-zoom-out" type="button" aria-label="Zoom out"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">−</button>
+                            <span id="fields-zoom-level" style="min-width: 50px; text-align: center; font-size: 0.875rem; color: var(--text-secondary);">100%</span>
+                            <button id="fields-zoom-in" type="button" aria-label="Zoom in"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">+</button>
+                        </div>
                         <div class="page-nav" role="navigation" aria-label="Page navigation">
                             <button id="prev-page" aria-label="Go to previous page">← Prev</button>
                             <span aria-live="polite">Page <span id="current-page">1</span> of <span id="total-pages">1</span></span>
@@ -1839,6 +1847,25 @@
                 <div class="review-pdf">
                     <div class="review-pdf-header">
                         <h3 id="doc-preview-heading">Document Preview</h3>
+                    </div>
+                    <!-- Review Preview Toolbar - consistent with Recipients page -->
+                    <div id="review-toolbar" style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 1.5rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-primary); flex-wrap: wrap; gap: 0.5rem;">
+                        <!-- Zoom Controls -->
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                            <button id="review-zoom-out" type="button" aria-label="Zoom out"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">−</button>
+                            <span id="review-zoom-level" style="min-width: 50px; text-align: center; font-size: 0.875rem; color: var(--text-secondary);">100%</span>
+                            <button id="review-zoom-in" type="button" aria-label="Zoom in"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.25rem;">+</button>
+                        </div>
+                        <!-- Page Navigation -->
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                            <button id="review-prev-page" type="button" aria-label="Previous page"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center;">◀</button>
+                            <span id="review-page-indicator" style="min-width: 60px; text-align: center; font-size: 0.875rem; color: var(--text-secondary);">1 / 1</span>
+                            <button id="review-next-page" type="button" aria-label="Next page"
+                                style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-primary); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: center;">▶</button>
+                        </div>
                     </div>
                     <div id="review-pdf-body" class="review-pdf-body" role="img" aria-labelledby="doc-preview-heading" aria-describedby="review-desc">
                         <span id="review-desc" class="sr-only">Preview of document with signature fields highlighted</span>
@@ -1930,7 +1957,8 @@
             </button>
         </div>
         <div class="footer-right">
-            <button id="btn-save-draft" class="btn btn-secondary hidden" aria-label="Save current progress as draft">
+            <!-- Save Draft disabled until server-side persistence is implemented -->
+            <button id="btn-save-draft" class="btn btn-secondary" style="display: none;" aria-label="Save current progress as draft">
                 Save Draft
             </button>
             <button id="btn-next" class="btn btn-primary hidden" aria-label="Continue to next step">
@@ -2006,8 +2034,8 @@
                 <div id="signing-links-list" style="display: flex; flex-direction: column; gap: 1rem;">
                     <!-- Populated dynamically -->
                 </div>
-                <div id="signing-links-error" class="hidden" style="padding: 1rem; background: #fef2f2; border-radius: 8px; color: #991b1b; margin-top: 1rem;">
-                    <!-- Error message -->
+                <div id="signing-links-error" class="hidden" style="padding: 1.25rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 12px; color: #78350f; margin-top: 1rem; font-size: 0.95rem; line-height: 1.5;">
+                    <!-- Error message - friendly amber styling instead of scary red -->
                 </div>
                 <div style="margin-top: 1.5rem; padding: 1rem; background: #f0fdf4; border-radius: 8px;">
                     <p style="font-size: 0.75rem; color: #166534; margin: 0;">
@@ -2065,6 +2093,32 @@
                 <button class="modal-close" onclick="closeSettingsModal()" aria-label="Close dialog">&times;</button>
             </div>
             <div class="modal-body">
+                <!-- Profile Section -->
+                <div id="profile-section" class="settings-section">
+                    <h4>Profile</h4>
+                    <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.75rem;">
+                        Update your name for signatures and personalized greetings.
+                    </p>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+                        <div style="flex: 2; min-width: 120px;">
+                            <label for="profile-first-name" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem;">First Name</label>
+                            <input type="text" id="profile-first-name" class="form-input" placeholder="First name" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </div>
+                        <div style="flex: 1; min-width: 60px; max-width: 80px;">
+                            <label for="profile-middle-initial" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem;">M.I.</label>
+                            <input type="text" id="profile-middle-initial" class="form-input" placeholder="MI" maxlength="2" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; text-transform: uppercase;">
+                        </div>
+                        <div style="flex: 2; min-width: 120px;">
+                            <label for="profile-last-name" style="display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem;">Last Name</label>
+                            <input type="text" id="profile-last-name" class="form-input" placeholder="Last name" style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px;">
+                        </div>
+                    </div>
+                    <button id="btn-save-profile" class="btn btn-primary" onclick="saveProfile()" style="width: 100%;">
+                        Save Profile
+                    </button>
+                    <div id="profile-status" style="margin-top: 0.5rem; font-size: 0.875rem; display: none;"></div>
+                </div>
+
                 <!-- Certificate Management Section -->
                 <div class="settings-section">
                     <h4>Certificate Management</h4>
@@ -2446,11 +2500,13 @@
                         const user = window.DocSign.getCurrentUser();
                         if (user) {
                             const userInfoEl = document.getElementById('user-info');
-                            const userEmailEl = document.getElementById('user-email');
+                            const userGreetingEl = document.getElementById('user-email');
                             const docsRemainingEl = document.getElementById('docs-remaining');
 
-                            if (userInfoEl && userEmailEl && docsRemainingEl) {
-                                userEmailEl.textContent = user.email;
+                            if (userInfoEl && userGreetingEl && docsRemainingEl) {
+                                // Use first_name directly for friendly greeting
+                                const firstName = user.first_name || 'there';
+                                userGreetingEl.textContent = `Welcome back, ${firstName}`;
                                 docsRemainingEl.textContent = `(${user.weekly_documents_remaining ?? user.daily_documents_remaining} doc${(user.weekly_documents_remaining ?? user.daily_documents_remaining) !== 1 ? 's' : ''} left this week)`;
                                 userInfoEl.classList.remove('hidden');
                                 userInfoEl.style.display = 'flex';
@@ -2549,6 +2605,47 @@
             toast.textContent = message;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Paul Graham style: direct, useful, no fluff
+        function getPdfErrorMessage(technicalError) {
+            const errorStr = String(technicalError || '').toLowerCase();
+
+            if (errorStr.includes('invalid') || errorStr.includes('corrupt') || errorStr.includes('parse')) {
+                return `PDF appears corrupted or in an unsupported format. Email bobamatchasolutions at gmail dot com with your PDF and we'll fix it.`;
+            }
+            if (errorStr.includes('password') || errorStr.includes('encrypted')) {
+                return `PDF is password-protected. Remove the password and try again. Need help? Email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('storage') || errorStr.includes('indexeddb') || errorStr.includes('quota')) {
+                return `Browser storage full. Clear some browser data or try a different browser. Email bobamatchasolutions at gmail dot com if stuck.`;
+            }
+            if (errorStr.includes('network') || errorStr.includes('fetch') || errorStr.includes('timeout')) {
+                return `Network error. Check your connection and retry. Email bobamatchasolutions at gmail dot com if it persists.`;
+            }
+
+            return `PDF processing failed. Email bobamatchasolutions at gmail dot com with your PDF and we'll sort it out.`;
+        }
+
+        // Paul Graham style error for network/server issues
+        function getServerErrorMessage(technicalError) {
+            const errorStr = String(technicalError || '').toLowerCase();
+
+            // Paul Graham style: direct, useful, no fluff
+            if (errorStr.includes('network') || errorStr.includes('fetch') || errorStr.includes('failed to fetch')) {
+                return `Can't reach our servers. Check your internet connection and try again. If the problem persists, email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('401') || errorStr.includes('403') || errorStr.includes('unauthorized')) {
+                return `Session expired. Log out, log back in, and try again. If that doesn't work, email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('500') || errorStr.includes('server')) {
+                return `Server error on our end. Wait a minute and retry. If it keeps failing, email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('rate') || errorStr.includes('limit') || errorStr.includes('quota')) {
+                return `Daily limit reached. Try again tomorrow, or email bobamatchasolutions at gmail dot com for higher limits.`;
+            }
+
+            return `Something failed. Try again. If it keeps happening, email bobamatchasolutions at gmail dot com with what you were doing.`;
         }
 
         // Update signing progress - shows in loading overlay
@@ -2658,7 +2755,8 @@
             // Update buttons
             elements.btnBack.classList.toggle('hidden', state.currentStep === 1);
             elements.btnNext.classList.toggle('hidden', state.currentStep >= 4);
-            elements.btnSaveDraft.classList.toggle('hidden', state.currentStep === 1);
+            // Save Draft disabled until server-side persistence - always hidden
+            // elements.btnSaveDraft.classList.toggle('hidden', state.currentStep === 1 || !state.storage);
             elements.btnSend.classList.toggle('hidden', state.currentStep !== 4);
             // Show generate links button on step 4, but not for remote signers
             elements.btnGenerateLinks.classList.toggle('hidden', state.currentStep !== 4 || state.remoteSession.isRemoteSigner);
@@ -2872,7 +2970,7 @@
             } catch (err) {
                 console.error('Failed to load PDF:', err);
                 elements.loadingOverlay.classList.add('hidden');
-                showToast('Failed to load PDF: ' + (err.message || err));
+                showToast(getPdfErrorMessage(err.message || err));
             }
         }
 
@@ -3315,6 +3413,289 @@
 
         // Initialize preview controls on DOM ready
         document.addEventListener('DOMContentLoaded', setupPreviewControls);
+
+        // ============================================================
+        // Scroll Tracking - Updates page number when user scrolls
+        // ============================================================
+
+        function setupPreviewScrollTracking() {
+            const container = elements.previewContainer;
+            if (!container) return;
+
+            // Use IntersectionObserver to track which page is currently visible
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+                        const pageNum = parseInt(entry.target.dataset.page);
+                        if (pageNum && pageNum !== previewState.currentPage) {
+                            previewState.currentPage = pageNum;
+                            updatePreviewUI();
+                        }
+                    }
+                });
+            }, {
+                root: container,
+                threshold: 0.5
+            });
+
+            // Observe all page divs when they're added
+            const observePages = () => {
+                container.querySelectorAll('[data-page]').forEach(page => {
+                    observer.observe(page);
+                });
+            };
+
+            // Initial observation and re-observe when content changes
+            observePages();
+
+            // Re-observe when new pages are rendered
+            const mutationObserver = new MutationObserver(observePages);
+            mutationObserver.observe(container, { childList: true, subtree: true });
+        }
+
+        // Step 3 (Fields) Zoom Controls
+        const fieldsZoomState = {
+            zoom: 1.0,
+            minZoom: 0.5,
+            maxZoom: 3.0
+        };
+
+        function setupFieldsZoomControls() {
+            const zoomIn = document.getElementById('fields-zoom-in');
+            const zoomOut = document.getElementById('fields-zoom-out');
+            const zoomLevel = document.getElementById('fields-zoom-level');
+
+            if (zoomIn) {
+                zoomIn.onclick = async () => {
+                    if (fieldsZoomState.zoom < fieldsZoomState.maxZoom) {
+                        fieldsZoomState.zoom = Math.min(fieldsZoomState.maxZoom, fieldsZoomState.zoom + 0.25);
+                        state.scale = fieldsZoomState.zoom * 1.5; // Base scale is 1.5
+                        updateFieldsZoomUI();
+                        await renderAllPages();
+                    }
+                };
+            }
+            if (zoomOut) {
+                zoomOut.onclick = async () => {
+                    if (fieldsZoomState.zoom > fieldsZoomState.minZoom) {
+                        fieldsZoomState.zoom = Math.max(fieldsZoomState.minZoom, fieldsZoomState.zoom - 0.25);
+                        state.scale = fieldsZoomState.zoom * 1.5; // Base scale is 1.5
+                        updateFieldsZoomUI();
+                        await renderAllPages();
+                    }
+                };
+            }
+        }
+
+        function updateFieldsZoomUI() {
+            const zoomLevel = document.getElementById('fields-zoom-level');
+            if (zoomLevel) {
+                zoomLevel.textContent = Math.round(fieldsZoomState.zoom * 100) + '%';
+            }
+        }
+
+        function setupFieldsScrollTracking() {
+            const container = elements.pdfCanvasContainer;
+            if (!container) return;
+
+            // Use IntersectionObserver to track which page is visible in Fields editor
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+                        const pageNum = parseInt(entry.target.dataset.page);
+                        if (pageNum && pageNum !== state.currentPage) {
+                            state.currentPage = pageNum;
+                            updatePageNav();
+                        }
+                    }
+                });
+            }, {
+                root: container,
+                threshold: 0.3
+            });
+
+            // Observe page wrappers
+            const observePages = () => {
+                container.querySelectorAll('.pdf-page-wrapper[data-page]').forEach(page => {
+                    observer.observe(page);
+                });
+            };
+
+            observePages();
+
+            // Re-observe when pages are re-rendered
+            const mutationObserver = new MutationObserver(observePages);
+            mutationObserver.observe(container, { childList: true, subtree: true });
+        }
+
+        // ============================================================
+        // Pinch-to-Zoom Support for Mobile
+        // ============================================================
+
+        function setupPinchToZoom() {
+            const container = elements.previewContainer;
+            if (!container) return;
+
+            let initialDistance = 0;
+            let initialZoom = 1;
+
+            container.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    initialDistance = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    initialZoom = previewState.zoom;
+                }
+            }, { passive: true });
+
+            container.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2) {
+                    const currentDistance = Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+
+                    const scale = currentDistance / initialDistance;
+                    const newZoom = Math.max(
+                        previewState.minZoom,
+                        Math.min(previewState.maxZoom, initialZoom * scale)
+                    );
+
+                    if (Math.abs(newZoom - previewState.zoom) > 0.05) {
+                        previewState.zoom = newZoom;
+                        updatePreviewUI();
+                        // Debounce re-render for performance
+                        clearTimeout(container._pinchRenderTimeout);
+                        container._pinchRenderTimeout = setTimeout(() => {
+                            renderPreview();
+                        }, 150);
+                    }
+                }
+            }, { passive: true });
+        }
+
+        // ============================================================
+        // Review Page Preview Controls (Step 4)
+        // ============================================================
+
+        const reviewState = {
+            zoom: 1.0,
+            currentPage: 1,
+            minZoom: 0.25,
+            maxZoom: 3.0
+        };
+
+        function setupReviewControls() {
+            const zoomIn = document.getElementById('review-zoom-in');
+            const zoomOut = document.getElementById('review-zoom-out');
+            const prevPage = document.getElementById('review-prev-page');
+            const nextPage = document.getElementById('review-next-page');
+
+            if (zoomIn) {
+                zoomIn.onclick = () => {
+                    if (reviewState.zoom < reviewState.maxZoom) {
+                        reviewState.zoom = Math.min(reviewState.maxZoom, reviewState.zoom + 0.25);
+                        renderReview();
+                    }
+                };
+            }
+            if (zoomOut) {
+                zoomOut.onclick = () => {
+                    if (reviewState.zoom > reviewState.minZoom) {
+                        reviewState.zoom = Math.max(reviewState.minZoom, reviewState.zoom - 0.25);
+                        renderReview();
+                    }
+                };
+            }
+            if (prevPage) {
+                prevPage.onclick = () => {
+                    if (reviewState.currentPage > 1) {
+                        reviewState.currentPage--;
+                        scrollToReviewPage(reviewState.currentPage);
+                        updateReviewUI();
+                    }
+                };
+            }
+            if (nextPage) {
+                nextPage.onclick = () => {
+                    if (reviewState.currentPage < state.totalPages) {
+                        reviewState.currentPage++;
+                        scrollToReviewPage(reviewState.currentPage);
+                        updateReviewUI();
+                    }
+                };
+            }
+        }
+
+        function updateReviewUI() {
+            const zoomLevel = document.getElementById('review-zoom-level');
+            const pageIndicator = document.getElementById('review-page-indicator');
+            const prevBtn = document.getElementById('review-prev-page');
+            const nextBtn = document.getElementById('review-next-page');
+
+            if (zoomLevel) {
+                zoomLevel.textContent = Math.round(reviewState.zoom * 100) + '%';
+            }
+            if (pageIndicator) {
+                pageIndicator.textContent = `${reviewState.currentPage} / ${state.totalPages || 1}`;
+            }
+            if (prevBtn) {
+                prevBtn.disabled = reviewState.currentPage <= 1;
+            }
+            if (nextBtn) {
+                nextBtn.disabled = reviewState.currentPage >= state.totalPages;
+            }
+        }
+
+        function scrollToReviewPage(pageNum) {
+            const container = elements.reviewPdfBody;
+            if (!container) return;
+            const pageDiv = container.querySelector(`[data-page="${pageNum}"]`);
+            if (pageDiv) {
+                pageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function setupReviewScrollTracking() {
+            const container = elements.reviewPdfBody;
+            if (!container) return;
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+                        const pageNum = parseInt(entry.target.dataset.page);
+                        if (pageNum && pageNum !== reviewState.currentPage) {
+                            reviewState.currentPage = pageNum;
+                            updateReviewUI();
+                        }
+                    }
+                });
+            }, {
+                root: container,
+                threshold: 0.3
+            });
+
+            const observePages = () => {
+                container.querySelectorAll('[data-page]').forEach(page => {
+                    observer.observe(page);
+                });
+            };
+
+            observePages();
+            const mutationObserver = new MutationObserver(observePages);
+            mutationObserver.observe(container, { childList: true, subtree: true });
+        }
+
+        // Initialize scroll tracking on DOM ready
+        document.addEventListener('DOMContentLoaded', () => {
+            setupPreviewScrollTracking();
+            setupFieldsZoomControls();
+            setupFieldsScrollTracking();
+            setupPinchToZoom();
+            setupReviewControls();
+            setupReviewScrollTracking();
+        });
 
         // PDF Editor (Step 3) - Render ALL pages for scrolling
         function populateRecipientSelector() {
@@ -4241,19 +4622,76 @@
                 const progressEl = elements.loadingOverlay.querySelector('.signing-progress');
                 if (progressEl) progressEl.remove();
                 elements.loadingOverlay.classList.add('hidden');
-                showToast('Signing failed: ' + (err.message || String(err) || 'Unknown error'));
+                showToast(getPdfErrorMessage(err.message || err));
             }
         }
 
         // Settings
         function openSettings() {
             updateCertificateDisplay();
+            // Populate profile fields from current user
+            const user = window.DocSign?.getCurrentUser?.();
+            if (user) {
+                document.getElementById('profile-first-name').value = user.first_name || '';
+                document.getElementById('profile-middle-initial').value = user.middle_initial || '';
+                document.getElementById('profile-last-name').value = user.last_name || '';
+            }
+            // Hide any previous status
+            const statusEl = document.getElementById('profile-status');
+            if (statusEl) statusEl.style.display = 'none';
             document.getElementById('settings-modal').classList.remove('hidden');
         }
 
         function closeSettingsModal() {
             document.getElementById('settings-modal').classList.add('hidden');
         }
+
+        // Save profile changes
+        async function saveProfile() {
+            const btn = document.getElementById('btn-save-profile');
+            const statusEl = document.getElementById('profile-status');
+            const firstName = document.getElementById('profile-first-name').value.trim();
+            const middleInitial = document.getElementById('profile-middle-initial').value.trim().toUpperCase();
+            const lastName = document.getElementById('profile-last-name').value.trim();
+
+            if (!firstName || !lastName) {
+                statusEl.textContent = 'First and last name are required.';
+                statusEl.style.color = '#b30000';
+                statusEl.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const result = await window.DocSign.updateProfile({
+                    first_name: firstName,
+                    middle_initial: middleInitial || undefined,
+                    last_name: lastName,
+                });
+
+                if (result.success) {
+                    statusEl.textContent = 'Profile saved!';
+                    statusEl.style.color = '#006644';
+                    // Update header greeting
+                    const greetingEl = document.getElementById('user-email');
+                    if (greetingEl) greetingEl.textContent = `Welcome back, ${firstName}`;
+                } else {
+                    statusEl.textContent = result.message || 'Failed to save profile.';
+                    statusEl.style.color = '#b30000';
+                }
+                statusEl.style.display = 'block';
+            } catch (error) {
+                statusEl.textContent = 'Could not save profile. Please try again.';
+                statusEl.style.color = '#b30000';
+                statusEl.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Profile';
+            }
+        }
+        window.saveProfile = saveProfile;
 
         // Consent Modal for Remote Signers
         let consentResolve = null;
@@ -4494,8 +4932,12 @@
 
         // Draft Management
         async function saveDraft() {
-            if (!state.storage || !state.pdfBytes) {
-                showToast('Nothing to save');
+            if (!state.storage) {
+                showToast('Local storage unavailable. Cannot save drafts in private/incognito mode.');
+                return;
+            }
+            if (!state.pdfBytes) {
+                showToast('No document loaded. Upload a PDF first.');
                 return;
             }
 
@@ -4526,7 +4968,7 @@
                 showToast('Draft saved');
             } catch (err) {
                 console.error('Save draft failed:', err);
-                showToast('Save failed: ' + (err.message || err));
+                showToast(getPdfErrorMessage(err.message || err));
             }
         }
 
@@ -4822,9 +5264,15 @@
             const linksList = document.getElementById('signing-links-list');
             const errorDiv = document.getElementById('signing-links-error');
             const rateLimitDiv = document.getElementById('signing-links-rate-limit');
+            const sendBtn = document.getElementById('btn-send-emails');
+            const modalTitle = document.getElementById('signing-links-title');
+
+            // Reset modal state
             linksList.innerHTML = '<p style="text-align: center; color: #6b7280;">Generating links...</p>';
             errorDiv.classList.add('hidden');
             if (rateLimitDiv) rateLimitDiv.classList.add('hidden');
+            if (sendBtn) sendBtn.classList.remove('hidden');
+            if (modalTitle) modalTitle.textContent = 'Signing Links Generated';
             document.getElementById('signing-links-modal').classList.remove('hidden');
 
             try {
@@ -4879,8 +5327,8 @@
                     expiry_hours: expiryHours
                 };
 
-                // Call worker to create session
-                const response = await fetch(`${SIGNING_SERVER_URL}/session`, {
+                // Call worker to create session (with authentication)
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(sessionRequest)
@@ -4943,9 +5391,15 @@
 
             } catch (err) {
                 console.error('Failed to generate signing links:', err);
-                errorDiv.textContent = 'Failed to generate links: ' + (err.message || 'Unknown error');
+                errorDiv.textContent = getServerErrorMessage(err.message || err);
                 errorDiv.classList.remove('hidden');
                 linksList.innerHTML = '';
+                // Hide Send Emails button on error - it won't work anyway
+                const sendBtn = document.getElementById('btn-send-emails');
+                if (sendBtn) sendBtn.classList.add('hidden');
+                // Update modal title to indicate error
+                const modalTitle = document.getElementById('signing-links-title');
+                if (modalTitle) modalTitle.textContent = 'Unable to Generate Links';
             }
         }
 
@@ -4990,8 +5444,8 @@
                     signing_link: link.link
                 }));
 
-                // Call /invite endpoint
-                const response = await fetch(`${SIGNING_SERVER_URL}/invite`, {
+                // Call /invite endpoint (with authentication)
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/invite`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -5167,8 +5621,8 @@
                     expiry_hours: parseInt(document.getElementById('expiration-select')?.value || '168')
                 };
 
-                // Create session on server
-                const response = await fetch(`${SIGNING_SERVER_URL}/session`, {
+                // Create session on server (with authentication)
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(sessionData)

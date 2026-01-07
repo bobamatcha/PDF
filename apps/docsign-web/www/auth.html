@@ -964,18 +964,6 @@
             const password = document.getElementById('registerPassword').value;
             const confirm = document.getElementById('registerConfirm').value;
 
-            // Construct full name for API (backend stores as single name field)
-            const name = middleInitial
-                ? `${firstName} ${middleInitial}. ${lastName}`
-                : `${firstName} ${lastName}`;
-
-            // Store individual name parts for recipient auto-population
-            localStorage.setItem('docsign_user_names', JSON.stringify({
-                firstName,
-                middleInitial,
-                lastName
-            }));
-
             // Validate passwords match
             if (password !== confirm) {
                 document.getElementById('confirmError').classList.add('visible');
@@ -1004,7 +992,13 @@
             btn.innerHTML = '<span class="loading"></span> Creating Account...';
 
             try {
-                const result = await window.DocSign.register(email, password, name);
+                const result = await window.DocSign.register({
+                    email,
+                    password,
+                    first_name: firstName,
+                    middle_initial: middleInitial || undefined,
+                    last_name: lastName,
+                });
 
                 if (result.success) {
                     showAlert('Account created! Please check your email to verify your account.', 'success');

@@ -5401,15 +5401,21 @@ function isAuthenticated() {
 function getDocumentsRemaining() {
   const user = getCurrentUser();
   if (!user) return 0;
-  return user.daily_documents_remaining;
+  return user.weekly_documents_remaining ?? user.daily_documents_remaining ?? 0;
 }
-async function register(email, password, name) {
+async function register(options) {
   try {
-    log6.info("Registering new user:", email);
+    log6.info("Registering new user:", options.email);
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name })
+      body: JSON.stringify({
+        email: options.email,
+        password: options.password,
+        first_name: options.first_name,
+        middle_initial: options.middle_initial || null,
+        last_name: options.last_name
+      })
     });
     const data = await response.json();
     if (!response.ok) {
@@ -5659,6 +5665,41 @@ async function resetPassword(token, newPassword) {
     };
   }
 }
+async function updateProfile(options) {
+  try {
+    log6.info("Updating profile");
+    const response = await authenticatedFetch(`${API_BASE}/auth/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options)
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Failed to update profile.");
+      log6.warn("Profile update failed:", errorMsg);
+      return {
+        success: false,
+        message: errorMsg
+      };
+    }
+    if (data.user) {
+      storeUser(data.user);
+      emitAuthStateChange();
+    }
+    log6.info("Profile updated successfully");
+    return {
+      success: true,
+      message: data.message || "Profile updated successfully.",
+      user: data.user
+    };
+  } catch (error) {
+    log6.error("Profile update error:", error);
+    return {
+      success: false,
+      message: "Could not connect to the server. This may be a temporary issue\u2014please try again in a moment."
+    };
+  }
+}
 function validatePassword(password) {
   if (password.length < 8) {
     return "Password must be at least 8 characters long";
@@ -5703,6 +5744,7 @@ function initAuthNamespace() {
     docSign.resetPassword = resetPassword;
     docSign.resendVerification = resendVerification;
     docSign.checkEmail = checkEmail;
+    docSign.updateProfile = updateProfile;
     docSign.authenticatedFetch = authenticatedFetch;
     docSign.validatePassword = validatePassword;
     docSign.validateEmail = validateEmail;

@@ -1219,6 +1219,10 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
             cors_response(auth::handle_check_email(req, env).await)
         }
+        (Method::Post, "/auth/profile") => {
+            // Profile update requires valid auth token
+            cors_response(auth::handle_update_profile(req, env).await)
+        }
 
         // Protected endpoints - require API key
         (Method::Post, "/send") => {

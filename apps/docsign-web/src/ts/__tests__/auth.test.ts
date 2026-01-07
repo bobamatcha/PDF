@@ -99,11 +99,13 @@ const shortPassword = fc.stringOf(
 // User tier
 const userTier = fc.constantFrom('free', 'pro');
 
-// Mock user object
+// Mock user object (with name parts instead of combined name)
 const mockUser = fc.record({
   id: fc.uuid(),
   email: validEmail,
-  name: fc.string({ minLength: 1, maxLength: 50 }),
+  first_name: fc.string({ minLength: 1, maxLength: 25 }),
+  middle_initial: fc.option(fc.stringOf(fc.constantFrom(...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')), { minLength: 1, maxLength: 1 })),
+  last_name: fc.string({ minLength: 1, maxLength: 25 }),
   tier: userTier,
   daily_documents_remaining: fc.integer({ min: 0, max: 100 }),
 });
@@ -393,5 +395,127 @@ describe('Consistency', () => {
     expect(isAuthenticated()).toBe(true);
     localStorageMock.removeItem('docsign_access_token');
     expect(isAuthenticated()).toBe(false);
+  });
+});
+
+// ============================================================
+// User Name Parts Tests (Bug #7)
+// ============================================================
+
+describe('User Name Parts', () => {
+  it('NAME-1: User should have first_name field', () => {
+    const user = {
+      id: 'test-id',
+      email: 'test@example.com',
+      first_name: 'John',
+      middle_initial: 'D',
+      last_name: 'Doe',
+      tier: 'free' as const,
+      daily_documents_remaining: 5,
+    };
+    localStorageMock.setItem('docsign_user', JSON.stringify(user));
+    const stored = getCurrentUser();
+    expect(stored).not.toBeNull();
+    expect(stored?.first_name).toBe('John');
+  });
+
+  it('NAME-2: User should have middle_initial field (optional)', () => {
+    const user = {
+      id: 'test-id',
+      email: 'test@example.com',
+      first_name: 'Jane',
+      last_name: 'Smith',
+      tier: 'free' as const,
+      daily_documents_remaining: 5,
+    };
+    localStorageMock.setItem('docsign_user', JSON.stringify(user));
+    const stored = getCurrentUser();
+    expect(stored).not.toBeNull();
+    expect(stored?.middle_initial).toBeUndefined();
+  });
+
+  it('NAME-3: User should have last_name field', () => {
+    const user = {
+      id: 'test-id',
+      email: 'test@example.com',
+      first_name: 'Bob',
+      middle_initial: null,
+      last_name: 'Wilson',
+      tier: 'pro' as const,
+      daily_documents_remaining: 100,
+    };
+    localStorageMock.setItem('docsign_user', JSON.stringify(user));
+    const stored = getCurrentUser();
+    expect(stored).not.toBeNull();
+    expect(stored?.last_name).toBe('Wilson');
+  });
+
+  it('NAME-4: User should NOT have combined name field', () => {
+    const user = {
+      id: 'test-id',
+      email: 'test@example.com',
+      first_name: 'Alice',
+      last_name: 'Brown',
+      tier: 'free' as const,
+      daily_documents_remaining: 5,
+    };
+    localStorageMock.setItem('docsign_user', JSON.stringify(user));
+    const stored = getCurrentUser();
+    expect(stored).not.toBeNull();
+    // @ts-expect-error - name field should not exist
+    expect(stored?.name).toBeUndefined();
+  });
+});
+
+// ============================================================
+// Profile Update Tests (Bug #6)
+// ============================================================
+
+describe('Profile Update', () => {
+  it('PROFILE-1: updateProfile function should exist', async () => {
+    // Import dynamically to check if function exists
+    const auth = await import('../auth');
+    expect(typeof auth.updateProfile).toBe('function');
+  });
+
+  it('PROFILE-2: updateProfile should update user name parts', async () => {
+    const auth = await import('../auth');
+
+    // Setup: store initial user
+    const initialUser = {
+      id: 'test-id',
+      email: 'test@example.com',
+      first_name: 'John',
+      last_name: 'Doe',
+      tier: 'free' as const,
+      daily_documents_remaining: 5,
+    };
+    localStorageMock.setItem('docsign_user', JSON.stringify(initialUser));
+    localStorageMock.setItem('docsign_access_token', 'test-token');
+
+    // Mock fetch for API call
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        user: {
+          ...initialUser,
+          first_name: 'Jane',
+          middle_initial: 'M',
+          last_name: 'Smith',
+        },
+      }),
+    });
+    global.fetch = mockFetch;
+
+    // Call updateProfile
+    const result = await auth.updateProfile({
+      first_name: 'Jane',
+      middle_initial: 'M',
+      last_name: 'Smith',
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockFetch).toHaveBeenCalled();
   });
 });

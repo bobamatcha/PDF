@@ -28,9 +28,15 @@ pub struct User {
     pub tier: UserTier,
     pub created_at: String,
     pub updated_at: String,
-    /// Name for display purposes
+    /// First name (for personalized greetings, signatures)
     #[serde(default)]
-    pub name: String,
+    pub first_name: String,
+    /// Middle initial (optional)
+    #[serde(default)]
+    pub middle_initial: Option<String>,
+    /// Last name
+    #[serde(default)]
+    pub last_name: String,
     /// Number of documents created this week (free tier limit: 1/week)
     #[serde(default, alias = "daily_document_count")]
     pub weekly_document_count: u32,
@@ -47,7 +53,14 @@ pub struct User {
 
 impl User {
     /// Create a new user with default values
-    pub fn new(id: String, email: String, password_hash: String, name: String) -> Self {
+    pub fn new(
+        id: String,
+        email: String,
+        password_hash: String,
+        first_name: String,
+        middle_initial: Option<String>,
+        last_name: String,
+    ) -> Self {
         let now = chrono::Utc::now();
         let now_str = now.to_rfc3339();
 
@@ -73,11 +86,21 @@ impl User {
             tier: UserTier::Free,
             created_at: now_str.clone(),
             updated_at: now_str,
-            name,
+            first_name,
+            middle_initial,
+            last_name,
             weekly_document_count: 0,
             weekly_reset_at: next_monday,
             last_login_at: None,
             login_count: 0,
+        }
+    }
+
+    /// Get full display name (combines parts)
+    pub fn display_name(&self) -> String {
+        match &self.middle_initial {
+            Some(mi) if !mi.is_empty() => format!("{} {}. {}", self.first_name, mi, self.last_name),
+            _ => format!("{} {}", self.first_name, self.last_name),
         }
     }
 
@@ -152,7 +175,10 @@ pub struct PasswordReset {
 pub struct RegisterRequest {
     pub email: String,
     pub password: String,
-    pub name: String,
+    pub first_name: String,
+    #[serde(default)]
+    pub middle_initial: Option<String>,
+    pub last_name: String,
 }
 
 /// Login request
@@ -200,6 +226,26 @@ pub struct CheckEmailResponse {
 pub struct ResetPasswordRequest {
     pub token: String,
     pub new_password: String,
+}
+
+/// Profile update request
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub middle_initial: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+}
+
+/// Profile update response
+#[derive(Debug, Serialize)]
+pub struct UpdateProfileResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<UserPublic>,
 }
 
 /// Registration response
@@ -266,7 +312,10 @@ pub struct AuthResponse {
 pub struct UserPublic {
     pub id: String,
     pub email: String,
-    pub name: String,
+    pub first_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub middle_initial: Option<String>,
+    pub last_name: String,
     pub tier: UserTier,
     pub weekly_documents_remaining: u32,
     /// Backward compat: also include under old name
@@ -280,7 +329,9 @@ impl From<&User> for UserPublic {
         Self {
             id: user.id.clone(),
             email: user.email.clone(),
-            name: user.name.clone(),
+            first_name: user.first_name.clone(),
+            middle_initial: user.middle_initial.clone(),
+            last_name: user.last_name.clone(),
             tier: user.tier,
             weekly_documents_remaining: remaining,
             _daily_documents_remaining: remaining,
@@ -298,7 +349,9 @@ mod tests {
             "test-id".to_string(),
             "test@example.com".to_string(),
             "hash".to_string(),
-            "Test User".to_string(),
+            "Test".to_string(),
+            None,
+            "User".to_string(),
         );
 
         // Free tier, 0 documents used
@@ -322,12 +375,16 @@ mod tests {
             "test@example.com".to_string(),
             "hash".to_string(),
             "Test".to_string(),
+            Some("M".to_string()),
+            "User".to_string(),
         );
 
         let json = serde_json::to_string(&user).unwrap();
         assert!(json.contains("test@example.com"));
         assert!(json.contains("free")); // tier serialized as lowercase
         assert!(json.contains("weekly_document_count"));
+        assert!(json.contains("first_name"));
+        assert!(json.contains("last_name"));
     }
 
     #[test]
@@ -337,6 +394,8 @@ mod tests {
             "test@example.com".to_string(),
             "hash".to_string(),
             "Test".to_string(),
+            None,
+            "User".to_string(),
         );
 
         // weekly_reset_at should be a valid RFC3339 timestamp

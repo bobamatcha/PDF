@@ -144,19 +144,50 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         );
     }
 
-    // Validate name
-    let name = body.name.trim();
-    if name.is_empty() || name.len() > 100 {
+    // Validate name parts
+    let first_name = body.first_name.trim();
+    let last_name = body.last_name.trim();
+    if first_name.is_empty() || first_name.len() > 50 {
         return json_response(
             400,
             &RegisterResponse {
                 success: false,
                 user_id: None,
-                message: "Name must be between 1 and 100 characters".to_string(),
+                message: "First name must be between 1 and 50 characters".to_string(),
                 email_sent: None,
                 needs_verification: None,
             },
         );
+    }
+    if last_name.is_empty() || last_name.len() > 50 {
+        return json_response(
+            400,
+            &RegisterResponse {
+                success: false,
+                user_id: None,
+                message: "Last name must be between 1 and 50 characters".to_string(),
+                email_sent: None,
+                needs_verification: None,
+            },
+        );
+    }
+    let middle_initial = body
+        .middle_initial
+        .as_ref()
+        .map(|mi| mi.trim().to_uppercase());
+    if let Some(ref mi) = middle_initial {
+        if mi.len() > 1 {
+            return json_response(
+                400,
+                &RegisterResponse {
+                    success: false,
+                    user_id: None,
+                    message: "Middle initial must be a single letter".to_string(),
+                    email_sent: None,
+                    needs_verification: None,
+                },
+            );
+        }
     }
 
     let users_kv = env.kv("USERS")?;
@@ -214,7 +245,9 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         user_id.clone(),
         body.email.trim().to_lowercase(),
         password_hash,
-        name.to_string(),
+        first_name.to_string(),
+        middle_initial,
+        last_name.to_string(),
     );
 
     // Save user
@@ -268,11 +301,11 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
             <p>This link will expire in 24 hours.</p>
             <p>If you didn't create this account, you can safely ignore this email.</p>
             <p>Best,<br>The GetSignatures Team</p>"#,
-            user.name, verification_url, verification_url
+            user.first_name, verification_url, verification_url
         ),
         text: Some(format!(
             "Welcome to GetSignatures!\n\nHi {},\n\nPlease verify your email by visiting: {}\n\nThis link expires in 24 hours.\n\nIf you didn't create this account, ignore this email.",
-            user.name, verification_url
+            user.first_name, verification_url
         )),
         reply_to: None,
         tags: vec![
@@ -865,11 +898,11 @@ pub async fn handle_forgot_password(mut req: Request, env: Env) -> Result<Respon
             <p>This link will expire in 1 hour.</p>
             <p>If you didn't request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
             <p>Best,<br>The GetSignatures Team</p>"#,
-            user.name, reset_url, reset_url
+            user.first_name, reset_url, reset_url
         ),
         text: Some(format!(
             "Password Reset Request\n\nHi {},\n\nReset your password by visiting: {}\n\nThis link expires in 1 hour.\n\nIf you didn't request this, ignore this email.",
-            user.name, reset_url
+            user.first_name, reset_url
         )),
         reply_to: None,
         tags: vec![
@@ -1106,11 +1139,11 @@ pub async fn handle_resend_verification(mut req: Request, env: Env) -> Result<Re
             <p>{}</p>
             <p>This link will expire in 24 hours.</p>
             <p>Best,<br>The GetSignatures Team</p>"#,
-            user.name, verification_url, verification_url
+            user.first_name, verification_url, verification_url
         ),
         text: Some(format!(
             "Verify Your Email\n\nHi {},\n\nVerify your email by visiting: {}\n\nThis link expires in 24 hours.",
-            user.name, verification_url
+            user.first_name, verification_url
         )),
         reply_to: None,
         tags: vec![
@@ -1301,4 +1334,109 @@ pub async fn require_auth(
         }))?
         .with_status(401))),
     }
+}
+
+/// POST /auth/profile
+///
+/// Updates user profile (name parts).
+pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
+    // Require authentication
+    let (mut user, users_kv) = match require_auth(&req, &env).await? {
+        Ok((u, kv)) => (u, kv),
+        Err(resp) => return Ok(resp),
+    };
+
+    // Parse request body
+    let mut req = req;
+    let body: UpdateProfileRequest = match req.json().await {
+        Ok(b) => b,
+        Err(_) => {
+            return json_response(
+                400,
+                &UpdateProfileResponse {
+                    success: false,
+                    message: "Invalid request body".to_string(),
+                    user: None,
+                },
+            );
+        }
+    };
+
+    // Validate and update first_name
+    if let Some(first_name) = body.first_name {
+        let first_name = first_name.trim();
+        if first_name.is_empty() || first_name.len() > 50 {
+            return json_response(
+                400,
+                &UpdateProfileResponse {
+                    success: false,
+                    message: "First name must be between 1 and 50 characters".to_string(),
+                    user: None,
+                },
+            );
+        }
+        user.first_name = first_name.to_string();
+    }
+
+    // Validate and update middle_initial
+    if let Some(middle_initial) = body.middle_initial {
+        let mi = middle_initial.trim().to_uppercase();
+        if mi.is_empty() {
+            user.middle_initial = None;
+        } else if mi.len() > 1 {
+            return json_response(
+                400,
+                &UpdateProfileResponse {
+                    success: false,
+                    message: "Middle initial must be a single letter".to_string(),
+                    user: None,
+                },
+            );
+        } else {
+            user.middle_initial = Some(mi);
+        }
+    }
+
+    // Validate and update last_name
+    if let Some(last_name) = body.last_name {
+        let last_name = last_name.trim();
+        if last_name.is_empty() || last_name.len() > 50 {
+            return json_response(
+                400,
+                &UpdateProfileResponse {
+                    success: false,
+                    message: "Last name must be between 1 and 50 characters".to_string(),
+                    user: None,
+                },
+            );
+        }
+        user.last_name = last_name.to_string();
+    }
+
+    // Update timestamp
+    user.updated_at = chrono::Utc::now().to_rfc3339();
+
+    // Save user
+    if let Err(e) = save_user(&users_kv, &user).await {
+        console_log!("Failed to save user profile: {:?}", e);
+        return json_response(
+            500,
+            &UpdateProfileResponse {
+                success: false,
+                message: "Failed to save profile. Please try again.".to_string(),
+                user: None,
+            },
+        );
+    }
+
+    console_log!("Profile updated for user: {}", user.email);
+
+    json_response(
+        200,
+        &UpdateProfileResponse {
+            success: true,
+            message: "Profile updated successfully".to_string(),
+            user: Some(UserPublic::from(&user)),
+        },
+    )
 }

@@ -40,8 +40,13 @@ export type UserTier = "free" | "pro";
 export interface User {
   id: string;
   email: string;
-  name: string;
+  first_name: string;
+  middle_initial?: string;
+  last_name: string;
   tier: UserTier;
+  /** Weekly documents remaining (renamed from daily) */
+  weekly_documents_remaining: number;
+  /** Backward compat alias */
   daily_documents_remaining: number;
 }
 
@@ -246,38 +251,47 @@ export function isAuthenticated(): boolean {
 }
 
 /**
- * Get remaining documents for today
+ * Get remaining documents for this week
  */
 export function getDocumentsRemaining(): number {
   const user = getCurrentUser();
   if (!user) return 0;
-  return user.daily_documents_remaining;
+  return user.weekly_documents_remaining ?? user.daily_documents_remaining ?? 0;
 }
 
 // ============================================
 // API Calls
 // ============================================
 
+/** Registration options with name parts */
+export interface RegisterOptions {
+  email: string;
+  password: string;
+  first_name: string;
+  middle_initial?: string;
+  last_name: string;
+}
+
 /**
  * Register a new user account
  *
- * @param email - User's email address
- * @param password - User's password (min 8 chars, 1 upper, 1 lower, 1 number)
- * @param name - User's display name
+ * @param options - Registration options with name parts
  * @returns Registration result
  */
-export async function register(
-  email: string,
-  password: string,
-  name: string
-): Promise<RegisterResponse> {
+export async function register(options: RegisterOptions): Promise<RegisterResponse> {
   try {
-    log.info("Registering new user:", email);
+    log.info("Registering new user:", options.email);
 
     const response = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({
+        email: options.email,
+        password: options.password,
+        first_name: options.first_name,
+        middle_initial: options.middle_initial || null,
+        last_name: options.last_name,
+      }),
     });
 
     const data = await response.json();
@@ -645,6 +659,68 @@ export async function resetPassword(
   }
 }
 
+/** Profile update options */
+export interface UpdateProfileOptions {
+  first_name?: string;
+  middle_initial?: string;
+  last_name?: string;
+}
+
+/** Profile update response */
+export interface UpdateProfileResponse {
+  success: boolean;
+  message: string;
+  user?: User;
+}
+
+/**
+ * Update user profile (name parts)
+ *
+ * @param options - Profile fields to update
+ * @returns Updated user info
+ */
+export async function updateProfile(options: UpdateProfileOptions): Promise<UpdateProfileResponse> {
+  try {
+    log.info("Updating profile");
+
+    const response = await authenticatedFetch(`${API_BASE}/auth/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(options),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const errorMsg = formatErrorMessage(data, "Failed to update profile.");
+      log.warn("Profile update failed:", errorMsg);
+      return {
+        success: false,
+        message: errorMsg,
+      };
+    }
+
+    // Update stored user if returned
+    if (data.user) {
+      storeUser(data.user);
+      emitAuthStateChange();
+    }
+
+    log.info("Profile updated successfully");
+    return {
+      success: true,
+      message: data.message || "Profile updated successfully.",
+      user: data.user,
+    };
+  } catch (error) {
+    log.error("Profile update error:", error);
+    return {
+      success: false,
+      message: "Could not connect to the server. This may be a temporary issue—please try again in a moment.",
+    };
+  }
+}
+
 // ============================================
 // Password Validation
 // ============================================
@@ -724,6 +800,7 @@ export function initAuthNamespace(): void {
     docSign.resetPassword = resetPassword;
     docSign.resendVerification = resendVerification;
     docSign.checkEmail = checkEmail;
+    docSign.updateProfile = updateProfile;
 
     // Authenticated fetch
     docSign.authenticatedFetch = authenticatedFetch;
