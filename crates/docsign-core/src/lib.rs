@@ -10,6 +10,446 @@
 pub use shared_crypto::{cert, cms, keys, tsa, EphemeralIdentity, SigningIdentity};
 pub use shared_pdf::{dom_to_pdf, parser, pdf_to_dom, signer, PdfDocument};
 
+// ============================================================
+// Validation Module (Bug #1 - UX for Size Limits)
+// ============================================================
+
+pub mod validation {
+    //! Input validation for document signing operations.
+    //!
+    //! These functions are designed to be called BEFORE expensive operations
+    //! (like loading a PDF into memory) to provide clear, early feedback to users.
+
+    /// Maximum PDF file size in bytes (100 MB)
+    pub const MAX_PDF_SIZE_BYTES: u64 = 100 * 1024 * 1024;
+
+    /// Maximum number of recipients for a signing ceremony
+    pub const MAX_RECIPIENTS: usize = 10;
+
+    /// Validation error types with user-friendly messages
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum ValidationError {
+        /// PDF file exceeds size limit
+        PdfTooLarge { size_bytes: u64, max_bytes: u64 },
+        /// Too many recipients
+        TooManyRecipients { count: usize, max: usize },
+        /// Field extends beyond page boundary
+        FieldOutOfBounds {
+            field_id: String,
+            direction: String,
+            overflow_points: f64,
+        },
+    }
+
+    impl std::fmt::Display for ValidationError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ValidationError::PdfTooLarge {
+                    size_bytes,
+                    max_bytes,
+                } => {
+                    let size_mb = *size_bytes as f64 / (1024.0 * 1024.0);
+                    let max_mb = *max_bytes as f64 / (1024.0 * 1024.0);
+                    write!(
+                        f,
+                        "PDF is {:.1}MB but maximum allowed is {:.0}MB",
+                        size_mb, max_mb
+                    )
+                }
+                ValidationError::TooManyRecipients { count, max } => {
+                    write!(
+                        f,
+                        "Cannot add {} recipients. Maximum allowed is {}",
+                        count, max
+                    )
+                }
+                ValidationError::FieldOutOfBounds {
+                    field_id,
+                    direction,
+                    overflow_points,
+                } => {
+                    write!(
+                        f,
+                        "Field '{}' extends {:.0} points beyond the {} edge of the page",
+                        field_id, overflow_points, direction
+                    )
+                }
+            }
+        }
+    }
+
+    impl std::error::Error for ValidationError {}
+
+    /// Validate PDF file size before loading.
+    ///
+    /// Call this BEFORE loading the PDF into memory to prevent OOM and
+    /// provide clear feedback to users with large files.
+    ///
+    /// # Arguments
+    /// * `size_bytes` - The size of the PDF file in bytes
+    ///
+    /// # Returns
+    /// * `Ok(())` if size is within limit
+    /// * `Err(ValidationError::PdfTooLarge)` if size exceeds 100MB
+    pub fn validate_pdf_size(size_bytes: u64) -> Result<(), ValidationError> {
+        if size_bytes > MAX_PDF_SIZE_BYTES {
+            Err(ValidationError::PdfTooLarge {
+                size_bytes,
+                max_bytes: MAX_PDF_SIZE_BYTES,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Validate recipient count before adding to ceremony.
+    ///
+    /// # Arguments
+    /// * `count` - The total number of recipients (existing + new)
+    ///
+    /// # Returns
+    /// * `Ok(())` if count is within limit
+    /// * `Err(ValidationError::TooManyRecipients)` if count exceeds 10
+    pub fn validate_recipient_count(count: usize) -> Result<(), ValidationError> {
+        if count > MAX_RECIPIENTS {
+            Err(ValidationError::TooManyRecipients {
+                count,
+                max: MAX_RECIPIENTS,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Validate that a field is within page bounds.
+    ///
+    /// # Arguments
+    /// * `field_id` - Identifier for the field (for error messages)
+    /// * `x` - X coordinate of field's bottom-left corner (PDF points)
+    /// * `y` - Y coordinate of field's bottom-left corner (PDF points)
+    /// * `width` - Field width (PDF points)
+    /// * `height` - Field height (PDF points)
+    /// * `page_width` - Page width (PDF points)
+    /// * `page_height` - Page height (PDF points)
+    ///
+    /// # Returns
+    /// * `Ok(())` if field is entirely within page bounds
+    /// * `Err(ValidationError::FieldOutOfBounds)` if field extends past any edge
+    pub fn validate_field_bounds(
+        field_id: &str,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        page_width: f64,
+        page_height: f64,
+    ) -> Result<(), ValidationError> {
+        // Check left edge
+        if x < 0.0 {
+            return Err(ValidationError::FieldOutOfBounds {
+                field_id: field_id.to_string(),
+                direction: "left".to_string(),
+                overflow_points: -x,
+            });
+        }
+
+        // Check bottom edge
+        if y < 0.0 {
+            return Err(ValidationError::FieldOutOfBounds {
+                field_id: field_id.to_string(),
+                direction: "bottom".to_string(),
+                overflow_points: -y,
+            });
+        }
+
+        // Check right edge
+        let right_overflow = (x + width) - page_width;
+        if right_overflow > 0.0 {
+            return Err(ValidationError::FieldOutOfBounds {
+                field_id: field_id.to_string(),
+                direction: "right".to_string(),
+                overflow_points: right_overflow,
+            });
+        }
+
+        // Check top edge
+        let top_overflow = (y + height) - page_height;
+        if top_overflow > 0.0 {
+            return Err(ValidationError::FieldOutOfBounds {
+                field_id: field_id.to_string(),
+                direction: "top".to_string(),
+                overflow_points: top_overflow,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+// ============================================================
+// Validation Tests (Bug #1)
+// ============================================================
+
+#[cfg(test)]
+mod validation_tests {
+    use super::validation::*;
+    use proptest::prelude::*;
+
+    // ============================================================
+    // PDF Size Validation Tests
+    // ============================================================
+
+    proptest! {
+        /// Property: PDFs under 100MB pass validation
+        #[test]
+        fn pdf_under_limit_passes(size_bytes in 0u64..MAX_PDF_SIZE_BYTES) {
+            let result = validate_pdf_size(size_bytes);
+            prop_assert!(result.is_ok(), "PDF under limit should pass: {:?}", result);
+        }
+
+        /// Property: PDFs over 100MB fail with clear error
+        #[test]
+        fn pdf_over_limit_fails(size_bytes in (MAX_PDF_SIZE_BYTES + 1)..500_000_000u64) {
+            let result = validate_pdf_size(size_bytes);
+            prop_assert!(result.is_err());
+
+            match result.unwrap_err() {
+                ValidationError::PdfTooLarge { size_bytes: s, max_bytes: m } => {
+                    prop_assert_eq!(s, size_bytes);
+                    prop_assert_eq!(m, MAX_PDF_SIZE_BYTES);
+                }
+                _ => prop_assert!(false, "Wrong error type"),
+            }
+        }
+    }
+
+    #[test]
+    fn pdf_exactly_at_limit_passes() {
+        let result = validate_pdf_size(MAX_PDF_SIZE_BYTES);
+        assert!(result.is_ok(), "PDF exactly at limit should pass");
+    }
+
+    #[test]
+    fn pdf_one_byte_over_limit_fails() {
+        let result = validate_pdf_size(MAX_PDF_SIZE_BYTES + 1);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("100MB"),
+            "Error should mention 100MB limit: {}",
+            msg
+        );
+    }
+
+    // ============================================================
+    // Recipient Count Validation Tests
+    // ============================================================
+
+    proptest! {
+        /// Property: 1-10 recipients pass validation
+        #[test]
+        fn valid_recipient_count_passes(count in 1usize..=MAX_RECIPIENTS) {
+            let result = validate_recipient_count(count);
+            prop_assert!(result.is_ok(), "Valid recipient count should pass: {:?}", result);
+        }
+
+        /// Property: >10 recipients fail with clear error
+        #[test]
+        fn too_many_recipients_fails(count in (MAX_RECIPIENTS + 1)..100usize) {
+            let result = validate_recipient_count(count);
+            prop_assert!(result.is_err());
+
+            match result.unwrap_err() {
+                ValidationError::TooManyRecipients { count: c, max: m } => {
+                    prop_assert_eq!(c, count);
+                    prop_assert_eq!(m, MAX_RECIPIENTS);
+                }
+                _ => prop_assert!(false, "Wrong error type"),
+            }
+        }
+    }
+
+    #[test]
+    fn zero_recipients_passes() {
+        // Zero recipients is valid (e.g., just uploaded PDF, no recipients yet)
+        let result = validate_recipient_count(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ten_recipients_passes() {
+        let result = validate_recipient_count(10);
+        assert!(result.is_ok(), "Exactly 10 recipients should pass");
+    }
+
+    #[test]
+    fn eleven_recipients_fails() {
+        let result = validate_recipient_count(11);
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("10"),
+            "Error should mention max of 10: {}",
+            msg
+        );
+    }
+
+    // ============================================================
+    // Field Bounds Validation Tests
+    // ============================================================
+
+    const LETTER_WIDTH: f64 = 612.0;
+    const LETTER_HEIGHT: f64 = 792.0;
+
+    proptest! {
+        /// Property: Fields fully within page pass validation
+        #[test]
+        fn field_within_bounds_passes(
+            x in 0.0f64..500.0,
+            y in 0.0f64..700.0,
+            width in 10.0f64..100.0,
+            height in 10.0f64..50.0,
+        ) {
+            // Ensure field fits within letter page
+            prop_assume!(x + width <= LETTER_WIDTH);
+            prop_assume!(y + height <= LETTER_HEIGHT);
+
+            let result = validate_field_bounds("test-field", x, y, width, height, LETTER_WIDTH, LETTER_HEIGHT);
+            prop_assert!(result.is_ok(), "Field within bounds should pass: {:?}", result);
+        }
+
+        /// Property: Fields extending past right edge fail
+        #[test]
+        fn field_past_right_edge_fails(
+            x in 500.0f64..600.0,
+            y in 0.0f64..700.0,
+            width in 50.0f64..200.0,
+            height in 10.0f64..50.0,
+        ) {
+            // Ensure field extends past right edge
+            prop_assume!(x + width > LETTER_WIDTH);
+            prop_assume!(y + height <= LETTER_HEIGHT);
+
+            let result = validate_field_bounds("sig-1", x, y, width, height, LETTER_WIDTH, LETTER_HEIGHT);
+            prop_assert!(result.is_err());
+
+            match result.unwrap_err() {
+                ValidationError::FieldOutOfBounds { direction, .. } => {
+                    prop_assert_eq!(direction, "right");
+                }
+                _ => prop_assert!(false, "Wrong error type"),
+            }
+        }
+
+        /// Property: Fields extending past top edge fail
+        #[test]
+        fn field_past_top_edge_fails(
+            x in 0.0f64..500.0,
+            y in 700.0f64..780.0,
+            width in 10.0f64..100.0,
+            height in 50.0f64..200.0,
+        ) {
+            // Ensure field extends past top edge
+            prop_assume!(x + width <= LETTER_WIDTH);
+            prop_assume!(y + height > LETTER_HEIGHT);
+
+            let result = validate_field_bounds("sig-2", x, y, width, height, LETTER_WIDTH, LETTER_HEIGHT);
+            prop_assert!(result.is_err());
+
+            match result.unwrap_err() {
+                ValidationError::FieldOutOfBounds { direction, .. } => {
+                    prop_assert_eq!(direction, "top");
+                }
+                _ => prop_assert!(false, "Wrong error type"),
+            }
+        }
+    }
+
+    #[test]
+    fn field_with_negative_x_fails() {
+        let result = validate_field_bounds(
+            "neg-x",
+            -10.0,
+            100.0,
+            100.0,
+            50.0,
+            LETTER_WIDTH,
+            LETTER_HEIGHT,
+        );
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            ValidationError::FieldOutOfBounds {
+                direction,
+                overflow_points,
+                ..
+            } => {
+                assert_eq!(direction, "left");
+                assert!((overflow_points - 10.0).abs() < 0.001);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn field_with_negative_y_fails() {
+        let result = validate_field_bounds(
+            "neg-y",
+            100.0,
+            -20.0,
+            100.0,
+            50.0,
+            LETTER_WIDTH,
+            LETTER_HEIGHT,
+        );
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        match err {
+            ValidationError::FieldOutOfBounds {
+                direction,
+                overflow_points,
+                ..
+            } => {
+                assert_eq!(direction, "bottom");
+                assert!((overflow_points - 20.0).abs() < 0.001);
+            }
+            _ => panic!("Wrong error type"),
+        }
+    }
+
+    #[test]
+    fn error_message_is_user_friendly() {
+        // Test that error messages are clear for elderly users
+        let pdf_err = ValidationError::PdfTooLarge {
+            size_bytes: 150 * 1024 * 1024, // 150 MB
+            max_bytes: MAX_PDF_SIZE_BYTES, // 100 MB
+        };
+        let msg = pdf_err.to_string();
+        assert!(msg.contains("MB"), "Should use MB not bytes");
+        assert!(msg.contains("100"), "Should mention 100MB limit: {}", msg);
+
+        let recipient_err = ValidationError::TooManyRecipients { count: 15, max: 10 };
+        let msg = recipient_err.to_string();
+        assert!(msg.contains("15"), "Should show requested count");
+        assert!(msg.contains("10"), "Should show maximum");
+
+        let bounds_err = ValidationError::FieldOutOfBounds {
+            field_id: "signature".to_string(),
+            direction: "right".to_string(),
+            overflow_points: 25.0,
+        };
+        let msg = bounds_err.to_string();
+        assert!(msg.contains("right"), "Should mention direction");
+        assert!(msg.contains("25"), "Should show overflow amount");
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::*;

@@ -4,9 +4,10 @@
 //! Signing sessions expire after 7 days
 
 mod auth;
+mod billing;
 mod email;
 
-use chrono::{Datelike, Utc};
+use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -1224,6 +1225,64 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             cors_response(auth::handle_update_profile(req, env).await)
         }
 
+        // Bug #4: Feedback/Request submission (requires auth)
+        (Method::Post, "/requests/submit") => cors_response(handle_submit_request(req, env).await),
+
+        // ============================================
+        // Bug #8: Admin Dashboard endpoints
+        // ============================================
+
+        // List all requests (admin only)
+        (Method::Get, "/admin/requests") => {
+            cors_response(handle_admin_list_requests(req, env).await)
+        }
+
+        // Update a request (approve/deny/in-progress)
+        (Method::Post, p) if p.starts_with("/admin/requests/") => {
+            let request_id = p.strip_prefix("/admin/requests/").unwrap_or("");
+            cors_response(handle_admin_update_request(req, env, request_id.to_string()).await)
+        }
+
+        // List users (admin only, supports ?filter=unverified)
+        (Method::Get, "/admin/users") => cors_response(handle_admin_list_users(req, env).await),
+
+        // Adjust user quota (admin only)
+        (Method::Post, p) if p.starts_with("/admin/users/") && p.ends_with("/quota") => {
+            let user_id = p
+                .strip_prefix("/admin/users/")
+                .and_then(|s| s.strip_suffix("/quota"))
+                .unwrap_or("");
+            cors_response(handle_admin_adjust_quota(req, env, user_id.to_string()).await)
+        }
+
+        // Delete user (admin only)
+        (Method::Delete, p) if p.starts_with("/admin/users/") => {
+            let user_id = p.strip_prefix("/admin/users/").unwrap_or("");
+            cors_response(handle_admin_delete_user(req, env, user_id.to_string()).await)
+        }
+
+        // ============================================
+        // Bug #6: Billing/Stripe endpoints
+        // ============================================
+
+        // Create Stripe checkout session (requires auth)
+        (Method::Post, "/billing/checkout") => {
+            cors_response(billing::handle_checkout(req, env).await)
+        }
+
+        // Create Stripe customer portal session (requires auth)
+        (Method::Post, "/billing/portal") => cors_response(billing::handle_portal(req, env).await),
+
+        // Get billing status (requires auth)
+        (Method::Get, "/billing/status") => {
+            cors_response(billing::handle_billing_status(req, env).await)
+        }
+
+        // Stripe webhook (no auth - uses webhook signature verification)
+        (Method::Post, "/billing/webhook") => {
+            cors_response(billing::handle_webhook(req, env).await)
+        }
+
         // Protected endpoints - require API key
         (Method::Post, "/send") => {
             if !verify_api_key(&req, &env) {
@@ -1409,6 +1468,683 @@ async fn handle_health_check(env: Env) -> Result<Response> {
 
     let resp = Response::from_json(&response)?.with_status(status_code);
     cors_response(Ok(resp))
+}
+
+/// Bug #4: Handle feedback/request submission
+async fn handle_submit_request(req: Request, env: Env) -> Result<Response> {
+    use auth::types::{SubmitRequestBody, SubmitRequestResponse, UserRequest};
+
+    // Get user from auth token
+    let user = match auth::get_authenticated_user(&req, &env).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return Ok(Response::from_json(&SubmitRequestResponse {
+                success: false,
+                request_id: None,
+                message: Some("Please log in to submit feedback.".to_string()),
+            })?
+            .with_status(401));
+        }
+        Err(e) => {
+            console_log!("Error getting user: {:?}", e);
+            return Ok(Response::from_json(&SubmitRequestResponse {
+                success: false,
+                request_id: None,
+                message: Some("Authentication error.".to_string()),
+            })?
+            .with_status(401));
+        }
+    };
+
+    // Clone request for body parsing (req was consumed by auth check)
+    let mut req = req;
+
+    // Parse request body
+    let body: SubmitRequestBody = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&SubmitRequestResponse {
+                success: false,
+                request_id: None,
+                message: Some(format!("Invalid request: {}", e)),
+            })?
+            .with_status(400));
+        }
+    };
+
+    // Validate description
+    if body.description.trim().is_empty() {
+        return Ok(Response::from_json(&SubmitRequestResponse {
+            success: false,
+            request_id: None,
+            message: Some("Please provide a description.".to_string()),
+        })?
+        .with_status(400));
+    }
+
+    if body.description.len() > 2000 {
+        return Ok(Response::from_json(&SubmitRequestResponse {
+            success: false,
+            request_id: None,
+            message: Some("Description too long (max 2000 characters).".to_string()),
+        })?
+        .with_status(400));
+    }
+
+    // Check for pending request from this user (rate limit: 1 pending per user)
+    let requests_kv = match env.kv("REQUESTS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            console_log!("Warning: REQUESTS KV not configured, skipping duplicate check");
+            // Continue without duplicate check - KV not set up yet
+            let user_request = UserRequest::new(
+                user.id.clone(),
+                user.email.clone(),
+                body.request_type,
+                body.description.clone(),
+                body.additional_documents,
+            );
+
+            // Send admin notification email (best effort)
+            let request_type_str = body.request_type.to_string();
+            if let Err(e) = email::send_admin_notification_email(
+                &env,
+                &user.email,
+                &request_type_str,
+                &body.description,
+                body.additional_documents,
+            )
+            .await
+            {
+                console_log!("Warning: Failed to send admin notification: {:?}", e);
+            }
+
+            return Ok(Response::from_json(&SubmitRequestResponse {
+                success: true,
+                request_id: Some(user_request.id),
+                message: Some("Thank you for your feedback!".to_string()),
+            })?);
+        }
+    };
+
+    // Check for existing pending request
+    let user_pending_key = format!("pending:{}", user.id);
+    if let Ok(Some(_)) = requests_kv.get(&user_pending_key).text().await {
+        return Ok(Response::from_json(&SubmitRequestResponse {
+            success: false,
+            request_id: None,
+            message: Some(
+                "You already have a pending request. Please wait for it to be resolved."
+                    .to_string(),
+            ),
+        })?
+        .with_status(429));
+    }
+
+    // Create the request
+    let user_request = UserRequest::new(
+        user.id.clone(),
+        user.email.clone(),
+        body.request_type,
+        body.description.clone(),
+        body.additional_documents,
+    );
+    let request_id = user_request.id.clone();
+
+    // Store the request
+    if let Err(e) = requests_kv
+        .put(
+            &format!("request:{}", request_id),
+            serde_json::to_string(&user_request)?,
+        )
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?
+        .execute()
+        .await
+    {
+        console_log!("Warning: Failed to store request: {:?}", e);
+    }
+
+    // Mark user as having pending request
+    if let Err(e) = requests_kv
+        .put(&user_pending_key, &request_id)
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?
+        .execute()
+        .await
+    {
+        console_log!("Warning: Failed to set pending marker: {:?}", e);
+    }
+
+    // Send admin notification email (best effort, non-blocking)
+    let request_type_str = body.request_type.to_string();
+    match email::send_admin_notification_email(
+        &env,
+        &user.email,
+        &request_type_str,
+        &body.description,
+        body.additional_documents,
+    )
+    .await
+    {
+        Ok(result) => {
+            if result.success {
+                console_log!("Admin notification sent for request {}", request_id);
+            } else {
+                console_log!("Failed to send admin notification: {:?}", result.error);
+            }
+        }
+        Err(e) => {
+            console_log!("Error sending admin notification: {:?}", e);
+        }
+    }
+
+    Ok(Response::from_json(&SubmitRequestResponse {
+        success: true,
+        request_id: Some(request_id),
+        message: Some("Thank you for your feedback! We'll review it soon.".to_string()),
+    })?)
+}
+
+// ============================================================================
+// Bug #8: Admin Dashboard Handlers
+// ============================================================================
+
+/// Helper: Check if user is admin and return user or error response
+async fn get_admin_user(
+    req: &Request,
+    env: &Env,
+) -> Result<std::result::Result<auth::types::User, Response>> {
+    use auth::types::{is_admin, AdminRequestsListResponse};
+
+    let user = match auth::get_authenticated_user(req, env).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            return Ok(Err(Response::from_json(&AdminRequestsListResponse {
+                success: false,
+                requests: vec![],
+                total: 0,
+            })?
+            .with_status(401)));
+        }
+        Err(e) => {
+            console_log!("Admin auth error: {:?}", e);
+            return Ok(Err(Response::from_json(&AdminRequestsListResponse {
+                success: false,
+                requests: vec![],
+                total: 0,
+            })?
+            .with_status(401)));
+        }
+    };
+
+    if !is_admin(&user.email) {
+        return Ok(Err(Response::from_json(&serde_json::json!({
+            "success": false,
+            "error": "Access denied. Admin only."
+        }))?
+        .with_status(403)));
+    }
+
+    Ok(Ok(user))
+}
+
+/// List all requests (admin only)
+async fn handle_admin_list_requests(req: Request, env: Env) -> Result<Response> {
+    use auth::types::{AdminRequestsListResponse, RequestStatus, UserRequest};
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let requests_kv = match env.kv("REQUESTS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return Ok(Response::from_json(&AdminRequestsListResponse {
+                success: true,
+                requests: vec![],
+                total: 0,
+            })?);
+        }
+    };
+
+    // Get filter from query params
+    let url = req.url()?;
+    let query_params: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    let status_filter = query_params.get("status").map(|s| s.to_string());
+
+    // List all request keys (prefix "request:")
+    let list_result = requests_kv
+        .list()
+        .prefix("request:".to_string())
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let mut requests: Vec<UserRequest> = Vec::new();
+
+    for key in list_result.keys {
+        if let Ok(Some(request_str)) = requests_kv.get(&key.name).text().await {
+            if let Ok(request) = serde_json::from_str::<UserRequest>(&request_str) {
+                // Apply status filter if provided
+                if let Some(ref filter) = status_filter {
+                    let request_status = match request.status {
+                        RequestStatus::Pending => "pending",
+                        RequestStatus::InProgress => "in_progress",
+                        RequestStatus::Resolved => "resolved",
+                        RequestStatus::Rejected => "rejected",
+                    };
+                    if request_status != filter {
+                        continue;
+                    }
+                }
+                requests.push(request);
+            }
+        }
+    }
+
+    // Sort by created_at descending (newest first)
+    requests.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let total = requests.len();
+    Ok(Response::from_json(&AdminRequestsListResponse {
+        success: true,
+        requests,
+        total,
+    })?)
+}
+
+/// Update a request (approve/deny/in-progress) - admin only
+async fn handle_admin_update_request(
+    mut req: Request,
+    env: Env,
+    request_id: String,
+) -> Result<Response> {
+    use auth::types::{
+        AdminRequestAction, AdminUpdateRequestBody, AdminUpdateRequestResponse, RequestStatus,
+        UserRequest,
+    };
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    // Parse request body
+    let body: AdminUpdateRequestBody = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&AdminUpdateRequestResponse {
+                success: false,
+                message: Some(format!("Invalid request: {}", e)),
+                request: None,
+            })?
+            .with_status(400));
+        }
+    };
+
+    let requests_kv = match env.kv("REQUESTS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return Ok(Response::from_json(&AdminUpdateRequestResponse {
+                success: false,
+                message: Some("REQUESTS KV not configured".to_string()),
+                request: None,
+            })?
+            .with_status(500));
+        }
+    };
+
+    let request_key = format!("request:{}", request_id);
+
+    // Get existing request
+    let mut user_request: UserRequest = match requests_kv.get(&request_key).text().await {
+        Ok(Some(s)) => match serde_json::from_str(&s) {
+            Ok(r) => r,
+            Err(_) => {
+                return Ok(Response::from_json(&AdminUpdateRequestResponse {
+                    success: false,
+                    message: Some("Invalid request data".to_string()),
+                    request: None,
+                })?
+                .with_status(500));
+            }
+        },
+        _ => {
+            return Ok(Response::from_json(&AdminUpdateRequestResponse {
+                success: false,
+                message: Some("Request not found".to_string()),
+                request: None,
+            })?
+            .with_status(404));
+        }
+    };
+
+    // Update status based on action
+    user_request.status = match body.action {
+        AdminRequestAction::Approve => RequestStatus::Resolved,
+        AdminRequestAction::Deny => RequestStatus::Rejected,
+        AdminRequestAction::MarkInProgress => RequestStatus::InProgress,
+    };
+    user_request.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    user_request.admin_notes = body.admin_notes;
+
+    // If approving a request, apply the relevant changes
+    if body.action == AdminRequestAction::Approve {
+        let users_kv = env
+            .kv("USERS")
+            .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+        let user_key = format!("user:{}", user_request.user_id);
+
+        if let Ok(Some(user_str)) = users_kv.get(&user_key).text().await {
+            if let Ok(mut user) = serde_json::from_str::<auth::types::User>(&user_str) {
+                let mut user_changed = false;
+
+                // Grant bonus documents for MoreDocuments requests
+                if let Some(granted) = body.granted_documents {
+                    // Reduce monthly count to grant "bonus" documents
+                    // (effectively giving them more room in their quota)
+                    if user.monthly_document_count >= granted {
+                        user.monthly_document_count -= granted;
+                    } else {
+                        user.monthly_document_count = 0;
+                    }
+                    user_changed = true;
+                }
+
+                // Bug #7: Apply name change for NameChange requests
+                if user_request.request_type == auth::types::RequestType::NameChange {
+                    if let Some(ref new_first) = user_request.new_first_name {
+                        user.first_name = new_first.clone();
+                    }
+                    if let Some(ref new_middle) = user_request.new_middle_initial {
+                        user.middle_initial = Some(new_middle.clone());
+                    } else if user_request.new_middle_initial.is_none()
+                        && user_request.request_type == auth::types::RequestType::NameChange
+                    {
+                        // Clear middle initial if explicitly set to None in request
+                        user.middle_initial = None;
+                    }
+                    if let Some(ref new_last) = user_request.new_last_name {
+                        user.last_name = new_last.clone();
+                    }
+                    // Clear the pending name change request ID
+                    user.pending_name_change_request_id = None;
+                    user_changed = true;
+                    console_log!(
+                        "Name change approved for user {}: {} {}",
+                        user.email,
+                        user.first_name,
+                        user.last_name
+                    );
+                }
+
+                if user_changed {
+                    user.updated_at = chrono::Utc::now().to_rfc3339();
+                    // Save updated user
+                    let user_json = serde_json::to_string(&user)
+                        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+                    let _ = users_kv.put(&user_key, &user_json)?.execute().await;
+                }
+            }
+        }
+    }
+
+    // Bug #7: If rejecting a name change, clear the pending request ID
+    if body.action == AdminRequestAction::Deny
+        && user_request.request_type == auth::types::RequestType::NameChange
+    {
+        let users_kv = env
+            .kv("USERS")
+            .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+        let user_key = format!("user:{}", user_request.user_id);
+
+        if let Ok(Some(user_str)) = users_kv.get(&user_key).text().await {
+            if let Ok(mut user) = serde_json::from_str::<auth::types::User>(&user_str) {
+                user.pending_name_change_request_id = None;
+                user.updated_at = chrono::Utc::now().to_rfc3339();
+                let user_json = serde_json::to_string(&user)
+                    .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+                let _ = users_kv.put(&user_key, &user_json)?.execute().await;
+            }
+        }
+    }
+
+    // Save updated request
+    let request_json = serde_json::to_string(&user_request)
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+    requests_kv
+        .put(&request_key, &request_json)?
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // Clear user's pending request marker if resolved or rejected
+    if matches!(
+        user_request.status,
+        RequestStatus::Resolved | RequestStatus::Rejected
+    ) {
+        let user_pending_key = format!("user_pending:{}", user_request.user_id);
+        let _ = requests_kv.delete(&user_pending_key).await;
+    }
+
+    Ok(Response::from_json(&AdminUpdateRequestResponse {
+        success: true,
+        message: Some(format!("Request {} updated", request_id)),
+        request: Some(user_request),
+    })?)
+}
+
+/// List users (admin only, supports ?filter=unverified)
+async fn handle_admin_list_users(req: Request, env: Env) -> Result<Response> {
+    use auth::types::{AdminUserSummary, AdminUsersListResponse, User};
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let users_kv = env
+        .kv("USERS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // Get filter from query params
+    let url = req.url()?;
+    let query_params: std::collections::HashMap<_, _> = url.query_pairs().collect();
+    let filter = query_params.get("filter").map(|s| s.to_string());
+
+    // List all user keys
+    let list_result = users_kv
+        .list()
+        .prefix("user:".to_string())
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let mut users: Vec<AdminUserSummary> = Vec::new();
+
+    for key in list_result.keys {
+        // Skip email index keys
+        if key.name.starts_with("user_email:") {
+            continue;
+        }
+
+        if let Ok(Some(user_str)) = users_kv.get(&key.name).text().await {
+            if let Ok(user) = serde_json::from_str::<User>(&user_str) {
+                // Apply filter
+                let include = match filter.as_deref() {
+                    Some("unverified") => !user.email_verified,
+                    Some("verified") => user.email_verified,
+                    _ => true,
+                };
+
+                if include {
+                    users.push(AdminUserSummary::from(&user));
+                }
+            }
+        }
+    }
+
+    // Sort by created_at descending (newest first)
+    users.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let total = users.len();
+    Ok(Response::from_json(&AdminUsersListResponse {
+        success: true,
+        users,
+        total,
+    })?)
+}
+
+/// Adjust user quota (admin only)
+async fn handle_admin_adjust_quota(
+    mut req: Request,
+    env: Env,
+    user_id: String,
+) -> Result<Response> {
+    use auth::types::{AdminAdjustQuotaBody, AdminAdjustQuotaResponse, User};
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    // Parse request body
+    let body: AdminAdjustQuotaBody = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&AdminAdjustQuotaResponse {
+                success: false,
+                message: Some(format!("Invalid request: {}", e)),
+            })?
+            .with_status(400));
+        }
+    };
+
+    let users_kv = env
+        .kv("USERS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let user_key = format!("user:{}", user_id);
+
+    // Get existing user
+    let mut user: User = match users_kv.get(&user_key).text().await {
+        Ok(Some(s)) => match serde_json::from_str(&s) {
+            Ok(u) => u,
+            Err(_) => {
+                return Ok(Response::from_json(&AdminAdjustQuotaResponse {
+                    success: false,
+                    message: Some("Invalid user data".to_string()),
+                })?
+                .with_status(500));
+            }
+        },
+        _ => {
+            return Ok(Response::from_json(&AdminAdjustQuotaResponse {
+                success: false,
+                message: Some("User not found".to_string()),
+            })?
+            .with_status(404));
+        }
+    };
+
+    let mut changes: Vec<String> = Vec::new();
+
+    // Update tier if provided
+    if let Some(new_tier) = body.new_tier {
+        user.tier = new_tier;
+        changes.push(format!("tier → {}", new_tier.display_name()));
+    }
+
+    // Grant bonus documents (reduce usage count)
+    if let Some(bonus) = body.bonus_documents {
+        if user.monthly_document_count >= bonus {
+            user.monthly_document_count -= bonus;
+        } else {
+            user.monthly_document_count = 0;
+        }
+        changes.push(format!("+{} docs", bonus));
+    }
+
+    user.updated_at = chrono::Utc::now().to_rfc3339();
+
+    // Save updated user
+    let user_json =
+        serde_json::to_string(&user).map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+    users_kv
+        .put(&user_key, &user_json)?
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let message = if changes.is_empty() {
+        "No changes made".to_string()
+    } else {
+        format!("Updated: {}", changes.join(", "))
+    };
+
+    Ok(Response::from_json(&AdminAdjustQuotaResponse {
+        success: true,
+        message: Some(message),
+    })?)
+}
+
+/// Delete user (admin only)
+async fn handle_admin_delete_user(req: Request, env: Env, user_id: String) -> Result<Response> {
+    use auth::types::AdminDeleteUserResponse;
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let users_kv = env
+        .kv("USERS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let user_key = format!("user:{}", user_id);
+
+    // Get user to find their email (for email index cleanup)
+    let user_email = match users_kv.get(&user_key).text().await {
+        Ok(Some(s)) => match serde_json::from_str::<auth::types::User>(&s) {
+            Ok(u) => Some(u.email),
+            Err(_) => None,
+        },
+        _ => {
+            return Ok(Response::from_json(&AdminDeleteUserResponse {
+                success: false,
+                message: Some("User not found".to_string()),
+            })?
+            .with_status(404));
+        }
+    };
+
+    // Delete user
+    users_kv
+        .delete(&user_key)
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // Delete email index if we found the email
+    if let Some(email) = user_email {
+        let email_key = format!("user_email:{}", email.to_lowercase());
+        let _ = users_kv.delete(&email_key).await;
+    }
+
+    // Also clean up any pending requests
+    if let Ok(requests_kv) = env.kv("REQUESTS") {
+        let user_pending_key = format!("user_pending:{}", user_id);
+        let _ = requests_kv.delete(&user_pending_key).await;
+    }
+
+    Ok(Response::from_json(&AdminDeleteUserResponse {
+        success: true,
+        message: Some("User deleted successfully".to_string()),
+    })?)
 }
 
 async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
@@ -1639,34 +2375,38 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         .with_status(403)));
     }
 
-    // Check document limit for free tier users
-    // Reset counter if the week has passed (reset happens on Mondays)
-    let now = chrono::Utc::now();
-    if let Ok(reset_at) = chrono::DateTime::parse_from_rfc3339(&user.weekly_reset_at) {
-        if now >= reset_at {
-            user.weekly_document_count = 0;
-            // Calculate next Monday at 00:00 UTC
-            let days_until_monday = (8 - now.weekday().num_days_from_monday()) % 7;
-            let days_until_monday = if days_until_monday == 0 {
-                7
-            } else {
-                days_until_monday
-            };
-            user.weekly_reset_at = (now + chrono::Duration::days(days_until_monday as i64))
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .to_rfc3339();
-        }
-    }
+    // Bug #6: Check document limit based on user's tier
+    // Reset counter if the month has changed
+    user.check_monthly_reset();
 
-    if user.tier == auth::types::UserTier::Free && user.weekly_document_count >= 1 {
+    // Check if user can create another document (respects tier limits + overage)
+    if !user.can_create_document() {
+        let limit = user.tier.monthly_limit();
+        let tier_name = user.tier.display_name();
+        let message = if user.tier.allows_overage() {
+            format!(
+                "You've reached your maximum document limit for this month ({} base + {} overage). Your {} plan resets on the 1st of next month.",
+                limit,
+                user.tier.max_with_overage() - limit,
+                tier_name
+            )
+        } else {
+            format!(
+                "Monthly limit reached. Free accounts can create {} documents per month. Upgrade to unlock more documents and premium features.",
+                limit
+            )
+        };
+
         return cors_response(Ok(Response::from_json(&serde_json::json!({
             "success": false,
-            "message": "Weekly limit reached. Free accounts can create 1 signing ceremony per week. Upgrade to Pro for unlimited.",
-            "error_code": "WEEKLY_LIMIT_EXCEEDED",
-            "limit": 1
+            "message": message,
+            "error_code": "MONTHLY_LIMIT_EXCEEDED",
+            "limit": limit,
+            "tier": tier_name,
+            "documents_used": user.monthly_document_count,
+            "overage_used": user.overage_count,
+            "allows_overage": user.tier.allows_overage(),
+            "is_in_overage": user.is_in_overage()
         }))?
         .with_status(429)));
     }
@@ -1774,10 +2514,57 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         console_log!("Warning: Failed to update sender index: {}", e);
     }
 
-    // Increment document count for the user (best-effort, don't fail if this errors)
-    user.weekly_document_count += 1;
+    // Bug #6: Record document send (handles base count + overage)
+    // Returns true if this send triggered the limit (for email notification)
+    let hit_limit = user.record_document_send();
+
+    // Save user with updated counts (best-effort, don't fail the request)
     if let Err(e) = auth::save_user(&users_kv, &user).await {
         console_log!("Warning: Failed to update user document count: {:?}", e);
+    }
+
+    // Bug #6.4: Send limit notification email when user hits their limit
+    // Only send once per billing period (tracked by limit_email_sent flag)
+    if hit_limit && !user.limit_email_sent {
+        console_log!(
+            "User {} hit their {} limit ({} docs). Sending notification email.",
+            user.email,
+            user.tier.display_name(),
+            user.tier.monthly_limit()
+        );
+
+        // Send email asynchronously (non-blocking, best-effort)
+        let first_name = if user.first_name.is_empty() {
+            "there"
+        } else {
+            &user.first_name
+        };
+        let tier_name = user.tier.display_name();
+        let limit = user.tier.monthly_limit();
+
+        match email::send_limit_notification_email(&env, &user.email, first_name, tier_name, limit)
+            .await
+        {
+            Ok(result) => {
+                if result.success {
+                    console_log!("Limit notification email sent to {}", user.email);
+                    // Mark as sent so we don't send again this billing period
+                    user.limit_email_sent = true;
+                    // Save the updated flag (best-effort)
+                    if let Err(e) = auth::save_user(&users_kv, &user).await {
+                        console_log!("Warning: Failed to update limit_email_sent flag: {:?}", e);
+                    }
+                } else {
+                    console_log!(
+                        "Failed to send limit notification email: {:?}",
+                        result.error
+                    );
+                }
+            }
+            Err(e) => {
+                console_log!("Error sending limit notification email: {:?}", e);
+            }
+        }
     }
 
     cors_response(Response::from_json(&CreateSessionResponse {

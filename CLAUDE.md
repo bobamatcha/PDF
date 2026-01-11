@@ -16,6 +16,44 @@ Do not run:
 
 **Instead**: When code changes are ready to deploy, tell the user exactly what commands to run and let them execute the deployment themselves. This prevents accidental breakage of production systems.
 
+## DocsSign-Web Production Worker
+
+**CRITICAL: Remember this information!**
+
+| Item | Value |
+|------|-------|
+| **Worker Name** | `docsign-worker-production` |
+| **URL** | `api.getsignatures.org` |
+| **wrangler.toml** | Directly targets production (no separate env) |
+
+**Key Facts:**
+- `wrangler.toml` has `name = "docsign-worker-production"` - deploys directly to production
+- There is NO dev worker - only production exists
+- Tests use isolated storage and mock APIs - they don't touch production KV
+
+**Wrangler commands:**
+```bash
+# These all work with the production worker now
+wrangler deploy              # Deploys to production (USER runs this, not Claude!)
+wrangler deployments list    # Lists production deployments
+wrangler kv key list --namespace-id=<id>  # Lists KV data
+```
+
+## Human-in-the-Loop (HITL) for Deployments
+
+**CRITICAL: All deployments require user execution.**
+
+Claude has previously caused issues by:
+1. Assuming wrong worker names
+2. Deploying to wrong environments
+3. Not verifying production state before changes
+
+**Protocol:**
+1. **Never deploy directly** - Always provide commands for user to run
+2. **Verify worker name** - Production is `docsign-worker-production`
+3. **Confirm with user** - Before any production-affecting changes
+4. **Test locally first** - Use `npm test` and local trunk serve
+
 ## Puppeteer MCP Testing
 
 When verifying UI functionality with Puppeteer MCP:
@@ -54,6 +92,17 @@ The browser tests in `crates/benchmark-harness/tests/` have:
 ## Test-First Development Flow
 
 When fixing a bug or adding a feature to fix something broken, **always follow this flow**:
+
+### Strict Patch Rejection Policy
+
+> **CRITICAL**: A patch is NOT complete unless it fixes the **entire bug**.
+>
+> - Patches that "show an implementation exists" but don't fix all edge cases are **REJECTED**
+> - User expectations define completeness—if the UX still diverges from what users expect, the bug is NOT fixed
+> - Avoid oversimplification: fixing 80% of a bug creates a false sense of progress while leaving 20% broken
+> - When in doubt, the bug is NOT fixed until Puppeteer verification shows the UX works as expected
+
+For docsign-web bugs specifically, see `apps/docsign-web/DOCSIGN_BUGS.md` for the priority-ordered bug tracker.
 
 ### 1. Write Failing Tests First
 

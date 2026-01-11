@@ -303,6 +303,249 @@ pub async fn send_email(env: &Env, request: EmailSendRequest) -> Result<EmailSen
     Ok(result)
 }
 
+/// Send admin notification email when a user submits feedback/request (Bug #4)
+///
+/// # Arguments
+/// * `env` - Cloudflare Worker environment
+/// * `request` - The user request to notify about
+pub async fn send_admin_notification_email(
+    env: &Env,
+    user_email: &str,
+    request_type: &str,
+    description: &str,
+    additional_documents: Option<u32>,
+) -> Result<EmailSendResult> {
+    let admin_email = "bobamatchsolutions@gmail.com";
+    let subject = format!("[GetSignatures] New {}", request_type);
+
+    let docs_section = if let Some(docs) = additional_documents {
+        format!(
+            r#"<div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 12px; margin: 16px 0;">
+                <strong>Requested additional documents:</strong> {}
+            </div>"#,
+            docs
+        )
+    } else {
+        String::new()
+    };
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, sans-serif; line-height: 1.6; color: #334155; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <h2 style="color: #0056b3;">New {request_type}</h2>
+
+    <p><strong>From:</strong> {user_email}</p>
+
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+        <strong>Description:</strong>
+        <p style="white-space: pre-wrap;">{description}</p>
+    </div>
+
+    {docs_section}
+
+    <p style="color: #6b7280; font-size: 14px; margin-top: 24px;">
+        Respond to this request in the admin dashboard or reply to the user directly.
+    </p>
+</body>
+</html>"#,
+        request_type = request_type,
+        user_email = user_email,
+        description = description,
+        docs_section = docs_section
+    );
+
+    let request = EmailSendRequest {
+        to: vec![admin_email.to_string()],
+        subject,
+        html,
+        text: Some(format!(
+            "New {} from {}\n\nDescription:\n{}\n\n{}",
+            request_type,
+            user_email,
+            description,
+            if let Some(docs) = additional_documents {
+                format!("Requested documents: {}", docs)
+            } else {
+                String::new()
+            }
+        )),
+        reply_to: Some(user_email.to_string()),
+        tags: vec![
+            ("type".to_string(), "admin_notification".to_string()),
+            ("request_type".to_string(), request_type.to_string()),
+        ],
+    };
+
+    console_log!(
+        "Sending admin notification for {} from {}",
+        request_type,
+        user_email
+    );
+    send_email(env, request).await
+}
+
+/// Send limit notification email when user hits their monthly document limit
+///
+/// # Arguments
+/// * `env` - Cloudflare Worker environment
+/// * `user_email` - User's email address
+/// * `user_first_name` - User's first name (for personalization)
+/// * `tier_name` - User's tier display name (e.g., "Free", "Personal")
+/// * `limit` - The monthly document limit they hit
+///
+/// # Returns
+/// * `Ok(EmailSendResult)` - Result with success/failure
+pub async fn send_limit_notification_email(
+    env: &Env,
+    user_email: &str,
+    user_first_name: &str,
+    tier_name: &str,
+    limit: u32,
+) -> Result<EmailSendResult> {
+    // Calculate next month's 1st for the reset date
+    let now = chrono::Utc::now();
+    let next_month_1st = now
+        .date_naive()
+        .with_day(1)
+        .unwrap()
+        .checked_add_months(chrono::Months::new(1))
+        .unwrap();
+    let month_name = match next_month_1st.month() {
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
+        _ => "next month",
+    };
+
+    let subject = "You've reached your document limit for this month";
+
+    // HTML email template following UX best practices:
+    // - Lead with what they CAN do
+    // - Single focused CTA (upgrade)
+    // - Clear reset date
+    // - Mobile-friendly design
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monthly Limit Reached</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #334155; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">📊 Monthly Limit Reached</h1>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
+        <p style="font-size: 16px; margin-bottom: 16px;">
+            Hi {first_name},
+        </p>
+
+        <p style="font-size: 16px; margin-bottom: 16px;">
+            You've sent all <strong>{limit} documents</strong> available on your <strong>{tier_name}</strong> plan this month.
+        </p>
+
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+            <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #475569;">What you can still do:</h3>
+            <ul style="margin: 0; padding-left: 20px; color: #64748b; font-size: 14px;">
+                <li>View your existing documents</li>
+                <li>Download signed PDFs</li>
+                <li>Check document status</li>
+                <li>View your signing history</li>
+            </ul>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-bottom: 20px; text-align: center;">
+            New document sending will resume on <strong>{month_name} 1st</strong>.
+        </p>
+
+        <div style="text-align: center; margin-bottom: 20px;">
+            <a href="https://getsignatures.org/pricing.html"
+               style="display: inline-block; background: #0056b3; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">
+                View Pricing &amp; Upgrade
+            </a>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+            Questions? Just reply to this email and we'll help you out.
+        </p>
+
+        <p style="font-size: 14px; color: #6b7280;">
+            – The Get Signatures Team
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 16px; font-size: 12px; color: #94a3b8;">
+        <p>Get Signatures · Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        first_name = user_first_name,
+        limit = limit,
+        tier_name = tier_name,
+        month_name = month_name
+    );
+
+    // Plain text version for email clients that don't support HTML
+    let text = format!(
+        r#"Hi {first_name},
+
+You've sent all {limit} documents available on your {tier_name} plan this month.
+
+What you can still do:
+- View your existing documents
+- Download signed PDFs
+- Check document status
+- View your signing history
+
+New document sending will resume on {month_name} 1st.
+
+Want to send more documents now? Upgrade your plan:
+https://getsignatures.org/pricing.html
+
+Questions? Just reply to this email.
+
+– The Get Signatures Team"#,
+        first_name = user_first_name,
+        limit = limit,
+        tier_name = tier_name,
+        month_name = month_name
+    );
+
+    let request = EmailSendRequest {
+        to: vec![user_email.to_string()],
+        subject: subject.to_string(),
+        html,
+        text: Some(text),
+        reply_to: Some("bobamatchsolutions@gmail.com".to_string()),
+        tags: vec![
+            ("type".to_string(), "limit_notification".to_string()),
+            ("tier".to_string(), tier_name.to_string()),
+        ],
+    };
+
+    console_log!(
+        "Sending limit notification email to {} (tier: {}, limit: {})",
+        user_email,
+        tier_name,
+        limit
+    );
+
+    send_email(env, request).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,10 +5,36 @@
  * Each test gets fresh KV state - NO rate limiting between tests!
  *
  * Uses @cloudflare/vitest-pool-workers for true integration testing.
+ *
+ * IMPORTANT: All external API calls (Resend) are mocked using fetchMock.
+ * This prevents tests from wasting Resend credits.
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
-import { SELF, env } from "cloudflare:test";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { SELF, env, fetchMock } from "cloudflare:test";
+
+// Enable fetch mocking before all tests - prevents real network calls to Resend
+beforeAll(() => {
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+});
+
+// Setup persistent mock for Resend API before each test
+// This mock will handle any email send attempt without consuming credits
+beforeEach(() => {
+  // Reset any previous interceptors
+  fetchMock.deactivate();
+  fetchMock.activate();
+  fetchMock.disableNetConnect();
+
+  // Mock Resend API - persist() allows multiple calls per test
+  // This prevents any real emails from being sent
+  fetchMock
+    .get("https://api.resend.com")
+    .intercept({ path: "/emails", method: "POST" })
+    .reply(200, { id: "mock-email-id-" + Math.random().toString(36).slice(2) })
+    .persist();
+});
 
 describe("Auth API Integration", () => {
   describe("Health Check", () => {
@@ -81,7 +107,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "test@example.com",
           password: "weak", // Too short, no uppercase, no number
-          name: "Test User",
+          first_name: "Test",
+          last_name: "User",
         }),
       });
 
@@ -99,7 +126,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "not-an-email",
           password: "ValidPass123",
-          name: "Test User",
+          first_name: "Test",
+          last_name: "User",
         }),
       });
 
@@ -117,7 +145,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "test@example.com",
           password: "ValidPass123",
-          name: "", // Empty name
+          first_name: "", // Empty first name
+          last_name: "User",
         }),
       });
 
@@ -137,7 +166,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "newuser@example.com",
           password: "ValidPass123",
-          name: "Test User",
+          first_name: "Test",
+          last_name: "User",
         }),
       });
 
@@ -163,7 +193,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email,
           password: "ValidPass123",
-          name: "First User",
+          first_name: "First",
+          last_name: "User",
         }),
       });
       expect(first.status).toBe(201);
@@ -175,7 +206,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email,
           password: "ValidPass123",
-          name: "Second User",
+          first_name: "Second",
+          last_name: "User",
         }),
       });
 
@@ -214,7 +246,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "logintest@example.com",
           password: "CorrectPass123",
-          name: "Login Test User",
+          first_name: "Login",
+          last_name: "Test",
         }),
       });
 
@@ -245,7 +278,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "emailverify@example.com",
           password: "ValidPass123",
-          name: "Email Verify Test",
+          first_name: "Email",
+          last_name: "Verify",
         }),
       });
 
@@ -274,7 +308,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "resendtest@example.com",
           password: "ValidPass123",
-          name: "Resend Test",
+          first_name: "Resend",
+          last_name: "Test",
         }),
       });
       expect(registerResponse.status).toBe(201);
@@ -302,7 +337,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "resetemailtest@example.com",
           password: "ValidPass123",
-          name: "Reset Email Test",
+          first_name: "Reset",
+          last_name: "Email",
         }),
       });
       expect(registerResponse.status).toBe(201);
@@ -341,7 +377,8 @@ describe("Auth API Integration", () => {
           body: JSON.stringify({
             email: `ratelimit${i}@example.com`,
             password: "ValidPass123",
-            name: "Rate Test",
+            first_name: "Rate",
+            last_name: "Test",
           }),
         });
       }
@@ -354,7 +391,8 @@ describe("Auth API Integration", () => {
         body: JSON.stringify({
           email: "ratelimitfinal@example.com",
           password: "ValidPass123",
-          name: "Rate Test",
+          first_name: "Rate",
+          last_name: "Final",
         }),
       });
 

@@ -2,8 +2,6 @@
 //!
 //! Implements: register, verify-email, login, refresh, logout, forgot-password, reset-password, resend-verification
 
-use chrono::Datelike;
-
 use super::jwt::{
     extract_bearer_token, generate_access_token, generate_refresh_token, validate_access_token,
     validate_refresh_token, ACCESS_TOKEN_EXPIRY,
@@ -543,28 +541,12 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Check and reset weekly document counter if needed
-    let now = chrono::Utc::now();
-    if let Ok(reset_at) = chrono::DateTime::parse_from_rfc3339(&user.weekly_reset_at) {
-        if now >= reset_at {
-            user.weekly_document_count = 0;
-            // Calculate next Monday at 00:00 UTC
-            let days_until_monday = (8 - now.weekday().num_days_from_monday()) % 7;
-            let days_until_monday = if days_until_monday == 0 {
-                7
-            } else {
-                days_until_monday
-            };
-            user.weekly_reset_at = (now + chrono::Duration::days(days_until_monday as i64))
-                .date_naive()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
-                .to_rfc3339();
-        }
-    }
+    // Bug #6: Check and reset monthly document counter if needed
+    // This also handles migration from weekly to monthly for existing users
+    user.check_monthly_reset();
 
     // Update login stats
+    let now = chrono::Utc::now();
     user.last_login_at = Some(now.to_rfc3339());
     user.login_count += 1;
     user.updated_at = now.to_rfc3339();
@@ -573,11 +555,8 @@ pub async fn handle_login(mut req: Request, env: Env) -> Result<Response> {
     // Generate session ID
     let session_id = generate_token();
 
-    // Generate tokens
-    let tier_str = match user.tier {
-        UserTier::Free => "free",
-        UserTier::Pro => "pro",
-    };
+    // Generate tokens - use tier display name for JWT
+    let tier_str = user.tier.display_name();
 
     let access_token = match generate_access_token(&user.id, &user.email, tier_str, &jwt_secret) {
         Ok(t) => t,
@@ -744,11 +723,8 @@ pub async fn handle_refresh(mut req: Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Generate new access token
-    let tier_str = match user.tier {
-        UserTier::Free => "free",
-        UserTier::Pro => "pro",
-    };
+    // Generate new access token - use tier display name for JWT
+    let tier_str = user.tier.display_name();
 
     let access_token = match generate_access_token(&user.id, &user.email, tier_str, &jwt_secret) {
         Ok(t) => t,
@@ -1339,7 +1315,10 @@ pub async fn require_auth(
 /// POST /auth/profile
 ///
 /// Updates user profile (name parts).
+/// Bug #7: Name changes require admin approval if name was already set.
 pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
+    use super::types::UserRequest;
+
     // Require authentication
     let (mut user, users_kv) = match require_auth(&req, &env).await? {
         Ok((u, kv)) => (u, kv),
@@ -1362,8 +1341,8 @@ pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Validate and update first_name
-    if let Some(first_name) = body.first_name {
+    // Validate proposed changes
+    let new_first_name = if let Some(ref first_name) = body.first_name {
         let first_name = first_name.trim();
         if first_name.is_empty() || first_name.len() > 50 {
             return json_response(
@@ -1375,14 +1354,15 @@ pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
                 },
             );
         }
-        user.first_name = first_name.to_string();
-    }
+        Some(first_name.to_string())
+    } else {
+        None
+    };
 
-    // Validate and update middle_initial
-    if let Some(middle_initial) = body.middle_initial {
+    let new_middle_initial = if let Some(ref middle_initial) = body.middle_initial {
         let mi = middle_initial.trim().to_uppercase();
         if mi.is_empty() {
-            user.middle_initial = None;
+            Some(None) // Explicitly clearing middle initial
         } else if mi.len() > 1 {
             return json_response(
                 400,
@@ -1393,12 +1373,13 @@ pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
                 },
             );
         } else {
-            user.middle_initial = Some(mi);
+            Some(Some(mi))
         }
-    }
+    } else {
+        None // Not changing middle initial
+    };
 
-    // Validate and update last_name
-    if let Some(last_name) = body.last_name {
+    let new_last_name = if let Some(ref last_name) = body.last_name {
         let last_name = last_name.trim();
         if last_name.is_empty() || last_name.len() > 50 {
             return json_response(
@@ -1410,7 +1391,119 @@ pub async fn handle_update_profile(req: Request, env: Env) -> Result<Response> {
                 },
             );
         }
-        user.last_name = last_name.to_string();
+        Some(last_name.to_string())
+    } else {
+        None
+    };
+
+    // Check if any name change is being requested
+    let name_changing = new_first_name.is_some() || new_last_name.is_some();
+
+    // Bug #7: If name was already set, require admin approval for name changes
+    if name_changing && user.name_set {
+        // Check if user already has a pending name change request
+        if user.pending_name_change_request_id.is_some() {
+            return json_response(
+                400,
+                &UpdateProfileResponse {
+                    success: false,
+                    message: "You already have a pending name change request. Please wait for admin approval.".to_string(),
+                    user: Some(UserPublic::from(&user)),
+                },
+            );
+        }
+
+        // Create a name change request
+        let final_first = new_first_name
+            .clone()
+            .unwrap_or_else(|| user.first_name.clone());
+        let final_last = new_last_name
+            .clone()
+            .unwrap_or_else(|| user.last_name.clone());
+        let final_middle = match &new_middle_initial {
+            Some(mi) => mi.clone(),
+            None => user.middle_initial.clone(),
+        };
+
+        let name_change_request = UserRequest::new_name_change(
+            user.id.clone(),
+            user.email.clone(),
+            user.first_name.clone(),
+            user.last_name.clone(),
+            final_first,
+            final_middle,
+            final_last,
+        );
+
+        let request_id = name_change_request.id.clone();
+
+        // Save to REQUESTS KV
+        if let Ok(requests_kv) = env.kv("REQUESTS") {
+            let request_key = format!("request:{}", request_id);
+            let request_json = serde_json::to_string(&name_change_request)
+                .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+            if let Err(e) = requests_kv
+                .put(&request_key, &request_json)?
+                .execute()
+                .await
+            {
+                console_log!("Failed to save name change request: {:?}", e);
+                return json_response(
+                    500,
+                    &UpdateProfileResponse {
+                        success: false,
+                        message: "Failed to submit name change request. Please try again."
+                            .to_string(),
+                        user: None,
+                    },
+                );
+            }
+
+            // Update user with pending request ID
+            user.pending_name_change_request_id = Some(request_id.clone());
+            user.updated_at = chrono::Utc::now().to_rfc3339();
+
+            if let Err(e) = save_user(&users_kv, &user).await {
+                console_log!("Failed to update user with pending request: {:?}", e);
+            }
+
+            console_log!(
+                "Name change request {} created for user {}",
+                request_id,
+                user.email
+            );
+
+            return json_response(
+                200,
+                &UpdateProfileResponse {
+                    success: true,
+                    message: "Name change request submitted for admin approval. You'll be notified once it's reviewed.".to_string(),
+                    user: Some(UserPublic::from(&user)),
+                },
+            );
+        } else {
+            console_log!("REQUESTS KV not available, falling back to direct update");
+            // Fall through to direct update if REQUESTS KV not configured
+        }
+    }
+
+    // Apply changes directly (first-time name set, or REQUESTS KV not available)
+    if let Some(first_name) = new_first_name {
+        user.first_name = first_name;
+    }
+
+    if let Some(mi) = new_middle_initial {
+        user.middle_initial = mi;
+    }
+
+    if let Some(last_name) = new_last_name {
+        user.last_name = last_name;
+    }
+
+    // Bug #7: Mark name as set if this is first-time name setting
+    if name_changing && !user.name_set {
+        user.name_set = true;
     }
 
     // Update timestamp

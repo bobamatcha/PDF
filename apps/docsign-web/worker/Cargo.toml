@@ -24,5 +24,9 @@ argon2 = { version = "0.5", default-features = false, features = ["std"] }
 uuid = { version = "1", default-features = false, features = ["v4", "js"] }
 getrandom = { version = "0.2", features = ["js"] }
 
+# Stripe billing integration (REST API, not SDK - for Workers compatibility)
+urlencoding = "2"
+hex = "0.4"
+
 [dev-dependencies]
 proptest = { workspace = true }

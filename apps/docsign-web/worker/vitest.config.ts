@@ -13,6 +13,13 @@ export default defineWorkersConfig({
         // Enable parallel test execution within worker pool
         // Each test file can run in parallel with isolated storage
         singleWorker: false,
+        // Mock secrets for testing - fetchMock intercepts actual API calls
+        miniflare: {
+          bindings: {
+            RESEND_API_KEY: "re_test_mock_key_for_testing_only",
+            JWT_SECRET: "test-jwt-secret-for-testing-only",
+          },
+        },
       },
     },
     // Test file patterns

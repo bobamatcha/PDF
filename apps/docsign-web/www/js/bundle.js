@@ -944,11 +944,11 @@ function getOfflineError() {
     icon: "wifi-off"
   };
 }
-function getFileTooLargeError(maxSizeMb = 25) {
+function getFileTooLargeError(maxSizeMb = 100) {
   return {
     title: "File Is Too Large",
-    message: `This file is larger than ${maxSizeMb} MB, which is the maximum size we can handle. Please contact the sender and ask them to send a smaller version of the document.`,
-    action: "Go Back",
+    message: `This PDF is larger than ${maxSizeMb} MB, which is the maximum size we can handle. Please ask the sender to compress the document or split it into smaller files.`,
+    action: "Choose Different File",
     icon: "file"
   };
 }

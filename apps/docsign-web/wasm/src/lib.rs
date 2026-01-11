@@ -635,3 +635,60 @@ pub fn parse_tsa_response(response_bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
 pub fn validate_timestamp_token(token_bytes: &[u8]) -> Result<(), JsValue> {
     tsa::validate_timestamp_token(token_bytes).map_err(|e| JsValue::from_str(&e))
 }
+
+// ============================================================
+// Validation Functions (Bug #1 - UX for Size Limits)
+// ============================================================
+
+use docsign_core::validation;
+
+/// Validate PDF file size before loading.
+/// Returns null if valid, or an error message string if invalid.
+///
+/// Call this BEFORE loading the PDF into memory to prevent OOM
+/// and provide clear feedback to users.
+#[wasm_bindgen]
+pub fn validate_pdf_size(size_bytes: u64) -> Result<(), JsValue> {
+    validation::validate_pdf_size(size_bytes).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Get maximum allowed PDF size in bytes (for display in UI)
+#[wasm_bindgen]
+pub fn get_max_pdf_size_bytes() -> u64 {
+    validation::MAX_PDF_SIZE_BYTES
+}
+
+/// Get maximum allowed PDF size in MB (for display in UI)
+#[wasm_bindgen]
+pub fn get_max_pdf_size_mb() -> u32 {
+    (validation::MAX_PDF_SIZE_BYTES / (1024 * 1024)) as u32
+}
+
+/// Validate recipient count before adding to ceremony.
+/// Returns null if valid, or an error message string if invalid.
+#[wasm_bindgen]
+pub fn validate_recipient_count(count: usize) -> Result<(), JsValue> {
+    validation::validate_recipient_count(count).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Get maximum allowed recipients (for display in UI)
+#[wasm_bindgen]
+pub fn get_max_recipients() -> usize {
+    validation::MAX_RECIPIENTS
+}
+
+/// Validate that a field is within page bounds.
+/// Returns null if valid, or an error message string if invalid.
+#[wasm_bindgen]
+pub fn validate_field_bounds(
+    field_id: &str,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    page_width: f64,
+    page_height: f64,
+) -> Result<(), JsValue> {
+    validation::validate_field_bounds(field_id, x, y, width, height, page_width, page_height)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}

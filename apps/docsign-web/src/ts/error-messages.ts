@@ -263,12 +263,41 @@ export function getOfflineError(): UserError {
 
 /**
  * Get a friendly error for file too large
+ * Default is 100MB (MAX_PDF_SIZE_BYTES from docsign-core)
  */
-export function getFileTooLargeError(maxSizeMb: number = 25): UserError {
+export function getFileTooLargeError(maxSizeMb: number = 100): UserError {
   return {
     title: "File Is Too Large",
-    message: `This file is larger than ${maxSizeMb} MB, which is the maximum size we can handle. Please contact the sender and ask them to send a smaller version of the document.`,
-    action: "Go Back",
+    message: `This PDF is larger than ${maxSizeMb} MB, which is the maximum size we can handle. Please ask the sender to compress the document or split it into smaller files.`,
+    action: "Choose Different File",
+    icon: "file",
+  };
+}
+
+/**
+ * Get a friendly error for too many recipients
+ */
+export function getTooManyRecipientsError(maxRecipients: number = 10): UserError {
+  return {
+    title: "Too Many Recipients",
+    message: `You can add up to ${maxRecipients} people to sign a document. Please remove some recipients or create separate signing requests for additional signers.`,
+    action: "Edit Recipients",
+    icon: "user",
+  };
+}
+
+/**
+ * Get a friendly error for field extending past page boundary
+ */
+export function getFieldOutOfBoundsError(direction: string): UserError {
+  const directionText = direction === "right" || direction === "left"
+    ? "side"
+    : direction === "top" ? "top" : "bottom";
+
+  return {
+    title: "Field Outside Page",
+    message: `This field extends past the ${directionText} of the page. Please move it or make it smaller so it fits entirely on the page.`,
+    action: "Adjust Field",
     icon: "file",
   };
 }

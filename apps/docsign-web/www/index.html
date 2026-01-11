@@ -18,6 +18,7 @@
     <link data-trunk rel="copy-file" href="auth.html" />
     <link data-trunk rel="copy-file" href="verify.html" />
     <link data-trunk rel="copy-file" href="reset-password.html" />
+    <link data-trunk rel="copy-file" href="admin.html" />
     <!-- Trunk: Copy CSS and TypeScript bundle (required by sign.html) -->
     <link data-trunk rel="copy-file" href="geriatric.css" />
     <link data-trunk rel="copy-dir" href="js" />
@@ -1574,9 +1575,9 @@
                 <span aria-hidden="true">🔒</span>
             </span>
             <!-- User info (shown when authenticated) -->
+            <!-- Bug #4: Removed docs-remaining display - will be replaced with feedback system -->
             <div id="user-info" class="hidden" style="display: none; align-items: center; gap: 0.75rem; margin-left: 1rem; padding: 0.25rem 0.75rem; background: rgba(255,255,255,0.1); border-radius: 6px;">
                 <span id="user-email" style="color: rgba(255,255,255,0.9); font-size: 0.875rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
-                <span id="docs-remaining" style="color: rgba(255,255,255,0.7); font-size: 0.75rem;">(0 docs left today)</span>
                 <button id="btn-logout" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white;">
                     Logout
                 </button>
@@ -1608,6 +1609,11 @@
             <button id="btn-settings" class="btn btn-secondary" style="padding: 0.5rem 0.75rem;" title="Settings" aria-label="Open settings" onclick="openSettingsModal()">
                 <span aria-hidden="true">⚙️</span>
                 <span class="sr-only">Settings</span>
+            </button>
+            <!-- Bug #4: Feedback Button -->
+            <button id="btn-feedback" class="btn btn-secondary" style="padding: 0.5rem 0.75rem;" title="Send Feedback" aria-label="Send feedback" onclick="openFeedbackModal()">
+                <span aria-hidden="true">💬</span>
+                <span class="sr-only">Feedback</span>
             </button>
         </div>
     </header>
@@ -2093,6 +2099,32 @@
                 <button class="modal-close" onclick="closeSettingsModal()" aria-label="Close dialog">&times;</button>
             </div>
             <div class="modal-body">
+                <!-- Plan & Usage Section (Bug #6.3) -->
+                <div id="plan-section" class="settings-section">
+                    <h4>Plan & Usage</h4>
+                    <div id="plan-info" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span id="plan-tier-badge" style="background: #e6f0ff; color: #0056b3; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.875rem; font-weight: 600;">Free</span>
+                                <span id="plan-billing-cycle" style="font-size: 0.75rem; color: #6b7280;"></span>
+                            </div>
+                            <a href="/pricing.html" style="font-size: 0.875rem; color: #0056b3; text-decoration: none;">Manage Plan</a>
+                        </div>
+                        <div style="margin-bottom: 0.5rem;">
+                            <div style="display: flex; justify-content: space-between; font-size: 0.875rem; margin-bottom: 0.25rem;">
+                                <span>Documents this month</span>
+                                <span id="plan-usage-text" style="font-weight: 600;">0 / 3</span>
+                            </div>
+                            <div style="background: #e5e7eb; border-radius: 4px; height: 8px; overflow: hidden;">
+                                <div id="plan-usage-bar" style="background: #0056b3; height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                            </div>
+                        </div>
+                        <div id="plan-overage-info" style="display: none; font-size: 0.75rem; color: #b45309; margin-top: 0.5rem;">
+                            <span id="plan-overage-text"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Profile Section -->
                 <div id="profile-section" class="settings-section">
                     <h4>Profile</h4>
@@ -2157,6 +2189,96 @@
         </div>
     </div>
 
+    <!-- Limit Reached Modal (Bug #6.3 - Soft Block) -->
+    <div id="limit-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="limit-title">
+        <div class="modal" style="max-width: 480px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #b45309 0%, #d97706 100%); color: white; border-radius: 12px 12px 0 0;">
+                <h3 id="limit-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.5rem;">📊</span>
+                    Monthly Limit Reached
+                </h3>
+                <button class="modal-close" onclick="closeLimitModal()" aria-label="Close dialog" style="color: white;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div style="text-align: center; margin-bottom: 1.5rem;">
+                    <div style="font-size: 3rem; margin-bottom: 0.5rem;">📄</div>
+                    <p id="limit-message" style="font-size: 1rem; color: #334155; line-height: 1.6;">
+                        You've used all 3 documents available on your Free plan this month.
+                    </p>
+                </div>
+
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+                    <h4 style="font-size: 0.875rem; font-weight: 600; color: #475569; margin-bottom: 0.75rem;">
+                        What you can still do:
+                    </h4>
+                    <ul style="margin: 0; padding-left: 1.25rem; color: #64748b; font-size: 0.875rem; line-height: 1.8;">
+                        <li>View your existing documents</li>
+                        <li>Download signed PDFs</li>
+                        <li>Check document status</li>
+                        <li>View your sending history</li>
+                    </ul>
+                </div>
+
+                <p id="limit-reset-info" style="font-size: 0.875rem; color: #6b7280; text-align: center; margin-bottom: 1rem;">
+                    Your limit resets on the 1st of next month.
+                </p>
+
+                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <a href="/pricing.html" class="btn btn-primary" style="text-align: center; text-decoration: none; padding: 0.875rem; font-size: 1rem;">
+                        Upgrade Your Plan
+                    </a>
+                    <button class="btn btn-secondary" onclick="closeLimitModal()" style="padding: 0.875rem; font-size: 1rem;">
+                        Continue Viewing
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bug #4: Feedback Modal -->
+    <div id="feedback-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); color: white; border-radius: 12px 12px 0 0;">
+                <h3 id="feedback-title" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.5rem;">💬</span>
+                    Send Feedback
+                </h3>
+                <button class="modal-close" onclick="closeFeedbackModal()" aria-label="Close dialog" style="color: white;">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="feedback-type" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">What type of feedback?</label>
+                    <select id="feedback-type" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px;">
+                        <option value="bug">Bug Report</option>
+                        <option value="feature">Feature Request</option>
+                        <option value="more_documents">Request More Documents</option>
+                        <option value="feedback">General Feedback</option>
+                    </select>
+                </div>
+
+                <div id="docs-request-section" class="form-group hidden" style="margin-bottom: 1rem;">
+                    <label for="additional-docs" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">How many additional documents do you need?</label>
+                    <input type="number" id="additional-docs" min="1" max="100" value="10" style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px;">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label for="feedback-description" style="display: block; font-weight: 600; margin-bottom: 0.5rem;">Description</label>
+                    <textarea id="feedback-description" rows="5" placeholder="Please describe your feedback, bug, or feature request..." style="width: 100%; padding: 0.75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: 16px; resize: vertical;"></textarea>
+                    <p style="font-size: 12px; color: #6b7280; margin-top: 0.25rem;">Max 2000 characters</p>
+                </div>
+
+                <div id="feedback-status" class="hidden" style="padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;"></div>
+
+                <div style="display: flex; gap: 0.75rem; justify-content: flex-end;">
+                    <button class="btn btn-secondary" onclick="closeFeedbackModal()">Cancel</button>
+                    <button id="btn-submit-feedback" class="btn btn-primary" onclick="submitFeedback()" style="background: #059669;">
+                        Submit Feedback
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Consent Modal for Remote Signers -->
     <div id="consent-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="consent-title">
         <div class="modal" style="max-width: 500px;">
@@ -2198,6 +2320,11 @@
                         I have read and understand this consent form. I agree to sign this document electronically.
                     </span>
                 </label>
+
+                <!-- Privacy Notice Link (Bug #5) -->
+                <p style="font-size: 0.75rem; color: #6b7280; margin-top: 1rem; text-align: center;">
+                    By signing, you agree to our <a href="/legal.html#esign" target="_blank" style="color: #1e40af; text-decoration: underline;">E-Sign Disclosure</a> and <a href="/legal.html#privacy" target="_blank" style="color: #1e40af; text-decoration: underline;">Privacy Policy</a>.
+                </p>
             </div>
             <div class="modal-footer" style="display: flex; gap: 0.75rem; justify-content: flex-end; padding: 1rem 1.5rem; background: #f8fafc; border-radius: 0 0 12px 12px;">
                 <button class="btn btn-secondary" onclick="declineConsent()" style="min-width: 100px;">
@@ -2501,13 +2628,12 @@
                         if (user) {
                             const userInfoEl = document.getElementById('user-info');
                             const userGreetingEl = document.getElementById('user-email');
-                            const docsRemainingEl = document.getElementById('docs-remaining');
 
-                            if (userInfoEl && userGreetingEl && docsRemainingEl) {
+                            // Bug #4: Removed docs-remaining display
+                            if (userInfoEl && userGreetingEl) {
                                 // Use first_name directly for friendly greeting
                                 const firstName = user.first_name || 'there';
                                 userGreetingEl.textContent = `Welcome back, ${firstName}`;
-                                docsRemainingEl.textContent = `(${user.weekly_documents_remaining ?? user.daily_documents_remaining} doc${(user.weekly_documents_remaining ?? user.daily_documents_remaining) !== 1 ? 's' : ''} left this week)`;
                                 userInfoEl.classList.remove('hidden');
                                 userInfoEl.style.display = 'flex';
                             }
@@ -2889,8 +3015,29 @@
         }
 
         // File Upload
+        // Constants for validation (Bug #1 - matches docsign-core/validation.rs)
+        const MAX_PDF_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
+        const MAX_PDF_SIZE_MB = 100;
+
         async function loadPDF(file) {
             try {
+                // Bug #1: Validate file size BEFORE loading into memory
+                if (file.size > MAX_PDF_SIZE_BYTES) {
+                    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                    if (window.DocSign && window.DocSign.showErrorModal) {
+                        window.DocSign.showErrorModal({
+                            title: 'File Is Too Large',
+                            message: `This PDF is ${sizeMB}MB, but the maximum allowed size is ${MAX_PDF_SIZE_MB}MB. Please compress the document or split it into smaller files.`,
+                            action: 'Choose Different File',
+                            icon: 'file',
+                            onAction: () => elements.fileInput.click()
+                        });
+                    } else {
+                        alert(`PDF is too large (${sizeMB}MB). Maximum size is ${MAX_PDF_SIZE_MB}MB.`);
+                    }
+                    return;
+                }
+
                 elements.loadingOverlay.classList.remove('hidden');
 
                 const arrayBuffer = await file.arrayBuffer();
@@ -3061,7 +3208,25 @@
         }
 
         // Recipients - Manual Add
+        // Bug #1: Maximum recipient limit (matches docsign-core/validation.rs)
+        const MAX_RECIPIENTS = 10;
+
         function addRecipient() {
+            // Bug #1: Check recipient limit BEFORE adding
+            if (state.recipients.length >= MAX_RECIPIENTS) {
+                if (window.DocSign && window.DocSign.showErrorModal) {
+                    window.DocSign.showErrorModal({
+                        title: 'Too Many Recipients',
+                        message: `You can add up to ${MAX_RECIPIENTS} people to sign a document. Please remove some recipients or create separate signing requests for additional signers.`,
+                        action: 'OK',
+                        icon: 'user'
+                    });
+                } else {
+                    alert(`Maximum ${MAX_RECIPIENTS} recipients allowed.`);
+                }
+                return;
+            }
+
             const firstName = elements.recipientFirstName.value.trim();
             const lastName = elements.recipientLastName.value.trim();
             const email = elements.recipientEmail.value.trim();
@@ -3869,6 +4034,44 @@
             // Determine if field should be required (default: true for signature, user choice for others)
             const isRequired = type === 'signature' ? true : elements.fieldRequired.checked;
 
+            const width = type === 'checkbox' ? 24 : (type === 'signature' ? 150 : 100);
+            const height = type === 'checkbox' ? 24 : (type === 'signature' ? 50 : 30);
+
+            // Bug #1: Check field bounds before placing
+            const pageWrapper = elements.pdfPagesWrapper.querySelector(`[data-page="${page}"]`);
+            if (pageWrapper) {
+                const pageWidth = pageWrapper.offsetWidth;
+                const pageHeight = pageWrapper.offsetHeight;
+
+                // Adjust position if field would extend past page edges
+                let adjustedX = x;
+                let adjustedY = y;
+                let wasAdjusted = false;
+
+                if (x + width > pageWidth) {
+                    adjustedX = Math.max(0, pageWidth - width);
+                    wasAdjusted = true;
+                }
+                if (y + height > pageHeight) {
+                    adjustedY = Math.max(0, pageHeight - height);
+                    wasAdjusted = true;
+                }
+                if (x < 0) {
+                    adjustedX = 0;
+                    wasAdjusted = true;
+                }
+                if (y < 0) {
+                    adjustedY = 0;
+                    wasAdjusted = true;
+                }
+
+                if (wasAdjusted) {
+                    showToast('Field adjusted to fit within page bounds');
+                    x = adjustedX;
+                    y = adjustedY;
+                }
+            }
+
             const field = {
                 id: Date.now(),
                 type,
@@ -3876,8 +4079,8 @@
                 page,
                 x,
                 y,
-                width: type === 'checkbox' ? 24 : (type === 'signature' ? 150 : 100),
-                height: type === 'checkbox' ? 24 : (type === 'signature' ? 50 : 30),
+                width,
+                height,
                 value: '', // For text, date, initials fields
                 checked: false, // For checkbox fields
                 required: isRequired // Required vs optional
@@ -4635,6 +4838,8 @@
                 document.getElementById('profile-first-name').value = user.first_name || '';
                 document.getElementById('profile-middle-initial').value = user.middle_initial || '';
                 document.getElementById('profile-last-name').value = user.last_name || '';
+                // Update plan & usage display (Bug #6.3)
+                updatePlanUsage(user);
             }
             // Hide any previous status
             const statusEl = document.getElementById('profile-status');
@@ -4645,6 +4850,227 @@
         function closeSettingsModal() {
             document.getElementById('settings-modal').classList.add('hidden');
         }
+
+        // Plan & Usage functions (Bug #6.3)
+        function updatePlanUsage(user) {
+            if (!user) return;
+
+            // Map tier to display info
+            const tierColors = {
+                'Free': { bg: '#e6f0ff', text: '#0056b3' },
+                'Personal': { bg: '#ecfdf5', text: '#059669' },
+                'Professional': { bg: '#fef3c7', text: '#d97706' },
+                'Business': { bg: '#f3e8ff', text: '#7c3aed' },
+                'Pro': { bg: '#ecfdf5', text: '#059669' }  // Legacy
+            };
+
+            const tierLimits = {
+                'Free': 3,
+                'Personal': 25,
+                'Professional': 100,
+                'Business': 300,
+                'Pro': 25  // Legacy
+            };
+
+            const tierName = user.tier || 'Free';
+            const limit = tierLimits[tierName] || 3;
+            const used = user.monthly_document_count || 0;
+            const percentage = Math.min(100, Math.round((used / limit) * 100));
+            const colors = tierColors[tierName] || tierColors['Free'];
+
+            // Update badge
+            const badge = document.getElementById('plan-tier-badge');
+            if (badge) {
+                badge.textContent = tierName;
+                badge.style.background = colors.bg;
+                badge.style.color = colors.text;
+            }
+
+            // Update billing cycle
+            const cycleEl = document.getElementById('plan-billing-cycle');
+            if (cycleEl) {
+                const cycle = user.billing_cycle;
+                cycleEl.textContent = (cycle && cycle !== 'Monthly') ? `(${cycle})` : '';
+            }
+
+            // Update usage text
+            const usageText = document.getElementById('plan-usage-text');
+            if (usageText) {
+                usageText.textContent = `${used} / ${limit}`;
+            }
+
+            // Update usage bar
+            const usageBar = document.getElementById('plan-usage-bar');
+            if (usageBar) {
+                usageBar.style.width = `${percentage}%`;
+                // Change color when at limit
+                if (percentage >= 100) {
+                    usageBar.style.background = '#dc2626';
+                } else if (percentage >= 80) {
+                    usageBar.style.background = '#d97706';
+                } else {
+                    usageBar.style.background = '#0056b3';
+                }
+            }
+
+            // Update overage info (for paid tiers only)
+            const overageInfo = document.getElementById('plan-overage-info');
+            const overageText = document.getElementById('plan-overage-text');
+            if (overageInfo && overageText) {
+                const overage = user.overage_count || 0;
+                if (overage > 0 && tierName !== 'Free') {
+                    overageInfo.style.display = 'block';
+                    overageText.textContent = `${overage} overage document${overage !== 1 ? 's' : ''} ($${(overage * 0.5).toFixed(2)})`;
+                } else {
+                    overageInfo.style.display = 'none';
+                }
+            }
+        }
+
+        function showLimitModal(user) {
+            const modal = document.getElementById('limit-modal');
+            if (!modal) return;
+
+            const tierName = user?.tier || 'Free';
+            const limit = { 'Free': 3, 'Personal': 25, 'Professional': 100, 'Business': 300, 'Pro': 25 }[tierName] || 3;
+
+            // Update message with tier-specific info
+            const messageEl = document.getElementById('limit-message');
+            if (messageEl) {
+                messageEl.textContent = `You've used all ${limit} documents available on your ${tierName} plan this month.`;
+            }
+
+            // Calculate reset date (1st of next month)
+            const resetEl = document.getElementById('limit-reset-info');
+            if (resetEl) {
+                const now = new Date();
+                const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                const monthName = nextMonth.toLocaleString('default', { month: 'long' });
+                resetEl.textContent = `Your limit resets on ${monthName} 1st.`;
+            }
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeLimitModal() {
+            const modal = document.getElementById('limit-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        }
+        window.closeLimitModal = closeLimitModal;
+
+        // Bug #4: Feedback modal functions
+        function openFeedbackModal() {
+            const modal = document.getElementById('feedback-modal');
+            if (modal) {
+                // Reset form
+                document.getElementById('feedback-type').value = 'bug';
+                document.getElementById('feedback-description').value = '';
+                document.getElementById('docs-request-section').classList.add('hidden');
+                document.getElementById('feedback-status').classList.add('hidden');
+                document.getElementById('btn-submit-feedback').disabled = false;
+                document.getElementById('btn-submit-feedback').textContent = 'Submit Feedback';
+                modal.classList.remove('hidden');
+            }
+        }
+        window.openFeedbackModal = openFeedbackModal;
+
+        function closeFeedbackModal() {
+            const modal = document.getElementById('feedback-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        }
+        window.closeFeedbackModal = closeFeedbackModal;
+
+        // Show/hide docs request section based on type
+        document.addEventListener('DOMContentLoaded', function() {
+            const feedbackType = document.getElementById('feedback-type');
+            if (feedbackType) {
+                feedbackType.addEventListener('change', function() {
+                    const docsSection = document.getElementById('docs-request-section');
+                    if (this.value === 'more_documents') {
+                        docsSection.classList.remove('hidden');
+                    } else {
+                        docsSection.classList.add('hidden');
+                    }
+                });
+            }
+        });
+
+        async function submitFeedback() {
+            const btn = document.getElementById('btn-submit-feedback');
+            const statusEl = document.getElementById('feedback-status');
+            const typeEl = document.getElementById('feedback-type');
+            const descEl = document.getElementById('feedback-description');
+            const docsEl = document.getElementById('additional-docs');
+
+            const requestType = typeEl.value;
+            const description = descEl.value.trim();
+            const additionalDocs = requestType === 'more_documents' ? parseInt(docsEl.value) : null;
+
+            if (!description) {
+                statusEl.textContent = 'Please provide a description.';
+                statusEl.style.background = '#fef2f2';
+                statusEl.style.color = '#dc2626';
+                statusEl.classList.remove('hidden');
+                return;
+            }
+
+            if (description.length > 2000) {
+                statusEl.textContent = 'Description too long (max 2000 characters).';
+                statusEl.style.background = '#fef2f2';
+                statusEl.style.color = '#dc2626';
+                statusEl.classList.remove('hidden');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Submitting...';
+            statusEl.classList.add('hidden');
+
+            try {
+                const response = await window.DocSign.authenticatedFetch('https://api.getsignatures.org/requests/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        request_type: requestType,
+                        description: description,
+                        additional_documents: additionalDocs
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    statusEl.textContent = result.message || 'Thank you for your feedback!';
+                    statusEl.style.background = '#ecfdf5';
+                    statusEl.style.color = '#059669';
+                    statusEl.classList.remove('hidden');
+                    // Close modal after 2 seconds
+                    setTimeout(() => {
+                        closeFeedbackModal();
+                    }, 2000);
+                } else {
+                    statusEl.textContent = result.message || 'Failed to submit feedback. Please try again.';
+                    statusEl.style.background = '#fef2f2';
+                    statusEl.style.color = '#dc2626';
+                    statusEl.classList.remove('hidden');
+                    btn.disabled = false;
+                    btn.textContent = 'Submit Feedback';
+                }
+            } catch (error) {
+                console.error('Failed to submit feedback:', error);
+                statusEl.textContent = 'Failed to submit feedback. Please try again.';
+                statusEl.style.background = '#fef2f2';
+                statusEl.style.color = '#dc2626';
+                statusEl.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = 'Submit Feedback';
+            }
+        }
+        window.submitFeedback = submitFeedback;
 
         // Save profile changes
         async function saveProfile() {
@@ -5334,6 +5760,19 @@
                     body: JSON.stringify(sessionRequest)
                 });
 
+                // Handle 429 (rate limit / monthly limit exceeded)
+                if (response.status === 429) {
+                    const errorData = await response.json().catch(() => ({}));
+                    if (errorData.error_code === 'MONTHLY_LIMIT_EXCEEDED') {
+                        // Show the soft-block limit modal (Bug #6.3)
+                        const user = window.DocSign?.getCurrentUser?.() || { tier: errorData.tier || 'Free' };
+                        showLimitModal(user);
+                        closeSigningLinksModal();
+                        return;
+                    }
+                    throw new Error(errorData.message || 'Rate limit exceeded. Please try again later.');
+                }
+
                 if (!response.ok) {
                     throw new Error(`Server error: ${response.status}`);
                 }
@@ -5934,5 +6373,12 @@
         // Expose state for E2E testing
         window.state = state;
     </script>
+
+    <!-- Footer with Legal Links (Bug #5) -->
+    <footer style="text-align: center; padding: 1rem 1.5rem; color: #6b7280; font-size: 13px; border-top: 1px solid #e5e7eb; background: #f9fafb;">
+        <a href="/legal.html" target="_blank" style="color: #6b7280; text-decoration: none; margin-right: 1rem;">Terms</a>
+        <a href="/legal.html#privacy" target="_blank" style="color: #6b7280; text-decoration: none; margin-right: 1rem;">Privacy</a>
+        <a href="/pricing.html" target="_blank" style="color: #6b7280; text-decoration: none;">Pricing</a>
+    </footer>
 </body>
 </html>

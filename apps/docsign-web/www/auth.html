@@ -421,8 +421,12 @@
     </style>
 </head>
 <body>
-    <header class="header">
+    <header class="header" style="display: flex; justify-content: space-between; align-items: center;">
         <h1>Get Signatures</h1>
+        <nav style="display: flex; gap: 1.5rem;">
+            <a href="/" style="color: white; text-decoration: none; opacity: 0.9;">Home</a>
+            <a href="/pricing.html" style="color: white; text-decoration: none; opacity: 0.9;">Pricing</a>
+        </nav>
     </header>
 
     <main class="container">
@@ -592,6 +596,17 @@
                             </div>
                         </div>
                         <p class="form-error" id="confirmError">Passwords do not match</p>
+                    </div>
+
+                    <!-- Terms of Service Checkbox (Bug #5) -->
+                    <div class="form-group" style="margin-top: 0.5rem;">
+                        <label style="display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer; font-size: 16px; line-height: 1.5;">
+                            <input type="checkbox" id="tosCheckbox" required style="width: 20px; height: 20px; margin-top: 2px; flex-shrink: 0;">
+                            <span>
+                                I agree to the <a href="/legal.html" target="_blank" style="color: var(--accent-primary); text-decoration: underline;">Terms of Service</a> and <a href="/legal.html#privacy" target="_blank" style="color: var(--accent-primary); text-decoration: underline;">Privacy Policy</a>
+                            </span>
+                        </label>
+                        <p class="form-error" id="tosError" style="display: none;">You must agree to the Terms of Service</p>
                     </div>
 
                     <button type="submit" class="btn btn-primary" id="registerBtn">
@@ -974,6 +989,17 @@
                 document.getElementById('registerConfirm').classList.remove('error');
             }
 
+            // Validate TOS checkbox (Bug #5)
+            const tosCheckbox = document.getElementById('tosCheckbox');
+            const tosError = document.getElementById('tosError');
+            if (!tosCheckbox.checked) {
+                tosError.style.display = 'block';
+                showAlert('Please agree to the Terms of Service to continue.', 'error');
+                return;
+            } else {
+                tosError.style.display = 'none';
+            }
+
             // Validate password strength
             const passwordError = window.DocSign.validatePassword(password);
             if (passwordError) {
@@ -1171,5 +1197,12 @@
         // Initialize
         checkAuth();
     </script>
+
+    <!-- Footer with Legal Link (Bug #5) -->
+    <footer style="text-align: center; padding: 1.5rem; margin-top: auto; color: var(--text-muted); font-size: 14px; border-top: 1px solid var(--border-primary);">
+        <a href="/legal.html" style="color: var(--text-muted); text-decoration: none; margin-right: 1.5rem;">Terms of Service</a>
+        <a href="/legal.html#privacy" style="color: var(--text-muted); text-decoration: none; margin-right: 1.5rem;">Privacy Policy</a>
+        <a href="/pricing.html" style="color: var(--text-muted); text-decoration: none;">Pricing</a>
+    </footer>
 </body>
 </html>
