@@ -19,11 +19,15 @@
     <link data-trunk rel="copy-file" href="verify.html" />
     <link data-trunk rel="copy-file" href="reset-password.html" />
     <link data-trunk rel="copy-file" href="admin.html" />
+    <link data-trunk rel="copy-file" href="pricing.html" />
+    <link data-trunk rel="copy-file" href="legal.html" />
     <!-- Trunk: Copy CSS and TypeScript bundle (required by sign.html) -->
     <link data-trunk rel="copy-file" href="geriatric.css" />
     <link data-trunk rel="copy-dir" href="js" />
     <!-- PDF.js from CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- pdf-lib for embedding signature images into PDFs -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
     <script src="ltv-timestamp.js" defer></script>
     <!-- TypeScript bundle for auth and other features -->
     <script type="module" src="js/bundle.js"></script>
@@ -1505,6 +1509,96 @@
                 filter: none;
             }
         }
+
+        /* Bug #11: Floating Jump Navigation Buttons */
+        .scroll-nav-buttons {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            z-index: 100;
+            pointer-events: none; /* Container doesn't block clicks */
+        }
+        .scroll-nav-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--surface, white);
+            border: 1px solid var(--border, #e5e7eb);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            cursor: pointer;
+            font-size: 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.2s, transform 0.2s, background 0.2s;
+            pointer-events: auto; /* Buttons are clickable */
+        }
+        .scroll-nav-btn:hover {
+            transform: scale(1.1);
+            background: var(--surface-hover, #f3f4f6);
+        }
+        .scroll-nav-btn:focus {
+            outline: 2px solid var(--accent, #3b82f6);
+            outline-offset: 2px;
+        }
+        .scroll-nav-btn.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.8);
+        }
+        .scroll-nav-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Bug #12: Editable Page Number Input */
+        .page-indicator-wrapper {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            min-width: 70px;
+            text-align: center;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        .page-input-trigger {
+            background: none;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 2px 6px;
+            cursor: pointer;
+            font: inherit;
+            color: inherit;
+            transition: background 0.2s, border-color 0.2s;
+        }
+        .page-input-trigger:hover {
+            background: var(--surface-hover, rgba(255,255,255,0.1));
+            border-color: var(--border, #e5e7eb);
+        }
+        .page-input-trigger:focus {
+            outline: 2px solid var(--accent, #3b82f6);
+            outline-offset: 2px;
+        }
+        .page-input {
+            width: 50px;
+            padding: 2px 4px;
+            font: inherit;
+            font-size: 0.875rem;
+            text-align: center;
+            border: 1px solid var(--accent, #3b82f6);
+            border-radius: 4px;
+            background: var(--surface, white);
+            color: var(--text-primary);
+        }
+        .page-input:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+        }
+        .page-input.hidden, .page-input-trigger.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -1916,7 +2010,7 @@
                                 <option value="720">30 days</option>
                             </select>
                         </div>
-                        <div id="expiration-info" class="hidden" style="margin-top: 0.5rem; padding: 0.5rem; background: #fef3c7; border-radius: 6px; font-size: 0.75rem;">
+                        <div id="expiration-info" class="hidden" style="margin-top: 0.5rem; padding: 0.5rem; background: #fef3c7; border-radius: 6px; font-size: 0.75rem; color: #92400e;">
                             <strong>Deadline:</strong> <span id="expiration-deadline">-</span>
                         </div>
                     </div>
@@ -2023,38 +2117,38 @@
         </div>
     </div>
 
-    <!-- Signing Links Modal -->
+    <!-- Signing Links Modal (Bug #15: Links hidden from sender - only delivered via email) -->
     <div id="signing-links-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="signing-links-title">
-        <div class="modal" style="max-width: 600px;">
+        <div class="modal" style="max-width: 500px;">
             <div class="modal-header">
-                <h3 id="signing-links-title">Signing Links Generated</h3>
+                <h3 id="signing-links-title">Ready to Send</h3>
                 <button class="modal-close" onclick="closeSigningLinksModal()" aria-label="Close dialog">&times;</button>
             </div>
             <div class="modal-body">
                 <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 1rem;">
-                    Share these unique links with each signer. Each link is encrypted and can only be used by the intended recipient.
+                    Secure signing links will be sent to the following recipients via email:
                 </p>
                 <div id="signing-links-rate-limit" class="hidden" style="padding: 1rem; background: #fef3c7; border-radius: 8px; color: #92400e; margin-bottom: 1rem; font-size: 0.875rem;">
                     <!-- Rate limit warning -->
                 </div>
-                <div id="signing-links-list" style="display: flex; flex-direction: column; gap: 1rem;">
-                    <!-- Populated dynamically -->
+                <div id="signing-links-list" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <!-- Populated dynamically - shows recipients, NOT links -->
                 </div>
                 <div id="signing-links-error" class="hidden" style="padding: 1.25rem; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 12px; color: #78350f; margin-top: 1rem; font-size: 0.95rem; line-height: 1.5;">
                     <!-- Error message - friendly amber styling instead of scary red -->
                 </div>
                 <div style="margin-top: 1.5rem; padding: 1rem; background: #f0fdf4; border-radius: 8px;">
                     <p style="font-size: 0.75rem; color: #166534; margin: 0;">
-                        <strong>Note:</strong> Links expire based on your deadline setting.
-                        The document is encrypted end-to-end - only recipients with the link can access it.
+                        <strong>Security Note:</strong> Each recipient receives a unique encrypted link.
+                        Links expire based on your deadline setting and can only be accessed by the intended recipient.
                     </p>
                 </div>
             </div>
             <div class="modal-footer">
                 <button id="btn-send-emails" class="btn btn-primary" onclick="sendSigningEmails()">
-                    Send Emails
+                    Send Signing Requests
                 </button>
-                <button class="btn btn-secondary" onclick="closeSigningLinksModal()">Close</button>
+                <button class="btn btn-secondary" onclick="closeSigningLinksModal()">Cancel</button>
             </div>
         </div>
     </div>
@@ -2336,6 +2430,97 @@
             </div>
         </div>
     </div>
+
+    <!-- Signature Capture Modal -->
+    <div id="signature-capture-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sig-modal-title">
+        <div class="modal" style="max-width: 500px; width: 95%;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); color: white; border-radius: 12px 12px 0 0; padding: 1rem 1.5rem;">
+                <h3 id="sig-modal-title" style="display: flex; align-items: center; gap: 0.5rem; margin: 0; font-size: 1.25rem;">
+                    <span style="font-size: 1.5rem;">✍️</span>
+                    Add Your Signature
+                </h3>
+                <button onclick="closeSignatureModal()" style="background: none; border: none; color: white; cursor: pointer; font-size: 1.5rem; padding: 0; line-height: 1;" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <!-- Tabs -->
+                <div style="display: flex; border-bottom: 1px solid #e5e7eb;" role="tablist">
+                    <button id="sig-tab-type" class="active" onclick="switchSignatureTab('type')" role="tab" aria-selected="true"
+                        style="flex: 1; padding: 1rem; background: white; border: none; font-size: 1rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; color: #6b7280; transition: all 0.2s;">
+                        Type
+                    </button>
+                    <button id="sig-tab-draw" onclick="switchSignatureTab('draw')" role="tab" aria-selected="false"
+                        style="flex: 1; padding: 1rem; background: white; border: none; font-size: 1rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; color: #6b7280; transition: all 0.2s;">
+                        Draw
+                    </button>
+                </div>
+
+                <!-- Type Panel -->
+                <div id="sig-type-panel" role="tabpanel" style="padding: 1.5rem;">
+                    <div style="margin-bottom: 1rem;">
+                        <label for="sig-typed-name" style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">
+                            Your Name
+                        </label>
+                        <input type="text" id="sig-typed-name" oninput="updateTypedSignaturePreview()" placeholder="Enter your name"
+                            style="width: 100%; padding: 0.75rem; font-size: 1rem; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box;">
+                    </div>
+                    <div style="margin-bottom: 1rem;">
+                        <label for="sig-font-select" style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.5rem;">
+                            Font Style
+                        </label>
+                        <select id="sig-font-select" onchange="updateTypedSignaturePreview()"
+                            style="width: 100%; padding: 0.75rem; font-size: 1rem; border: 1px solid #d1d5db; border-radius: 8px; background: white;">
+                            <option value="Dancing Script">Dancing Script</option>
+                            <option value="Great Vibes">Great Vibes</option>
+                            <option value="Allura">Allura</option>
+                            <option value="Pacifico">Pacifico</option>
+                            <option value="Sacramento">Sacramento</option>
+                        </select>
+                    </div>
+                    <div style="background: #f9fafb; border: 2px dashed #d1d5db; border-radius: 8px; padding: 1.5rem; text-align: center; min-height: 80px; display: flex; align-items: center; justify-content: center;">
+                        <div id="sig-typed-preview" style="font-size: 36px; font-family: 'Dancing Script', cursive; color: #000; word-break: break-word;"></div>
+                    </div>
+                </div>
+
+                <!-- Draw Panel -->
+                <div id="sig-draw-panel" class="hidden" role="tabpanel" style="padding: 1.5rem;">
+                    <p style="font-size: 0.875rem; color: #6b7280; margin: 0 0 1rem 0; text-align: center;">
+                        Use your mouse or finger to draw your signature
+                    </p>
+                    <div style="background: #f9fafb; border: 2px dashed #d1d5db; border-radius: 8px; overflow: hidden; position: relative;">
+                        <canvas id="sig-draw-canvas" style="width: 100%; height: 150px; display: block; cursor: crosshair; touch-action: none;"></canvas>
+                        <div style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); font-size: 0.75rem; color: #9ca3af; pointer-events: none;">
+                            Sign above this line
+                        </div>
+                    </div>
+                    <button onclick="clearSignaturePad()" style="margin-top: 0.75rem; padding: 0.5rem 1rem; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; font-size: 0.875rem; color: #374151;">
+                        Clear
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 0.75rem; justify-content: flex-end; padding: 1rem 1.5rem; background: #f8fafc; border-radius: 0 0 12px 12px; border-top: 1px solid #e5e7eb;">
+                <button class="btn btn-secondary" onclick="closeSignatureModal()" style="min-width: 100px; padding: 0.75rem 1.5rem;">
+                    Cancel
+                </button>
+                <button class="btn btn-primary" onclick="applySignature()" style="min-width: 140px; padding: 0.75rem 1.5rem; background: #1e40af;">
+                    Apply Signature
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Google Fonts for cursive signatures -->
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Great+Vibes&family=Allura&family=Pacifico&family=Sacramento&display=swap" rel="stylesheet">
+
+    <style>
+        /* Signature modal tab styles */
+        #sig-tab-type.active, #sig-tab-draw.active {
+            color: #1e40af !important;
+            border-bottom-color: #1e40af !important;
+        }
+        #sig-tab-type:hover, #sig-tab-draw:hover {
+            background: #f9fafb;
+        }
+    </style>
 
     </div><!-- End app-container -->
 
@@ -2733,6 +2918,12 @@
             setTimeout(() => toast.remove(), 3000);
         }
 
+        // Audit trail stub - logs to console for now
+        // TODO: Implement proper audit trail storage if needed
+        function addAuditEntry(message) {
+            console.log('[Audit]', new Date().toISOString(), message);
+        }
+
         // Paul Graham style: direct, useful, no fluff
         function getPdfErrorMessage(technicalError) {
             const errorStr = String(technicalError || '').toLowerCase();
@@ -2754,8 +2945,23 @@
         }
 
         // Paul Graham style error for network/server issues
+        // Bug #0: Enhanced error handling with specific error codes
         function getServerErrorMessage(technicalError) {
             const errorStr = String(technicalError || '').toLowerCase();
+
+            // Check for specific error codes first (from enhanced API responses)
+            if (errorStr.includes('body_parse_error')) {
+                return `Invalid request format. Try refreshing the page and starting over. If this keeps happening, email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('auth_error')) {
+                return `Authentication failed. Log out, log back in, and try again.`;
+            }
+            if (errorStr.includes('serialization_error') || errorStr.includes('kv_write_error') || errorStr.includes('kv_builder_error')) {
+                return `Failed to save your session. This is a server issue - please try again in a minute. If it persists, email bobamatchasolutions at gmail dot com.`;
+            }
+            if (errorStr.includes('email_not_verified')) {
+                return `Please verify your email address before creating signing sessions. Check your inbox for the verification email.`;
+            }
 
             // Paul Graham style: direct, useful, no fluff
             if (errorStr.includes('network') || errorStr.includes('fetch') || errorStr.includes('failed to fetch')) {
@@ -2836,6 +3042,7 @@
                 renderAllPages();
                 setFieldType('pointer'); // Start in pointer mode
             } else if (step === 4) {
+                setFieldType('pointer'); // Bug #17 fix: Reset to pointer mode on Review step
                 renderReview();
             }
         }
@@ -3464,7 +3671,7 @@
             zoom: 1.0, // 100%
             currentPage: 1,
             minZoom: 0.25,
-            maxZoom: 3.0
+            maxZoom: 4.0  // Bug #13: Extended from 300% to 400%
         };
 
         async function renderPreview() {
@@ -3504,6 +3711,23 @@
             }
 
             updatePreviewUI();
+
+            // Bug #11: Add floating scroll navigation buttons
+            setupScrollNavButtons(container, 'preview');
+
+            // Bug #12: Setup editable page input
+            const pageIndicator = document.getElementById('preview-page-indicator');
+            if (pageIndicator && !pageIndicator.dataset.editableSetup) {
+                setupEditablePageInput(
+                    pageIndicator,
+                    previewState,
+                    scrollToPreviewPage,
+                    () => state.totalPages
+                );
+            }
+
+            // Bug #13: Add Ctrl+scroll zoom for desktop
+            setupCtrlScrollZoom(container, previewState, renderPreview);
         }
 
         function updatePreviewUI() {
@@ -3516,7 +3740,20 @@
                 zoomLevel.textContent = Math.round(previewState.zoom * 100) + '%';
             }
             if (pageIndicator) {
-                pageIndicator.textContent = `${previewState.currentPage} / ${state.totalPages || 1}`;
+                // Check if editable page input is setup (Bug #12)
+                if (pageIndicator._updateDisplay) {
+                    pageIndicator._updateDisplay(previewState.currentPage, state.totalPages || 1);
+                } else {
+                    // Fallback for when editable hasn't been setup yet
+                    const currentSpan = pageIndicator.querySelector('.current-page');
+                    const totalSpan = pageIndicator.querySelector('.total-pages');
+                    if (currentSpan && totalSpan) {
+                        currentSpan.textContent = previewState.currentPage;
+                        totalSpan.textContent = state.totalPages || 1;
+                    } else {
+                        pageIndicator.textContent = `${previewState.currentPage} / ${state.totalPages || 1}`;
+                    }
+                }
             }
             if (prevBtn) {
                 prevBtn.disabled = previewState.currentPage <= 1;
@@ -3622,7 +3859,7 @@
         const fieldsZoomState = {
             zoom: 1.0,
             minZoom: 0.5,
-            maxZoom: 3.0
+            maxZoom: 4.0  // Bug #13: Extended from 300% to 400%
         };
 
         function setupFieldsZoomControls() {
@@ -3748,7 +3985,7 @@
             zoom: 1.0,
             currentPage: 1,
             minZoom: 0.25,
-            maxZoom: 3.0
+            maxZoom: 4.0  // Bug #13: Extended from 300% to 400%
         };
 
         function setupReviewControls() {
@@ -3803,7 +4040,20 @@
                 zoomLevel.textContent = Math.round(reviewState.zoom * 100) + '%';
             }
             if (pageIndicator) {
-                pageIndicator.textContent = `${reviewState.currentPage} / ${state.totalPages || 1}`;
+                // Check if editable page input is setup (Bug #12)
+                if (pageIndicator._updateDisplay) {
+                    pageIndicator._updateDisplay(reviewState.currentPage, state.totalPages || 1);
+                } else {
+                    // Fallback for when editable hasn't been setup yet
+                    const currentSpan = pageIndicator.querySelector('.current-page');
+                    const totalSpan = pageIndicator.querySelector('.total-pages');
+                    if (currentSpan && totalSpan) {
+                        currentSpan.textContent = reviewState.currentPage;
+                        totalSpan.textContent = state.totalPages || 1;
+                    } else {
+                        pageIndicator.textContent = `${reviewState.currentPage} / ${state.totalPages || 1}`;
+                    }
+                }
             }
             if (prevBtn) {
                 prevBtn.disabled = reviewState.currentPage <= 1;
@@ -3852,6 +4102,209 @@
             mutationObserver.observe(container, { childList: true, subtree: true });
         }
 
+        // ============================================================
+        // Bug #11: Floating Jump Navigation Buttons
+        // ============================================================
+
+        /**
+         * Add floating jump-to-top/bottom buttons to a scrollable container
+         * @param {HTMLElement} container - The scrollable container
+         * @param {string} containerId - Unique ID for this container's buttons
+         */
+        function setupScrollNavButtons(container, containerId) {
+            if (!container) return;
+
+            // Check if buttons already exist
+            if (container.querySelector('.scroll-nav-buttons')) return;
+
+            // Create button group
+            const buttonGroup = document.createElement('div');
+            buttonGroup.className = 'scroll-nav-buttons';
+            buttonGroup.id = `scroll-nav-${containerId}`;
+            buttonGroup.innerHTML = `
+                <button class="scroll-nav-btn hidden" id="jump-top-${containerId}"
+                        aria-label="Jump to top of document" title="Jump to top">
+                    <span aria-hidden="true">↑</span>
+                </button>
+                <button class="scroll-nav-btn" id="jump-bottom-${containerId}"
+                        aria-label="Jump to bottom of document" title="Jump to bottom">
+                    <span aria-hidden="true">↓</span>
+                </button>
+            `;
+
+            // Ensure container has position relative for absolute positioning
+            const containerStyle = getComputedStyle(container);
+            if (containerStyle.position === 'static') {
+                container.style.position = 'relative';
+            }
+
+            container.appendChild(buttonGroup);
+
+            const topBtn = buttonGroup.querySelector(`#jump-top-${containerId}`);
+            const bottomBtn = buttonGroup.querySelector(`#jump-bottom-${containerId}`);
+
+            // Update button visibility based on scroll position
+            const updateButtonVisibility = () => {
+                const scrollTop = container.scrollTop;
+                const scrollHeight = container.scrollHeight;
+                const clientHeight = container.clientHeight;
+                const scrollBottom = scrollHeight - scrollTop - clientHeight;
+
+                // Show "top" button when scrolled past first screen (100px threshold)
+                topBtn.classList.toggle('hidden', scrollTop < 100);
+
+                // Show "bottom" button when not at the end (100px threshold)
+                bottomBtn.classList.toggle('hidden', scrollBottom < 100);
+            };
+
+            // Scroll handlers
+            topBtn.onclick = () => {
+                container.scrollTo({ top: 0, behavior: 'smooth' });
+            };
+
+            bottomBtn.onclick = () => {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+            };
+
+            // Listen for scroll events
+            container.addEventListener('scroll', updateButtonVisibility, { passive: true });
+
+            // Initial visibility check
+            updateButtonVisibility();
+
+            // Re-check after content loads (images, etc.)
+            setTimeout(updateButtonVisibility, 500);
+        }
+
+        // ============================================================
+        // Bug #12: Editable Page Number Input
+        // ============================================================
+
+        /**
+         * Make page indicator clickable to jump to a specific page
+         * @param {HTMLElement} indicatorWrapper - The wrapper containing the page indicator
+         * @param {object} stateObj - State object with currentPage property
+         * @param {function} scrollFn - Function to scroll to a page number
+         * @param {function} getTotalPages - Function to get total page count
+         */
+        function setupEditablePageInput(indicatorWrapper, stateObj, scrollFn, getTotalPages) {
+            if (!indicatorWrapper) return;
+
+            // Check if already setup
+            if (indicatorWrapper.dataset.editableSetup) return;
+            indicatorWrapper.dataset.editableSetup = 'true';
+
+            // Get the existing span and convert to editable structure
+            const existingText = indicatorWrapper.textContent.trim();
+            const [current, total] = existingText.split('/').map(s => s.trim());
+
+            indicatorWrapper.innerHTML = `
+                <button class="page-input-trigger" aria-label="Click to jump to a specific page" title="Click to jump to page">
+                    <span class="current-page">${current || '1'}</span> / <span class="total-pages">${total || '1'}</span>
+                </button>
+                <input type="number" class="page-input hidden" min="1" aria-label="Enter page number to jump to">
+            `;
+            indicatorWrapper.classList.add('page-indicator-wrapper');
+
+            const trigger = indicatorWrapper.querySelector('.page-input-trigger');
+            const input = indicatorWrapper.querySelector('.page-input');
+            const currentSpan = indicatorWrapper.querySelector('.current-page');
+            const totalSpan = indicatorWrapper.querySelector('.total-pages');
+
+            // Store references for external updates
+            indicatorWrapper._updateDisplay = (currentPage, totalPages) => {
+                currentSpan.textContent = currentPage;
+                totalSpan.textContent = totalPages;
+            };
+
+            trigger.onclick = (e) => {
+                e.preventDefault();
+                const totalPages = getTotalPages();
+                input.max = totalPages;
+                input.value = stateObj.currentPage || 1;
+                trigger.classList.add('hidden');
+                input.classList.remove('hidden');
+                input.focus();
+                input.select();
+            };
+
+            const commit = () => {
+                const totalPages = getTotalPages();
+                const value = parseInt(input.value) || 1;
+                // Clamp to valid range
+                const clamped = Math.max(1, Math.min(totalPages, value));
+
+                // Update state and scroll
+                stateObj.currentPage = clamped;
+                scrollFn(clamped);
+
+                // Update display
+                currentSpan.textContent = clamped;
+
+                trigger.classList.remove('hidden');
+                input.classList.add('hidden');
+            };
+
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commit();
+                }
+                if (e.key === 'Escape') {
+                    trigger.classList.remove('hidden');
+                    input.classList.add('hidden');
+                }
+            };
+
+            input.onblur = () => {
+                // Small delay to allow click events to process first
+                setTimeout(() => {
+                    if (!input.classList.contains('hidden')) {
+                        commit();
+                    }
+                }, 100);
+            };
+        }
+
+        // ============================================================
+        // Bug #13: Ctrl+Scroll Zoom for Desktop
+        // ============================================================
+
+        /**
+         * Add Ctrl+scroll zoom to a container
+         * @param {HTMLElement} container - The scrollable container
+         * @param {object} zoomState - State object with zoom, minZoom, maxZoom properties
+         * @param {function} onZoom - Callback to re-render after zoom change
+         */
+        function setupCtrlScrollZoom(container, zoomState, onZoom) {
+            if (!container || container.dataset.ctrlScrollSetup) return;
+            container.dataset.ctrlScrollSetup = 'true';
+
+            container.addEventListener('wheel', (e) => {
+                // Only handle Ctrl+scroll (or Cmd+scroll on Mac)
+                if (!e.ctrlKey && !e.metaKey) return;
+
+                e.preventDefault();
+
+                const delta = e.deltaY;
+                const zoomStep = 0.1; // 10% per scroll step
+
+                if (delta < 0) {
+                    // Scroll up = zoom in
+                    if (zoomState.zoom < zoomState.maxZoom) {
+                        zoomState.zoom = Math.min(zoomState.maxZoom, zoomState.zoom + zoomStep);
+                        onZoom();
+                    }
+                } else if (delta > 0) {
+                    // Scroll down = zoom out
+                    if (zoomState.zoom > zoomState.minZoom) {
+                        zoomState.zoom = Math.max(zoomState.minZoom, zoomState.zoom - zoomStep);
+                        onZoom();
+                    }
+                }
+            }, { passive: false });
+        }
+
         // Initialize scroll tracking on DOM ready
         document.addEventListener('DOMContentLoaded', () => {
             setupPreviewScrollTracking();
@@ -3860,6 +4313,9 @@
             setupPinchToZoom();
             setupReviewControls();
             setupReviewScrollTracking();
+
+            // Bug #11: Add floating navigation buttons to all preview containers
+            // Will be called after containers are populated
         });
 
         // PDF Editor (Step 3) - Render ALL pages for scrolling
@@ -3910,6 +4366,12 @@
 
             renderPlacedFields();
             updatePageNav();
+
+            // Bug #11: Add floating scroll navigation buttons to the canvas container
+            setupScrollNavButtons(elements.pdfCanvasContainer, 'fields');
+
+            // Bug #13: Add Ctrl+scroll zoom for desktop
+            setupCtrlScrollZoom(elements.pdfCanvasContainer, fieldsZoomState, renderAllPages);
         }
 
         function updatePageNav() {
@@ -4288,8 +4750,8 @@
                 elements.btnSend.classList.add('hidden');
                 elements.btnDownload.classList.remove('hidden');
             } else {
-                const currentSigner = signers[state.signingStatus.currentSignerIndex];
-                elements.btnSend.innerHTML = `Sign as ${currentSigner.name}`;
+                // Bug fix: Button should just say "Sign", not "Sign as X"
+                elements.btnSend.innerHTML = 'Sign';
                 elements.btnSend.classList.remove('hidden');
                 elements.btnDownload.classList.add('hidden');
             }
@@ -4325,11 +4787,16 @@
                     const timeLeft = daysLeft > 0 ? `${daysLeft} days` : `${hoursLeft} hours`;
                     expirationDeadline.textContent = `${expiresAt.toLocaleString()} (${timeLeft} remaining)`;
 
-                    // Change color if expiring soon
+                    // Change color if expiring soon (with proper text contrast)
                     if (hoursLeft < 24) {
                         expirationInfo.style.background = '#fee2e2'; // Red background
+                        expirationInfo.style.color = '#991b1b'; // Dark red text for contrast
                     } else if (hoursLeft < 72) {
                         expirationInfo.style.background = '#fef3c7'; // Yellow background
+                        expirationInfo.style.color = '#92400e'; // Dark amber text for contrast
+                    } else {
+                        expirationInfo.style.background = '#fef3c7'; // Yellow background (default)
+                        expirationInfo.style.color = '#92400e'; // Dark amber text for contrast
                     }
                 }
             } else {
@@ -4417,7 +4884,7 @@
                             <span class="summary-label" style="display:flex;align-items:center;gap:0.5rem;">
                                 <span style="width:10px;height:10px;background:${r.color};border-radius:50%;"></span>
                                 <span style="font-weight: 500;">${r.name}</span>
-                                ${fieldCount > 0 ? `<span style="background:#e5e7eb;padding:0.125rem 0.5rem;border-radius:10px;font-size:0.75rem;">${fieldCount} field${fieldCount !== 1 ? 's' : ''}</span>` : ''}
+                                ${fieldCount > 0 ? `<span style="background:#e5e7eb;color:#374151;padding:0.125rem 0.5rem;border-radius:10px;font-size:0.75rem;">${fieldCount} field${fieldCount !== 1 ? 's' : ''}</span>` : ''}
                             </span>
                             <span class="summary-value" style="display:flex;align-items:center;gap:0.5rem;">
                                 ${statusBadge || (r.role === 'signer' ? 'Signer' : 'CC')}
@@ -4480,6 +4947,46 @@
 
                     fieldOverlay.className = 'review-field-overlay';
                     fieldOverlay.dataset.fieldId = field.id;
+                    fieldOverlay.dataset.fieldType = field.type;
+                    fieldOverlay.dataset.recipientId = field.recipientId;
+
+                    // Bug fix: All fields should be editable for remote signers (not just signature)
+                    const signers = state.recipients.filter(r => r.role === 'signer');
+                    const currentSigner = signers[state.signingStatus.currentSignerIndex];
+                    const isCurrentSignerField = currentSigner && field.recipientId === currentSigner.id;
+                    const isAlreadySigned = state.signingStatus.completedSigners.includes(field.recipientId);
+                    const isSignatureField = field.type === 'signature';
+                    const isEditableField = field.type === 'text' || field.type === 'date' || field.type === 'initials' || field.type === 'checkbox';
+
+                    // Signature fields are clickable if unsigned
+                    // Other editable fields are always clickable for current signer
+                    const isSignatureClickable = state.remoteSession.isRemoteSigner && isSignatureField && isCurrentSignerField && !isAlreadySigned && !field.signatureData;
+                    const isOtherFieldClickable = state.remoteSession.isRemoteSigner && isEditableField && isCurrentSignerField;
+                    const isClickable = isSignatureClickable || isOtherFieldClickable;
+
+                    // Determine display content based on field type and value
+                    let displayContent;
+                    const icon = getFieldIcon(field.type);
+                    const recipientName = recipient ? recipient.name.split(' ')[0] : 'Signer';
+
+                    if (field.signatureData) {
+                        // Show signature image if signed
+                        displayContent = `<img src="${field.signatureData}" style="max-width: 90%; max-height: 90%; object-fit: contain;" alt="Signature">`;
+                    } else if (field.value && (field.type === 'text' || field.type === 'date' || field.type === 'initials')) {
+                        // Show entered value
+                        displayContent = `<span style="font-size: ${Math.max(10, scaledHeight * 0.35)}px; color: #000;">${field.value}</span>`;
+                    } else if (field.type === 'checkbox') {
+                        displayContent = field.checked
+                            ? `<span style="font-size: ${Math.max(16, scaledHeight * 0.6)}px;">☑️</span>`
+                            : `<span style="font-size: ${Math.max(16, scaledHeight * 0.6)}px;">☐</span>`;
+                    } else {
+                        // Default: show icon and recipient name
+                        displayContent = `
+                            <span style="font-size: ${Math.max(12, scaledHeight * 0.4)}px;">${icon}</span>
+                            <span style="font-size: ${Math.max(8, scaledHeight * 0.25)}px; opacity: 0.8; margin-top: 2px;">${recipientName}</span>
+                        `;
+                    }
+
                     fieldOverlay.style.cssText = `
                         position: absolute;
                         left: ${scaledX}px;
@@ -4487,7 +4994,7 @@
                         width: ${scaledWidth}px;
                         height: ${scaledHeight}px;
                         border: 2px solid ${recipient?.color || '#1e40af'};
-                        background: ${recipient?.color || '#1e40af'}15;
+                        background: ${field.signatureData || field.value || field.checked ? 'white' : (recipient?.color || '#1e40af') + '15'};
                         border-radius: 4px;
                         display: flex;
                         flex-direction: column;
@@ -4496,25 +5003,60 @@
                         font-size: ${Math.max(9, scaledHeight * 0.3)}px;
                         color: ${recipient?.color || '#1e40af'};
                         font-weight: 500;
-                        pointer-events: none;
+                        pointer-events: ${isClickable ? 'auto' : 'none'};
+                        cursor: ${isClickable ? 'pointer' : 'default'};
                         box-sizing: border-box;
                         overflow: hidden;
+                        transition: transform 0.1s, box-shadow 0.1s;
                     `;
 
-                    // Field content
-                    const icon = getFieldIcon(field.type);
-                    const recipientName = recipient ? recipient.name.split(' ')[0] : 'Signer';
+                    fieldOverlay.innerHTML = displayContent;
 
-                    fieldOverlay.innerHTML = `
-                        <span style="font-size: ${Math.max(12, scaledHeight * 0.4)}px;">${icon}</span>
-                        <span style="font-size: ${Math.max(8, scaledHeight * 0.25)}px; opacity: 0.8; margin-top: 2px;">${recipientName}</span>
-                    `;
+                    // Add click handlers based on field type
+                    if (isSignatureClickable) {
+                        fieldOverlay.addEventListener('click', () => handleSignatureFieldClick(field));
+                    } else if (isOtherFieldClickable) {
+                        fieldOverlay.addEventListener('click', () => handleEditableFieldClick(field, fieldOverlay));
+                    }
+
+                    // Add hover effect for clickable fields
+                    if (isClickable) {
+                        fieldOverlay.addEventListener('mouseenter', () => {
+                            fieldOverlay.style.transform = 'scale(1.02)';
+                            fieldOverlay.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+                        });
+                        fieldOverlay.addEventListener('mouseleave', () => {
+                            fieldOverlay.style.transform = 'scale(1)';
+                            fieldOverlay.style.boxShadow = 'none';
+                        });
+                    }
 
                     pageContainer.appendChild(fieldOverlay);
                 });
 
                 elements.reviewPdfBody.appendChild(pageContainer);
             }
+
+            // Bug #10 fix: Reset to page 1 and update UI after render completes
+            reviewState.currentPage = 1;
+            updateReviewUI();
+
+            // Bug #11: Add floating scroll navigation buttons
+            setupScrollNavButtons(elements.reviewPdfBody, 'review');
+
+            // Bug #12: Setup editable page input
+            const reviewPageIndicator = document.getElementById('review-page-indicator');
+            if (reviewPageIndicator && !reviewPageIndicator.dataset.editableSetup) {
+                setupEditablePageInput(
+                    reviewPageIndicator,
+                    reviewState,
+                    scrollToReviewPage,
+                    () => state.totalPages
+                );
+            }
+
+            // Bug #13: Add Ctrl+scroll zoom for desktop
+            setupCtrlScrollZoom(elements.reviewPdfBody, reviewState, renderReview);
         }
 
         function getFieldIcon(type) {
@@ -4673,6 +5215,20 @@
                     return; // User declined
                 }
                 state.remoteSession.hasConsented = true;
+            }
+
+            // For REMOTE SIGNERS: Use signature modal instead of auto-signing
+            // This allows them to draw or type their actual signature
+            if (state.remoteSession.isRemoteSigner) {
+                // Find the first unsigned field for the current signer
+                const unsignedField = signatureFields.find(f => !f.signatureData);
+                if (unsignedField) {
+                    // Open signature modal for this field
+                    handleSignatureFieldClick(unsignedField);
+                } else {
+                    showToast('All signature fields have been signed!');
+                }
+                return;
             }
 
             try {
@@ -5152,17 +5708,523 @@
         }
 
         window.declineConsent = function() {
+            // CRITICAL: Save resolver BEFORE closeConsentModal() nullifies it
+            const resolver = consentResolve;
             closeConsentModal();
-            if (consentResolve) {
-                consentResolve(false);
+            if (resolver) {
+                resolver(false);
             }
             showToast('You declined to sign. Please contact the document sender if you have questions.');
         };
 
         window.acceptConsent = function() {
+            // CRITICAL: Save resolver BEFORE closeConsentModal() nullifies it
+            // Without this, the Promise never resolves and hasConsented is never set
+            const resolver = consentResolve;
             closeConsentModal();
-            if (consentResolve) {
-                consentResolve(true);
+            if (resolver) {
+                resolver(true);
+            }
+        };
+
+        // ============================================================
+        // Signature Modal for capturing drawn/typed signatures
+        // ============================================================
+
+        let signatureModalResolve = null;
+        let currentSignatureField = null;
+        let signaturePadInstance = null;
+        let typedSignatureInstance = null;
+
+        /**
+         * Handle click on a signature field in review mode
+         * Shows consent modal if needed, then signature capture modal
+         */
+        async function handleSignatureFieldClick(field) {
+            // Check if consent is needed first
+            if (state.remoteSession.isRemoteSigner && !state.remoteSession.hasConsented) {
+                const consented = await showConsentModal();
+                if (!consented) {
+                    return; // User declined
+                }
+                state.remoteSession.hasConsented = true;
+            }
+
+            // Show signature capture modal
+            currentSignatureField = field;
+            showSignatureModal(field);
+        }
+
+        /**
+         * Show the signature capture modal
+         */
+        function showSignatureModal(field) {
+            const modal = document.getElementById('signature-capture-modal');
+            if (!modal) {
+                console.error('Signature modal not found');
+                return;
+            }
+
+            // Get signer name for pre-filling typed signature
+            const signers = state.recipients.filter(r => r.role === 'signer');
+            const currentSigner = signers[state.signingStatus.currentSignerIndex];
+            const signerName = currentSigner?.name || '';
+
+            // Pre-fill typed name input
+            const typedNameInput = document.getElementById('sig-typed-name');
+            if (typedNameInput) {
+                typedNameInput.value = signerName;
+                updateTypedSignaturePreview();
+            }
+
+            // Initialize signature pad if needed
+            const canvas = document.getElementById('sig-draw-canvas');
+            if (canvas && !signaturePadInstance) {
+                initializeSignaturePad(canvas);
+            }
+
+            // Clear any previous signature
+            if (signaturePadInstance) {
+                signaturePadInstance.clear();
+            }
+
+            // Default to type mode (more accessible for elderly users)
+            switchSignatureTab('type');
+
+            // Show modal
+            modal.classList.remove('hidden');
+        }
+
+        /**
+         * Initialize the signature drawing pad
+         */
+        function initializeSignaturePad(canvas) {
+            const ctx = canvas.getContext('2d');
+
+            // Set canvas size based on container
+            const rect = canvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
+
+            // Drawing state
+            let isDrawing = false;
+            let lastX = 0;
+            let lastY = 0;
+            let hasDrawn = false;
+
+            // Style
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            function getPos(e) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+                const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
+                return { x, y };
+            }
+
+            function startDraw(e) {
+                e.preventDefault();
+                isDrawing = true;
+                const pos = getPos(e);
+                lastX = pos.x;
+                lastY = pos.y;
+            }
+
+            function draw(e) {
+                if (!isDrawing) return;
+                e.preventDefault();
+                const pos = getPos(e);
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+                lastX = pos.x;
+                lastY = pos.y;
+                hasDrawn = true;
+            }
+
+            function endDraw() {
+                isDrawing = false;
+            }
+
+            // Mouse events
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', endDraw);
+            canvas.addEventListener('mouseleave', endDraw);
+
+            // Touch events
+            canvas.addEventListener('touchstart', startDraw);
+            canvas.addEventListener('touchmove', draw);
+            canvas.addEventListener('touchend', endDraw);
+
+            signaturePadInstance = {
+                clear: () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    hasDrawn = false;
+                },
+                isEmpty: () => !hasDrawn,
+                toDataURL: () => canvas.toDataURL('image/png'),
+            };
+        }
+
+        /**
+         * Switch between draw and type tabs in signature modal
+         */
+        function switchSignatureTab(tab) {
+            const drawTab = document.getElementById('sig-tab-draw');
+            const typeTab = document.getElementById('sig-tab-type');
+            const drawPanel = document.getElementById('sig-draw-panel');
+            const typePanel = document.getElementById('sig-type-panel');
+
+            if (tab === 'draw') {
+                drawTab?.classList.add('active');
+                typeTab?.classList.remove('active');
+                drawPanel?.classList.remove('hidden');
+                typePanel?.classList.add('hidden');
+
+                // CRITICAL: Re-initialize canvas AFTER panel is visible
+                // getBoundingClientRect() returns 0x0 for hidden elements (per MDN)
+                // Must re-init each time to get correct dimensions
+                const canvas = document.getElementById('sig-draw-canvas');
+                if (canvas) {
+                    // Use requestAnimationFrame to ensure DOM has updated
+                    requestAnimationFrame(() => {
+                        initializeSignaturePad(canvas);
+                    });
+                }
+            } else {
+                typeTab?.classList.add('active');
+                drawTab?.classList.remove('active');
+                typePanel?.classList.remove('hidden');
+                drawPanel?.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Update the typed signature preview
+         */
+        function updateTypedSignaturePreview() {
+            const input = document.getElementById('sig-typed-name');
+            const preview = document.getElementById('sig-typed-preview');
+            const fontSelect = document.getElementById('sig-font-select');
+
+            if (!input || !preview) return;
+
+            const text = input.value || '';
+            const font = fontSelect?.value || 'Dancing Script';
+
+            preview.style.fontFamily = `'${font}', cursive`;
+            preview.textContent = text;
+        }
+
+        /**
+         * Close signature modal (cancel)
+         */
+        function closeSignatureModal() {
+            const modal = document.getElementById('signature-capture-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+            currentSignatureField = null;
+        }
+
+        /**
+         * Apply the signature from modal to the field
+         */
+        async function applySignature() {
+            if (!currentSignatureField) {
+                showToast('No signature field selected');
+                return;
+            }
+
+            // Determine which mode is active
+            const typePanel = document.getElementById('sig-type-panel');
+            const isTypeMode = typePanel && !typePanel.classList.contains('hidden');
+
+            let signatureDataUrl;
+
+            if (isTypeMode) {
+                // Generate typed signature image
+                const input = document.getElementById('sig-typed-name');
+                const fontSelect = document.getElementById('sig-font-select');
+                const text = input?.value?.trim() || '';
+
+                if (!text) {
+                    showToast('Please enter your name');
+                    return;
+                }
+
+                const font = fontSelect?.value || 'Dancing Script';
+                signatureDataUrl = generateTypedSignatureImage(text, font);
+            } else {
+                // Get drawn signature
+                if (!signaturePadInstance || signaturePadInstance.isEmpty()) {
+                    showToast('Please draw your signature');
+                    return;
+                }
+                signatureDataUrl = signaturePadInstance.toDataURL();
+            }
+
+            // CRITICAL: Save field reference BEFORE closeSignatureModal() clears it
+            const field = currentSignatureField;
+
+            // Close modal (this sets currentSignatureField = null)
+            closeSignatureModal();
+
+            // Apply signature to field using saved reference
+            await applySignatureToField(field, signatureDataUrl);
+        }
+
+        /**
+         * Handle click on editable fields (text, date, initials, checkbox)
+         */
+        async function handleEditableFieldClick(field, overlay) {
+            // Check if consent is needed first (same as signature fields)
+            if (state.remoteSession.isRemoteSigner && !state.remoteSession.hasConsented) {
+                const consented = await showConsentModal();
+                if (!consented) {
+                    return;
+                }
+                state.remoteSession.hasConsented = true;
+            }
+
+            if (field.type === 'checkbox') {
+                // Toggle checkbox
+                field.checked = !field.checked;
+                showToast(field.checked ? 'Checkbox checked' : 'Checkbox unchecked');
+                await renderReview(); // Re-render to show updated state
+                return;
+            }
+
+            if (field.type === 'date') {
+                // Auto-fill with current date
+                const today = new Date();
+                const dateStr = today.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                });
+
+                // Allow user to edit or accept default
+                const newValue = prompt('Enter date:', field.value || dateStr);
+                if (newValue !== null && newValue.trim()) {
+                    field.value = newValue.trim();
+                    showToast('Date entered');
+                    await renderReview();
+                }
+                return;
+            }
+
+            if (field.type === 'text') {
+                // Get signer name for default
+                const signers = state.recipients.filter(r => r.role === 'signer');
+                const currentSigner = signers[state.signingStatus.currentSignerIndex];
+                const defaultValue = field.value || currentSigner?.name || '';
+
+                const newValue = prompt('Enter text:', defaultValue);
+                if (newValue !== null && newValue.trim()) {
+                    field.value = newValue.trim();
+                    showToast('Text entered');
+                    await renderReview();
+                }
+                return;
+            }
+
+            if (field.type === 'initials') {
+                // Get initials from signer name
+                const signers = state.recipients.filter(r => r.role === 'signer');
+                const currentSigner = signers[state.signingStatus.currentSignerIndex];
+                const defaultInitials = currentSigner?.name
+                    ? currentSigner.name.split(' ').map(n => n[0]).join('').toUpperCase()
+                    : '';
+
+                const newValue = prompt('Enter initials:', field.value || defaultInitials);
+                if (newValue !== null && newValue.trim()) {
+                    field.value = newValue.trim().toUpperCase();
+                    showToast('Initials entered');
+                    await renderReview();
+                }
+                return;
+            }
+        }
+
+        /**
+         * Generate an image from typed text with cursive font
+         */
+        function generateTypedSignatureImage(text, fontFamily) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 400;
+            canvas.height = 100;
+            const ctx = canvas.getContext('2d');
+
+            // Clear
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw text
+            ctx.font = `48px '${fontFamily}', cursive`;
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            return canvas.toDataURL('image/png');
+        }
+
+        /**
+         * Embed signature image into PDF using pdf-lib.js
+         * This replaces the WASM sign_document() which only added text, not images
+         */
+        async function embedSignatureImage(pdfBytes, signatureDataUrl, pageNum, x, y, width, height) {
+            const { PDFDocument } = PDFLib;
+
+            // Load existing PDF
+            const pdfDoc = await PDFDocument.load(pdfBytes);
+
+            // Get the page (0-indexed in pdf-lib)
+            const page = pdfDoc.getPage(pageNum - 1);
+
+            // Embed the signature PNG (strip data URL prefix)
+            const pngData = signatureDataUrl.replace(/^data:image\/png;base64,/, '');
+            const pngBytes = Uint8Array.from(atob(pngData), c => c.charCodeAt(0));
+            const pngImage = await pdfDoc.embedPng(pngBytes);
+
+            // Draw signature at coordinates
+            // PDF coords have (0,0) at bottom-left, which domToPdfCoords already handles
+            page.drawImage(pngImage, {
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+            });
+
+            // Save modified PDF
+            return await pdfDoc.save();
+        }
+
+        /**
+         * Apply signature image to a field and embed it in the PDF
+         */
+        async function applySignatureToField(field, signatureDataUrl) {
+            try {
+                elements.loadingOverlay.classList.remove('hidden');
+                showToast('Applying signature...');
+
+                const signers = state.recipients.filter(r => r.role === 'signer');
+                const currentSigner = signers[state.signingStatus.currentSignerIndex];
+
+                // Convert DOM coords to PDF coords
+                function domToPdfCoords(field) {
+                    const pageDims = state.pageDimensions[field.page];
+                    if (!pageDims) return null;
+
+                    const pdfWidth = pageDims.width;
+                    const pdfHeight = pageDims.height;
+                    const canvasWidth = pageDims.canvasWidth || (pdfWidth * state.scale);
+                    const canvasHeight = pageDims.canvasHeight || (pdfHeight * state.scale);
+                    const scaleX = pdfWidth / canvasWidth;
+                    const scaleY = pdfHeight / canvasHeight;
+
+                    return {
+                        x: field.x * scaleX,
+                        y: pdfHeight - (field.y + field.height) * scaleY,
+                        width: field.width * scaleX,
+                        height: field.height * scaleY
+                    };
+                }
+
+                const coords = domToPdfCoords(field);
+                if (!coords) {
+                    throw new Error('Could not calculate field coordinates');
+                }
+
+                // Get current PDF bytes from WASM or state
+                let currentPdfBytes;
+                if (state.docSign) {
+                    const bytesResult = state.docSign.get_document_bytes();
+                    currentPdfBytes = new Uint8Array(bytesResult);
+                } else {
+                    currentPdfBytes = state.pdfBytes;
+                }
+
+                // Embed signature image using pdf-lib (replaces old WASM sign_document)
+                console.log('[Signing] Embedding signature at:', coords);
+                const newPdfBytes = await embedSignatureImage(
+                    currentPdfBytes,
+                    signatureDataUrl,
+                    field.page,
+                    coords.x,
+                    coords.y,
+                    coords.width,
+                    coords.height
+                );
+
+                // Update the document in WASM/state
+                if (state.docSign) {
+                    state.docSign.load_pdf(new Uint8Array(newPdfBytes));
+                }
+                state.pdfBytes = new Uint8Array(newPdfBytes);
+
+                // Mark field as signed (store signature data for visual update)
+                field.signatureData = signatureDataUrl;
+
+                // Check if all signature fields for current signer are done
+                const signerFields = state.placedFields.filter(
+                    f => f.type === 'signature' && f.recipientId === currentSigner.id
+                );
+                const allSigned = signerFields.every(f => f.signatureData);
+
+                if (allSigned) {
+                    // Mark current signer as completed
+                    state.signingStatus.completedSigners.push(currentSigner.id);
+                    state.signingStatus.currentSignerIndex++;
+
+                    // Check if all signers are done
+                    if (state.signingStatus.currentSignerIndex >= signers.length) {
+                        // All done
+                        elements.btnSend.classList.add('hidden');
+                        elements.btnDownload.classList.remove('hidden');
+
+                        if (state.remoteSession.isRemoteSigner) {
+                            await submitSignedDocument();
+                            showToast('All signatures complete! Document submitted.');
+                        } else {
+                            showToast('All signatures complete! Ready for download.');
+                        }
+                    } else {
+                        updateSigningButton();
+                        showToast(`${currentSigner.name} signature complete!`);
+                    }
+                } else {
+                    showToast('Signature applied! Click remaining fields to sign.');
+                }
+
+                // Refresh review to show signed state
+                updateAuditLog();
+                await renderReview();
+
+                elements.loadingOverlay.classList.add('hidden');
+
+            } catch (err) {
+                console.error('Signature application failed:', err);
+                elements.loadingOverlay.classList.add('hidden');
+                showToast('Failed to apply signature: ' + (err.message || err));
+            }
+        }
+
+        // Expose functions for onclick handlers
+        window.switchSignatureTab = switchSignatureTab;
+        window.closeSignatureModal = closeSignatureModal;
+        window.applySignature = applySignature;
+        window.updateTypedSignaturePreview = updateTypedSignaturePreview;
+        window.clearSignaturePad = function() {
+            if (signaturePadInstance) {
+                signaturePadInstance.clear();
             }
         };
 
@@ -5261,6 +6323,42 @@
             }
         }
 
+        /**
+         * SOTA base64 encoding for Uint8Array (Bug #14 fix)
+         * Uses native toBase64() if available (Sept 2025+), falls back to iterative loop.
+         * NEVER use btoa(String.fromCharCode(...array)) - causes stack overflow on large files!
+         */
+        function uint8ArrayToBase64(bytes) {
+            // Use native method if available (Sept 2025+)
+            if (typeof bytes.toBase64 === 'function') {
+                return bytes.toBase64();
+            }
+            // Fallback: iterative loop (safe for any size, no stack overflow)
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        /**
+         * SOTA base64 decoding to Uint8Array (Bug #14 fix)
+         * Uses native fromBase64() if available (Sept 2025+), falls back to iterative loop.
+         */
+        function base64ToUint8Array(base64) {
+            // Use native method if available (Sept 2025+)
+            if (typeof Uint8Array.fromBase64 === 'function') {
+                return Uint8Array.fromBase64(base64);
+            }
+            // Fallback: iterative decode
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes;
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -5273,7 +6371,7 @@
 
             try {
                 const pdfBytes = state.docSign.get_document_bytes();
-                const pdfBase64 = btoa(String.fromCharCode(...pdfBytes));
+                const pdfBase64 = uint8ArrayToBase64(new Uint8Array(pdfBytes));
                 const filename = state.fileName.replace('.pdf', '_signed.pdf');
 
                 let successCount = 0;
@@ -5694,28 +6792,27 @@
             const modalTitle = document.getElementById('signing-links-title');
 
             // Reset modal state
-            linksList.innerHTML = '<p style="text-align: center; color: #6b7280;">Generating links...</p>';
+            linksList.innerHTML = '<p style="text-align: center; color: #6b7280;">Preparing signing session...</p>';
             errorDiv.classList.add('hidden');
             if (rateLimitDiv) rateLimitDiv.classList.add('hidden');
             if (sendBtn) sendBtn.classList.remove('hidden');
-            if (modalTitle) modalTitle.textContent = 'Signing Links Generated';
+            if (modalTitle) modalTitle.textContent = 'Ready to Send';
             document.getElementById('signing-links-modal').classList.remove('hidden');
 
             try {
-                // Generate unique encryption key for the session
-                const key = await generateEncryptionKey();
-                const keyBase64 = await exportKeyToBase64(key);
-
-                // Encrypt document
-                const encryptedDoc = await encryptDocument(state.pdfBytes, key);
-                const encryptedDocBase64 = btoa(String.fromCharCode(...new Uint8Array(encryptedDoc)));
+                // TODO: Re-enable encryption once basic signing flow is verified working
+                // Bug #14 fix: Use SOTA base64 encoding (native toBase64 or iterative fallback)
+                // NEVER use btoa(String.fromCharCode(...)) - causes stack overflow on large PDFs!
+                // Use pdfBytesForWorker which is a copy made before PDF.js detaches the buffer
+                const pdfBytesToEncode = state.pdfBytesForWorker || state.pdfBytes;
+                const documentBase64 = uint8ArrayToBase64(pdfBytesToEncode);
 
                 // Get expiration hours from selector
                 const expiryHours = parseInt(document.getElementById('expiration-select')?.value || '168');
 
                 // Prepare session data for server
                 const sessionRequest = {
-                    encrypted_document: encryptedDocBase64,
+                    encrypted_document: documentBase64,  // Not actually encrypted - just base64
                     metadata: {
                         filename: state.fileName || 'document.pdf',
                         page_count: state.totalPages || 1,
@@ -5738,9 +6835,9 @@
                         const canvasH = pageDims.canvasHeight || (792 * state.scale);
 
                         return {
-                            id: f.id,
+                            id: String(f.id),
                             field_type: f.type,
-                            recipient_id: f.recipientId.toString(),
+                            recipient_id: String(f.recipientId),
                             page: f.page,
                             x_percent: f.xPercent || (f.x / canvasW) * 100,
                             y_percent: f.yPercent || (f.y / canvasH) * 100,
@@ -5773,51 +6870,57 @@
                     throw new Error(errorData.message || 'Rate limit exceeded. Please try again later.');
                 }
 
+                // Bug #0: Better error handling - parse JSON for error details
                 if (!response.ok) {
-                    throw new Error(`Server error: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorCode = errorData.error_code || '';
+                    const errorMsg = errorData.message || `Server error: ${response.status}`;
+                    console.error('Session creation failed:', { status: response.status, errorCode, errorMsg, debugInfo: errorData.debug_info });
+                    throw new Error(`[${errorCode}] ${errorMsg}`);
                 }
 
                 const sessionResult = await response.json();
                 if (!sessionResult.success) {
-                    throw new Error(sessionResult.message || 'Failed to create session');
+                    const errorCode = sessionResult.error_code || '';
+                    const errorMsg = sessionResult.message || 'Failed to create session';
+                    console.error('Session creation failed:', { errorCode, errorMsg });
+                    throw new Error(`[${errorCode}] ${errorMsg}`);
                 }
 
                 const sessionId = sessionResult.session_id;
 
-                // Generate signing links for each signer
+                // Generate signing links for each signer (no encryption key in URL)
                 const baseUrl = window.location.origin + window.location.pathname;
                 const links = signers.map(signer => ({
                     name: signer.name,
                     email: signer.email,
                     recipientId: signer.id,
-                    link: `${baseUrl}#sign=${sessionId}:${signer.id}:${keyBase64}`,
+                    link: `${baseUrl}#sign=${sessionId}:${signer.id}`,  // No key - not encrypted
                     sessionId
                 }));
 
                 // Store session info in state for email sending
                 state.currentSessionId = sessionId;
-                state.currentSessionKey = keyBase64;
                 state.signingLinks = links;
 
-                // Display the generated links
+                // Bug #15: Display recipients WITHOUT showing actual links (links only sent via email)
                 linksList.innerHTML = links.map((l, i) => `
-                    <div class="signing-link-item" style="padding: 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                            <div>
-                                <strong class="link-recipient-name">${escapeHtml(l.name)}</strong>
-                                <span style="color: #6b7280; font-size: 0.75rem;">(${escapeHtml(l.email)})</span>
+                    <div class="signing-link-item" style="padding: 0.75rem 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary); display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <div style="width: 32px; height: 32px; background: #dbeafe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                    <polyline points="22,6 12,13 2,6"></polyline>
+                                </svg>
                             </div>
-                            <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem;">
-                                Signer ${i + 1}
-                            </span>
+                            <div>
+                                <strong style="display: block; font-size: 0.875rem;">${escapeHtml(l.name || l.email.split('@')[0])}</strong>
+                                <span style="color: #6b7280; font-size: 0.75rem;">${escapeHtml(l.email)}</span>
+                            </div>
                         </div>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <input type="text" readonly value="${l.link}" class="link-url"
-                                   style="flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.75rem; background: white; color: var(--text-primary);">
-                            <button class="btn btn-secondary btn-sm btn-copy-link" onclick="copySigningLink(this, '${l.link}')" style="padding: 0.5rem 1rem; font-size: 0.75rem; white-space: nowrap;">
-                                Copy
-                            </button>
-                        </div>
+                        <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;">
+                            Signer ${i + 1}
+                        </span>
                     </div>
                 `).join('');
 
@@ -5838,7 +6941,7 @@
                 if (sendBtn) sendBtn.classList.add('hidden');
                 // Update modal title to indicate error
                 const modalTitle = document.getElementById('signing-links-title');
-                if (modalTitle) modalTitle.textContent = 'Unable to Generate Links';
+                if (modalTitle) modalTitle.textContent = 'Unable to Send';
             }
         }
 
@@ -6024,40 +7127,51 @@
                 // Encrypt the current PDF
                 const encryptedDoc = await encryptDocument(state.pdfBytes, key);
 
-                // Prepare session data
+                // Bug #0 fix: Helper to sanitize numeric values (NaN/undefined become 0)
+                const sanitizeNum = (val, defaultVal = 0) => {
+                    const num = Number(val);
+                    return (Number.isFinite(num) && !Number.isNaN(num)) ? num : defaultVal;
+                };
+
+                // Prepare session data with defensive fallbacks
                 const sessionData = {
                     encrypted_document: encryptedDoc,
                     metadata: {
-                        filename: state.filename,
-                        page_count: state.totalPages,
+                        filename: state.filename || 'document.pdf',
+                        page_count: sanitizeNum(state.totalPages, 1),
                         created_at: new Date().toISOString(),
                         created_by: 'Get Signatures'
                     },
                     recipients: state.recipients.map(r => ({
                         id: String(r.id),
-                        name: r.name,
+                        name: r.name || 'Unknown',
                         email: r.email,
-                        role: r.role,
+                        role: r.role || 'signer',
                         signed: false
                     })),
                     fields: state.placedFields.map(f => {
                         const pageDims = state.pageDimensions[f.page];
-                        const canvasWidth = pageDims?.canvasWidth || 800;
-                        const canvasHeight = pageDims?.canvasHeight || 1000;
+                        const canvasWidth = sanitizeNum(pageDims?.canvasWidth, 800);
+                        const canvasHeight = sanitizeNum(pageDims?.canvasHeight, 1000);
+                        // Ensure we have valid positions (avoid NaN/Infinity)
+                        const x = sanitizeNum(f.x, 0);
+                        const y = sanitizeNum(f.y, 0);
+                        const w = sanitizeNum(f.width, 100);
+                        const h = sanitizeNum(f.height, 50);
                         return {
                             id: String(f.id),
-                            field_type: f.type,
+                            field_type: f.type || 'signature',
                             recipient_id: String(f.recipientId),
-                            page: f.page,
-                            x_percent: (f.x / canvasWidth) * 100,
-                            y_percent: (f.y / canvasHeight) * 100,
-                            width_percent: (f.width / canvasWidth) * 100,
-                            height_percent: (f.height / canvasHeight) * 100,
+                            page: sanitizeNum(f.page, 1),
+                            x_percent: sanitizeNum((x / canvasWidth) * 100, 10),
+                            y_percent: sanitizeNum((y / canvasHeight) * 100, 10),
+                            width_percent: sanitizeNum((w / canvasWidth) * 100, 20),
+                            height_percent: sanitizeNum((h / canvasHeight) * 100, 5),
                             required: f.required || false,
                             value: f.value || null
                         };
                     }),
-                    expiry_hours: parseInt(document.getElementById('expiration-select')?.value || '168')
+                    expiry_hours: parseInt(document.getElementById('expiration-select')?.value || '168') || 168
                 };
 
                 // Create session on server (with authentication)
@@ -6092,10 +7206,19 @@
             }
         }
 
-        async function loadRemoteSession(sessionId, keyBase64, recipientId) {
+        // TODO: Re-enable encryption once basic signing flow is verified working
+        // See Bug #14 investigation - crypto was causing OperationError
+        async function loadRemoteSession(sessionId, recipientId, token = null) {
             try {
-                // Fetch session from server
-                const response = await fetch(`${SIGNING_SERVER_URL}/session/${sessionId}`);
+                // Build URL with token if available
+                let apiUrl = `${SIGNING_SERVER_URL}/session/${sessionId}`;
+                if (token) {
+                    apiUrl += `?token=${encodeURIComponent(token)}`;
+                }
+                console.log('[Signing] Fetching session from:', apiUrl);
+
+                // Fetch session from server (token in URL provides authentication)
+                const response = await fetch(apiUrl);
                 const result = await response.json();
 
                 if (!result.success || !result.session) {
@@ -6116,20 +7239,27 @@
                     state.remoteSession.expiresAt = result.session.expires_at;
                 }
 
-                // Import encryption key
-                const key = await importKeyFromBase64(keyBase64);
+                // Decode base64 document (no decryption - Bug #14 fix)
+                // The document is stored as plain base64, not encrypted
+                // Use SOTA base64ToUint8Array helper for proper decoding
+                const base64Doc = result.session.encrypted_document;
+                const originalBytes = base64ToUint8Array(base64Doc);
 
-                // Decrypt document
-                const pdfBytes = await decryptDocument(result.session.encrypted_document, key);
+                // CRITICAL: Create copies BEFORE any operation that might detach the buffer
+                // When Uint8Array is passed to WASM or PDF.js, the underlying ArrayBuffer
+                // gets transferred/detached, making the original unusable.
+                // See KNOWN_ISSUES.md ISSUE-023 for full explanation.
+                const bytesForPdfJs = originalBytes.slice();   // Copy for PDF.js rendering
+                const bytesForDocSign = originalBytes.slice(); // Copy for DocSign WASM signing
 
                 // Store session state
                 state.remoteSession.sessionId = sessionId;
-                state.remoteSession.encryptionKey = key;
+                state.remoteSession.encryptionKey = null;  // No encryption
                 state.remoteSession.isRemoteSigner = true;
                 state.remoteSession.recipientId = recipientId;
 
-                // Load the document
-                state.pdfBytes = pdfBytes;
+                // Load the document (use DocSign copy - won't be detached by PDF.js)
+                state.pdfBytes = bytesForDocSign;
                 state.filename = result.session.metadata.filename;
                 state.recipients = result.session.recipients.map(r => ({
                     id: parseInt(r.id),
@@ -6154,7 +7284,8 @@
                 }));
 
                 // Load PDF with PDF.js
-                const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+                // Use PDF.js copy (it will detach this buffer, but we don't need it anymore)
+                const loadingTask = pdfjsLib.getDocument({ data: bytesForPdfJs });
                 state.pdfDoc = await loadingTask.promise;
                 state.totalPages = state.pdfDoc.numPages;
 
@@ -6203,9 +7334,47 @@
 
                 showToast(`Ready to sign as ${currentRecipient.name}`);
 
+                // CRITICAL: Initialize DocSign WASM module for remote signers
+                // Without this, signatures cannot be applied to the PDF
+                if (!state.docSign) {
+                    console.log('[Signing] Initializing DocSign for remote signer...');
+                    state.docSign = new DocSign();
+                    const loadResult = state.docSign.load_pdf(state.pdfBytes);
+                    if (!loadResult) {
+                        throw new Error('Failed to load PDF into DocSign');
+                    }
+                    console.log('[Signing] DocSign initialized successfully');
+
+                    // Cache page dimensions from DocSign
+                    for (let i = 1; i <= state.totalPages; i++) {
+                        const dims = state.docSign.page_dimensions(i);
+                        if (dims && !state.pageDimensions[i]) {
+                            state.pageDimensions[i] = {
+                                width: dims.width,
+                                height: dims.height,
+                                canvasWidth: dims.width * state.scale,
+                                canvasHeight: dims.height * state.scale
+                            };
+                        }
+                    }
+                }
+
                 // Setup UI
                 elements.loadingOverlay.classList.add('hidden');
                 setupFieldPlacement();
+
+                // Bug #14 fix: Unhide app container for remote signing sessions
+                // The normal login flow unhides this at line ~2760, but remote signers
+                // bypass that flow entirely
+                const appContainer = document.getElementById('app-container');
+                if (appContainer) {
+                    appContainer.classList.remove('hidden');
+                }
+                // Also hide the landing page
+                const landingPage = document.getElementById('landing-page');
+                if (landingPage) {
+                    landingPage.classList.add('hidden');
+                }
 
                 // Go directly to review/sign step
                 goToStep(4);
@@ -6218,12 +7387,26 @@
 
         async function submitSignedDocument() {
             try {
-                if (!state.remoteSession.sessionId || !state.remoteSession.encryptionKey) {
+                if (!state.remoteSession.sessionId) {
                     throw new Error('No active signing session');
                 }
 
-                // Encrypt the signed PDF
-                const encryptedDoc = await encryptDocument(state.pdfBytes, state.remoteSession.encryptionKey);
+                // CRITICAL: Get the SIGNED PDF bytes from DocSign, not the original pdfBytes
+                // The original state.pdfBytes is unchanged - the signed version is in the WASM module
+                if (!state.docSign) {
+                    throw new Error('DocSign not initialized - cannot retrieve signed document');
+                }
+
+                const signedPdfBytes = state.docSign.get_document_bytes();
+                if (!signedPdfBytes || signedPdfBytes.length === 0) {
+                    throw new Error('Failed to get signed document bytes');
+                }
+
+                console.log('[Signing] Submitting signed document, size:', signedPdfBytes.length);
+
+                // Encode the signed PDF as base64 (no encryption - Bug #14 fix)
+                // Use SOTA uint8ArrayToBase64 helper to avoid stack overflow on large PDFs
+                const documentBase64 = uint8ArrayToBase64(new Uint8Array(signedPdfBytes));
 
                 // Submit to server
                 const response = await fetch(
@@ -6233,7 +7416,7 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             recipient_id: state.remoteSession.recipientId,
-                            encrypted_document: encryptedDoc
+                            encrypted_document: documentBase64  // Field name kept for API compatibility
                         })
                     }
                 );
@@ -6255,21 +7438,66 @@
         // Check for signing link on page load
         async function checkForSigningLink() {
             const hash = window.location.hash;
-            if (hash.startsWith('#sign=')) {
-                const params = new URLSearchParams(hash.slice(1));
-                const sessionId = params.get('sign');
-                const keyBase64 = params.get('key');
-                const recipientId = params.get('r');
+            const queryString = window.location.search;
 
-                if (sessionId && keyBase64 && recipientId) {
+            if (hash.startsWith('#sign=')) {
+                // Parse the signing link
+                // Format (no encryption - Bug #14 fix):
+                //   1. #sign=SESSION_ID:RECIPIENT_ID (no token)
+                //   2. #sign=SESSION_ID:RECIPIENT_ID?token=TOKEN (token in hash fragment)
+                //   3. ?token=TOKEN#sign=SESSION_ID:RECIPIENT_ID (token in query string, preferred)
+                // Legacy format with encryption key is also supported for backwards compatibility:
+                //   #sign=SESSION_ID:RECIPIENT_ID:KEY
+
+                let token = null;
+                let signData = hash.slice(6); // Remove '#sign='
+
+                // Check for token in query string first (preferred format)
+                if (queryString) {
+                    const queryParams = new URLSearchParams(queryString);
+                    token = queryParams.get('token');
+                }
+
+                // Check for token embedded in hash fragment (server appends ?token= to end of hash)
+                // Format: SESSION_ID:RECIPIENT_ID?token=TOKEN
+                if (!token && signData.includes('?token=')) {
+                    const [dataWithoutToken, tokenPart] = signData.split('?token=');
+                    signData = dataWithoutToken;
+                    token = tokenPart;
+                }
+
+                let sessionId, recipientId;
+                const parts = signData.split(':');
+
+                if (parts.length >= 2) {
+                    // Colon-separated format: SESSION_ID:RECIPIENT_ID (or SESSION_ID:RECIPIENT_ID:KEY for legacy)
+                    sessionId = parts[0];
+                    recipientId = parts[1];
+                    // parts[2] would be keyBase64 if present (legacy format), but we ignore it now
+                } else {
+                    // Fallback: Try query param format for backwards compatibility
+                    // Format: #sign=SESSION_ID&r=RECIPIENT_ID
+                    const params = new URLSearchParams(hash.slice(1));
+                    sessionId = params.get('sign');
+                    recipientId = params.get('r');
+                }
+
+                if (sessionId && recipientId) {
+                    console.log('[Signing] Loading session:', sessionId, 'for recipient:', recipientId, 'token:', token ? 'present' : 'missing');
+
                     // Clear hash to prevent reload issues
                     history.replaceState(null, '', window.location.pathname);
 
                     // Show loading
                     elements.loadingOverlay.classList.remove('hidden');
 
-                    // Load the remote session
-                    await loadRemoteSession(sessionId, keyBase64, recipientId);
+                    // Load the remote session (pass token for authentication)
+                    // No encryption key needed - documents are stored as plain base64
+                    await loadRemoteSession(sessionId, recipientId, token);
+                } else {
+                    console.error('[Signing] Invalid signing link - missing params:', { sessionId: !!sessionId, recipientId: !!recipientId });
+                    showToast('Invalid signing link. Please check the link and try again.');
+                    elements.loadingOverlay.classList.add('hidden');
                 }
             }
         }

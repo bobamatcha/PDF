@@ -4,6 +4,28 @@
 
 This file defines development practices for Claude Code when working in this repository.
 
+## Puppeteer Testing Standards
+
+**CRITICAL: If a user can't click it, it's broken.**
+
+When testing UI with Puppeteer MCP:
+- If `puppeteer_click` fails on an element, **that is a bug** - do not work around it with JavaScript
+- Never use `puppeteer_evaluate` to trigger events (click, change, submit) as a workaround
+- The standard is: **if a real user clicking wouldn't work, the test should fail**
+- JavaScript-triggered events that bypass broken click handlers are NOT valid fixes
+
+**Wrong approach:**
+```javascript
+// DON'T DO THIS - it hides the bug
+element.click();  // or dispatchEvent(new Event('change'))
+```
+
+**Right approach:**
+```
+// If puppeteer_click fails, the UI is broken and needs fixing
+// Fix the HTML/CSS so the element is actually clickable
+```
+
 ## DO NOT DEPLOY
 
 **CRITICAL: Claude must NEVER run deployment commands.**

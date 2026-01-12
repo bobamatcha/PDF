@@ -34,6 +34,32 @@ fn get_timestamp_millis() -> u128 {
     js_sys::Date::now() as u128
 }
 
+// ============================================================
+// TESTING MODE: Unlimited Sends for Development
+// ============================================================
+// TODO: REMOVE THIS BEFORE PRODUCTION LAUNCH!
+// These accounts bypass per-user document limits for testing.
+// Global Resend email limits still apply.
+//
+// To remove: Delete this constant, the helper function below,
+// and the is_unlimited check in handle_create_session().
+// ============================================================
+
+#[deprecated(note = "TESTING ACCOUNTS ACTIVE - Remove before production launch!")]
+const TESTING_UNLIMITED_EMAILS: &[&str] = &[
+    "orlandodowntownhome@gmail.com",
+    "bobamatchasolutions@gmail.com",
+];
+
+/// Check if email has unlimited sends for testing
+/// Returns true for accounts in TESTING_UNLIMITED_EMAILS
+#[allow(deprecated)]
+fn is_testing_unlimited_account(email: &str) -> bool {
+    TESTING_UNLIMITED_EMAILS
+        .iter()
+        .any(|e| e.eq_ignore_ascii_case(email))
+}
+
 /// Request body for sending a document
 #[derive(Deserialize)]
 #[allow(dead_code)] // Fields used via serde deserialization
@@ -151,14 +177,35 @@ fn default_expiry_hours() -> u32 {
     168
 } // 7 days
 
+/// Bug #0 fix: Add defaults to all SessionMetadata fields to handle missing/null values
 #[derive(Serialize, Deserialize, Clone)]
 struct SessionMetadata {
+    #[serde(default = "default_filename")]
     filename: String,
+    #[serde(default = "default_page_count")]
     page_count: u32,
+    #[serde(default = "default_created_at")]
     created_at: String,
+    #[serde(default = "default_created_by")]
     created_by: String,
     #[serde(default)]
     sender_email: Option<String>,
+}
+
+fn default_filename() -> String {
+    "document.pdf".to_string()
+}
+
+fn default_page_count() -> u32 {
+    1
+}
+
+fn default_created_at() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn default_created_by() -> String {
+    "Unknown".to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -217,20 +264,68 @@ enum SessionStatus {
     Expired,
 }
 
+/// Bug #0 fix: Custom deserializer for f64 that handles null/NaN/undefined
+/// JSON.stringify(NaN) produces null, which serde can't parse as f64
+/// This deserializer converts null to a default value
+fn deserialize_f64_with_default<'de, D>(deserializer: D) -> std::result::Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    // Try to deserialize as Option<f64> to handle null
+    let opt = Option::<f64>::deserialize(deserializer)?;
+    match opt {
+        Some(v) if v.is_nan() => Ok(0.0), // NaN becomes 0
+        Some(v) => Ok(v),
+        None => Ok(0.0), // null becomes 0
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 struct FieldInfo {
+    #[serde(default)]
     id: String,
+    #[serde(default = "default_field_type")]
     field_type: String,
+    #[serde(default)]
     recipient_id: String,
+    #[serde(default = "default_page")]
     page: u32,
+    /// Bug #0: Field positions now handle null/NaN/undefined gracefully
+    #[serde(default, deserialize_with = "deserialize_f64_with_default")]
     x_percent: f64,
+    #[serde(default, deserialize_with = "deserialize_f64_with_default")]
     y_percent: f64,
+    #[serde(
+        default = "default_width_percent",
+        deserialize_with = "deserialize_f64_with_default"
+    )]
     width_percent: f64,
+    #[serde(
+        default = "default_height_percent",
+        deserialize_with = "deserialize_f64_with_default"
+    )]
     height_percent: f64,
     #[serde(default)]
     required: bool,
     #[serde(default)]
     value: Option<String>,
+}
+
+fn default_field_type() -> String {
+    "signature".to_string()
+}
+
+fn default_page() -> u32 {
+    1
+}
+
+fn default_width_percent() -> f64 {
+    20.0
+}
+
+fn default_height_percent() -> f64 {
+    5.0
 }
 
 /// Stored signing session
@@ -2254,6 +2349,18 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             format!("{}?token={}", invitation.signing_link, token)
         };
 
+        // Bug #18 fix: Use email prefix as fallback if name is empty
+        let recipient_name = if invitation.name.trim().is_empty() {
+            invitation
+                .email
+                .split('@')
+                .next()
+                .unwrap_or("there")
+                .to_string()
+        } else {
+            invitation.name.clone()
+        };
+
         // Build HTML email template
         let email_html = format!(
             r#"<!DOCTYPE html>
@@ -2291,9 +2398,20 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
     <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
         <p>Sent via GetSignatures - Secure Document Signing</p>
     </div>
+
+    <div style="text-align: center; margin-top: 10px; padding-top: 15px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #6b7280;">
+        <p style="margin: 0 0 8px 0;">
+            You received this email because <strong>{sender_name}</strong> requested your signature on a document.
+            This is a transactional email related to a specific signature request.
+        </p>
+        <p style="margin: 0;">
+            If you believe you received this email in error or do not wish to receive future requests,
+            please contact the sender directly or reply to this email.
+        </p>
+    </div>
 </body>
 </html>"#,
-            recipient_name = invitation.name,
+            recipient_name = recipient_name,
             sender_name = body.sender_name,
             document_name = body.document_name,
             signing_link = signing_link_with_token
@@ -2354,15 +2472,37 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
 }
 
 async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
+    // Bug #0: Add debug logging for production issue diagnosis
+    console_log!("handle_create_session: Starting request processing");
+
     // Check request size before parsing (contains PDF)
     if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
+        console_log!("handle_create_session: Request too large");
         return cors_response(Ok(response));
     }
 
+    console_log!("handle_create_session: Content length check passed");
+
     // Require authentication for session creation
-    let (mut user, users_kv) = match auth::require_auth(&req, &env).await? {
-        Ok(result) => result,
-        Err(response) => return cors_response(Ok(response)),
+    let (mut user, users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => {
+            console_log!("handle_create_session: Auth successful for user");
+            result
+        }
+        Ok(Err(response)) => {
+            console_log!("handle_create_session: Auth returned error response");
+            return cors_response(Ok(response));
+        }
+        Err(e) => {
+            console_log!("handle_create_session: Auth failed with error: {:?}", e);
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication error. Please log in again.",
+                "error_code": "AUTH_ERROR",
+                "debug_info": format!("{:?}", e)
+            }))?
+            .with_status(500)));
+        }
     };
 
     // Check if email is verified
@@ -2379,8 +2519,15 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     // Reset counter if the month has changed
     user.check_monthly_reset();
 
+    // Check if this is a testing account with unlimited sends
+    let is_unlimited_testing = is_testing_unlimited_account(&user.email);
+    if is_unlimited_testing {
+        console_log!("⚠️ TESTING MODE: Unlimited sends active for {}", user.email);
+    }
+
     // Check if user can create another document (respects tier limits + overage)
-    if !user.can_create_document() {
+    // Skip limit check for testing accounts
+    if !is_unlimited_testing && !user.can_create_document() {
         let limit = user.tier.monthly_limit();
         let tier_name = user.tier.display_name();
         let message = if user.tier.allows_overage() {
@@ -2411,10 +2558,25 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         .with_status(429)));
     }
 
-    let body: CreateSessionRequest = match req.json().await {
-        Ok(b) => b,
+    console_log!("handle_create_session: About to parse request body");
+    let body: CreateSessionRequest = match req.json::<CreateSessionRequest>().await {
+        Ok(b) => {
+            console_log!(
+                "handle_create_session: Body parsed, doc size: {} bytes, {} recipients, {} fields",
+                b.encrypted_document.len(),
+                b.recipients.len(),
+                b.fields.len()
+            );
+            b
+        }
         Err(e) => {
-            return cors_response(error_response(&format!("Invalid request: {}", e)));
+            console_log!("handle_create_session: Body parsing failed: {:?}", e);
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": format!("Invalid request format: {}", e),
+                "error_code": "BODY_PARSE_ERROR"
+            }))?
+            .with_status(400)));
         }
     };
 
@@ -2499,13 +2661,63 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     };
 
     // Store session with TTL
-    let session_json = serde_json::to_string(&session)
-        .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
+    // Bug #0: Add detailed error logging for debugging production issues
+    let session_json = match serde_json::to_string(&session) {
+        Ok(json) => json,
+        Err(e) => {
+            console_log!("ERROR: Failed to serialize session: {:?}", e);
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Failed to prepare session data. Please try again.",
+                "error_code": "SERIALIZATION_ERROR",
+                "debug_info": format!("{:?}", e)
+            }))?
+            .with_status(500)));
+        }
+    };
 
-    kv.put(&format!("session:{}", session_id), session_json)?
-        .expiration_ttl(expiry_seconds.min(SESSION_TTL_SECONDS))
-        .execute()
-        .await?;
+    // Log session size for debugging
+    console_log!(
+        "Creating session {} for user {}, json size: {} bytes",
+        session_id,
+        user.email,
+        session_json.len()
+    );
+
+    let kv_result = kv
+        .put(&format!("session:{}", session_id), session_json)
+        .map_err(|e| {
+            console_log!("ERROR: KV put builder failed: {:?}", e);
+            e
+        });
+
+    match kv_result {
+        Ok(builder) => {
+            if let Err(e) = builder
+                .expiration_ttl(expiry_seconds.min(SESSION_TTL_SECONDS))
+                .execute()
+                .await
+            {
+                console_log!("ERROR: KV put execute failed: {:?}", e);
+                return cors_response(Ok(Response::from_json(&serde_json::json!({
+                    "success": false,
+                    "message": "Failed to save session. Please try again.",
+                    "error_code": "KV_WRITE_ERROR",
+                    "debug_info": format!("{:?}", e)
+                }))?
+                .with_status(500)));
+            }
+        }
+        Err(e) => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Failed to save session. Please try again.",
+                "error_code": "KV_BUILDER_ERROR",
+                "debug_info": format!("{:?}", e)
+            }))?
+            .with_status(500)));
+        }
+    }
 
     // Add session to sender's index
     sender_index.add_session(session_id.clone(), created_at);
