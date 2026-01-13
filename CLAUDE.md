@@ -111,6 +111,36 @@ The browser tests in `crates/benchmark-harness/tests/` have:
 - `florida_contract_base64()` - Returns real PDF as base64
 - Proper async test patterns with chromiumoxide
 
+### docsign-web Authenticated Testing (HITL Required)
+
+**IMPORTANT:** The production site getsignatures.org requires authentication for document creation and management features.
+
+**For Puppeteer MCP testing of docsign-web:**
+
+1. **Use HITL for authentication**
+   - Ask user to sign in to their admin account (unlimited usage tier)
+   - Wait for user confirmation before proceeding with automated testing
+   - Never store or request credentials in code or conversation
+
+2. **Testing workflow:**
+   1. User navigates to getsignatures.org via Puppeteer
+   2. User manually signs in when prompted
+   3. User confirms authentication is complete
+   4. Claude proceeds with automated testing using the authenticated session
+
+3. **What requires authentication:**
+   - Document upload and field placement
+   - Sending documents for signature
+   - Viewing "My Documents" dashboard
+   - Resending invitations
+
+4. **What does NOT require authentication:**
+   - Signing a document (recipient uses token from email link)
+   - Viewing the signing page
+   - Legal/pricing pages
+
+**Never bypass authentication with hardcoded tokens or direct API calls during Puppeteer testing.**
+
 ## Test-First Development Flow
 
 When fixing a bug or adding a feature to fix something broken, **always follow this flow**:

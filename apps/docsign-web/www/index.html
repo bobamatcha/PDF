@@ -1672,6 +1672,10 @@
             <!-- Bug #4: Removed docs-remaining display - will be replaced with feedback system -->
             <div id="user-info" class="hidden" style="display: none; align-items: center; gap: 0.75rem; margin-left: 1rem; padding: 0.25rem 0.75rem; background: rgba(255,255,255,0.1); border-radius: 6px;">
                 <span id="user-email" style="color: rgba(255,255,255,0.9); font-size: 0.875rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
+                <!-- Feature 2: My Documents button -->
+                <button id="btn-my-documents" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white;" onclick="toggleDashboard()">
+                    My Documents
+                </button>
                 <button id="btn-logout" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3); color: white;">
                     Logout
                 </button>
@@ -2049,6 +2053,70 @@
         </div>
     </main>
 
+    <!-- Feature 2: Document Dashboard -->
+    <section id="dashboard-section" class="hidden" style="padding: 2rem; max-width: 1200px; margin: 0 auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h2 style="font-size: 1.5rem; font-weight: 600; color: var(--text-primary);">My Documents</h2>
+            <button class="btn btn-primary" onclick="toggleDashboard()">
+                + New Document
+            </button>
+        </div>
+
+        <div id="dashboard-loading" style="text-align: center; padding: 3rem;">
+            <div class="spinner" style="margin: 0 auto 1rem;"></div>
+            <p style="color: var(--text-secondary);">Loading your documents...</p>
+        </div>
+
+        <div id="dashboard-error" class="hidden" style="padding: 1.5rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; color: #991b1b; text-align: center;">
+            <!-- Error message displayed here -->
+        </div>
+
+        <div id="dashboard-empty" class="hidden" style="text-align: center; padding: 3rem;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📄</div>
+            <h3 style="color: var(--text-primary); margin-bottom: 0.5rem;">No documents yet</h3>
+            <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Start by creating your first document for signing.</p>
+            <button class="btn btn-primary" onclick="toggleDashboard()">Create Document</button>
+        </div>
+
+        <div id="dashboard-content" class="hidden">
+            <!-- In Progress Section -->
+            <div id="dashboard-in-progress" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #f59e0b;">
+                    <span style="color: #f59e0b;">●</span> In Progress
+                    <span id="in-progress-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="in-progress-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <!-- Completed Section -->
+            <div id="dashboard-completed" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #10b981;">
+                    <span style="color: #10b981;">●</span> Completed
+                    <span id="completed-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="completed-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <!-- Declined Section -->
+            <div id="dashboard-declined" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #ef4444;">
+                    <span style="color: #ef4444;">●</span> Declined
+                    <span id="declined-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="declined-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <!-- Expired Section -->
+            <div id="dashboard-expired" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #6b7280;">
+                    <span style="color: #6b7280;">●</span> Expired
+                    <span id="expired-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="expired-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+        </div>
+    </section>
+
     <!-- Footer Actions -->
     <footer class="footer-actions" role="contentinfo">
         <div class="footer-left">
@@ -2128,6 +2196,28 @@
                 <p style="font-size: 0.875rem; color: #6b7280; margin-bottom: 1rem;">
                     Secure signing links will be sent to the following recipients via email:
                 </p>
+
+                <!-- Document Aliasing Fields (Feature 1) -->
+                <div style="margin-bottom: 1rem; padding: 1rem; background: var(--bg-tertiary); border-radius: 8px; border: 1px solid var(--border-primary);">
+                    <label for="document-alias" style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                        Document Name (optional)
+                    </label>
+                    <input type="text" id="document-alias"
+                           placeholder="e.g., Q1 2026 Lease Agreement"
+                           style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-primary); border-radius: 6px; font-size: 0.875rem; margin-bottom: 0.75rem; background: var(--bg-secondary); color: var(--text-primary);">
+
+                    <label for="signing-context" style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                        Context / Description (optional)
+                    </label>
+                    <input type="text" id="signing-context"
+                           placeholder="e.g., Lease for 30 James Ave, Orlando FL"
+                           style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-primary); border-radius: 6px; font-size: 0.875rem; background: var(--bg-secondary); color: var(--text-primary);">
+
+                    <p style="font-size: 0.7rem; color: var(--text-tertiary); margin-top: 0.5rem;">
+                        These will appear in signing invitation emails to help recipients identify the document.
+                    </p>
+                </div>
+
                 <div id="signing-links-rate-limit" class="hidden" style="padding: 1rem; background: #fef3c7; border-radius: 8px; color: #92400e; margin-bottom: 1rem; font-size: 0.875rem;">
                     <!-- Rate limit warning -->
                 </div>
@@ -6811,13 +6901,19 @@
                 const expiryHours = parseInt(document.getElementById('expiration-select')?.value || '168');
 
                 // Prepare session data for server
+                // Feature 1: Get document alias and context from modal inputs
+                const documentAlias = document.getElementById('document-alias')?.value?.trim() || null;
+                const signingContext = document.getElementById('signing-context')?.value?.trim() || null;
+
                 const sessionRequest = {
                     encrypted_document: documentBase64,  // Not actually encrypted - just base64
                     metadata: {
                         filename: state.fileName || 'document.pdf',
                         page_count: state.totalPages || 1,
                         created_at: new Date().toISOString(),
-                        created_by: 'Anonymous' // Could be from user settings
+                        created_by: 'Anonymous', // Could be from user settings
+                        document_alias: documentAlias,
+                        signing_context: signingContext
                     },
                     recipients: state.recipients.map(r => ({
                         id: r.id.toString(),
@@ -6986,6 +7082,10 @@
                     signing_link: link.link
                 }));
 
+                // Feature 1: Get document alias and context from modal inputs
+                const documentAlias = document.getElementById('document-alias')?.value?.trim() || null;
+                const signingContext = document.getElementById('signing-context')?.value?.trim() || null;
+
                 // Call /invite endpoint (with authentication)
                 const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/invite`, {
                     method: 'POST',
@@ -6994,7 +7094,9 @@
                         session_id: state.currentSessionId,
                         document_name: state.fileName || 'document.pdf',
                         sender_name: 'Get Signatures', // Could be from user settings
-                        invitations: invitations
+                        invitations: invitations,
+                        document_alias: documentAlias,
+                        signing_context: signingContext
                     })
                 });
 
@@ -7064,6 +7166,162 @@
         window.closeSigningLinksModal = closeSigningLinksModal;
         window.sendSigningEmails = sendSigningEmails;
         window.copySigningLink = copySigningLink;
+
+        // ============================================================
+        // Feature 2: Document Dashboard Functions
+        // ============================================================
+
+        let dashboardVisible = false;
+
+        async function toggleDashboard() {
+            const dashboardSection = document.getElementById('dashboard-section');
+            const mainContent = document.getElementById('main-content');
+            const stepper = document.querySelector('.stepper');
+            const footerActions = document.querySelector('.footer-actions');
+
+            dashboardVisible = !dashboardVisible;
+
+            if (dashboardVisible) {
+                // Show dashboard, hide main content
+                dashboardSection.classList.remove('hidden');
+                mainContent.style.display = 'none';
+                if (stepper) stepper.style.display = 'none';
+                if (footerActions) footerActions.style.display = 'none';
+
+                // Load documents
+                await loadDashboard();
+            } else {
+                // Hide dashboard, show main content
+                dashboardSection.classList.add('hidden');
+                mainContent.style.display = '';
+                if (stepper) stepper.style.display = '';
+                if (footerActions) footerActions.style.display = '';
+            }
+        }
+
+        async function loadDashboard() {
+            const loadingEl = document.getElementById('dashboard-loading');
+            const errorEl = document.getElementById('dashboard-error');
+            const emptyEl = document.getElementById('dashboard-empty');
+            const contentEl = document.getElementById('dashboard-content');
+
+            // Show loading, hide others
+            loadingEl.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+            emptyEl.classList.add('hidden');
+            contentEl.classList.add('hidden');
+
+            try {
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/my-sessions`, {
+                    method: 'GET',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || `Server error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                loadingEl.classList.add('hidden');
+
+                // Check if no documents
+                const totalDocs = (data.in_progress?.length || 0) +
+                                 (data.completed?.length || 0) +
+                                 (data.declined?.length || 0) +
+                                 (data.expired?.length || 0);
+
+                if (totalDocs === 0) {
+                    emptyEl.classList.remove('hidden');
+                    return;
+                }
+
+                // Render documents
+                contentEl.classList.remove('hidden');
+                renderDocumentSection('in-progress', data.in_progress || [], 'pending');
+                renderDocumentSection('completed', data.completed || [], 'completed');
+                renderDocumentSection('declined', data.declined || [], 'declined');
+                renderDocumentSection('expired', data.expired || [], 'expired');
+
+            } catch (err) {
+                console.error('Failed to load dashboard:', err);
+                loadingEl.classList.add('hidden');
+                errorEl.textContent = 'Failed to load documents: ' + (err.message || 'Unknown error');
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        function renderDocumentSection(sectionId, documents, statusType) {
+            const sectionEl = document.getElementById(`dashboard-${sectionId}`);
+            const listEl = document.getElementById(`${sectionId}-list`);
+            const countEl = document.getElementById(`${sectionId}-count`);
+
+            if (documents.length === 0) {
+                sectionEl.classList.add('hidden');
+                return;
+            }
+
+            sectionEl.classList.remove('hidden');
+            countEl.textContent = `(${documents.length})`;
+
+            listEl.innerHTML = documents.map(doc => renderDocumentCard(doc, statusType)).join('');
+        }
+
+        function renderDocumentCard(doc, statusType) {
+            const displayName = doc.document_alias || doc.filename;
+            const contextDisplay = doc.signing_context ? `<div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 0.25rem;">${escapeHtml(doc.signing_context)}</div>` : '';
+
+            const progressPercent = doc.recipients_total > 0
+                ? Math.round((doc.recipients_signed / doc.recipients_total) * 100)
+                : 0;
+
+            const createdDate = new Date(doc.created_at).toLocaleDateString();
+            const expiresDate = new Date(doc.expires_at).toLocaleDateString();
+
+            // Recipient status pills
+            const recipientPills = doc.recipients.map(r => {
+                const statusColor = r.signed ? '#10b981' : (statusType === 'declined' ? '#ef4444' : '#f59e0b');
+                const statusIcon = r.signed ? '✓' : (statusType === 'declined' ? '✗' : '○');
+                return `<span style="display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; background: ${statusColor}20; color: ${statusColor}; border-radius: 999px; font-size: 0.7rem; font-weight: 500;">${statusIcon} ${escapeHtml(r.name)}</span>`;
+            }).join(' ');
+
+            return `
+                <div style="padding: 1rem; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; transition: box-shadow 0.2s;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(displayName)}</div>
+                            ${contextDisplay}
+                            ${doc.document_alias ? `<div style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(doc.filename)}</div>` : ''}
+                        </div>
+                        <div style="text-align: right; font-size: 0.75rem; color: var(--text-secondary);">
+                            <div>Created: ${createdDate}</div>
+                            ${statusType !== 'completed' ? `<div>Expires: ${expiresDate}</div>` : ''}
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                        ${recipientPills}
+                    </div>
+                    ${statusType === 'pending' ? `
+                        <div style="background: var(--bg-tertiary); border-radius: 4px; height: 6px; overflow: hidden;">
+                            <div style="background: #f59e0b; height: 100%; width: ${progressPercent}%; transition: width 0.3s;"></div>
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                            ${doc.recipients_signed} of ${doc.recipients_total} signed (${progressPercent}%)
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        // Expose dashboard functions to window
+        window.toggleDashboard = toggleDashboard;
+        window.loadDashboard = loadDashboard;
 
         // Remote Signing - Encryption/Decryption using Web Crypto
         const SIGNING_SERVER_URL = 'https://api.getsignatures.org';

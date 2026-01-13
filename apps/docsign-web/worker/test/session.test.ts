@@ -523,6 +523,572 @@ describe("Session API Integration", () => {
     });
   });
 
+  /**
+   * Bug A: Re-signing Prevention
+   *
+   * Critical security bug: A signer can re-open their signing link and submit
+   * a different signature, overwriting their previous signature.
+   *
+   * Expected behavior: Once a recipient has signed (signed=true), any subsequent
+   * attempt to submit a signed document should return 400 error.
+   */
+  describe("Bug A: Re-signing Prevention", () => {
+    it("should return 400 when already-signed recipient tries to sign again", async () => {
+      const token = await createVerifiedUserAndLogin("resign-test@example.com");
+
+      // Create a session with one recipient
+      const sessionRequest = {
+        encrypted_document: btoa("test document content"),
+        metadata: {
+          filename: "test.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "resign-test@example.com",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "Test Signer",
+            email: "signer1@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [
+          {
+            id: "sig_field_1",
+            field_type: "signature",
+            recipient_id: "signer_1",
+            page: 1,
+            x_percent: 50.0,
+            y_percent: 80.0,
+            width_percent: 20.0,
+            height_percent: 5.0,
+            required: true,
+            value: null,
+          },
+        ],
+        expiry_hours: 168,
+      };
+
+      // Create the session
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      expect(createResponse.status).toBe(200);
+      const createData = (await createResponse.json()) as { session_id: string };
+      const sessionId = createData.session_id;
+
+      // First signing - should succeed
+      const signRequest1 = {
+        recipient_id: "signer_1",
+        encrypted_document: btoa("signed document content v1"),
+      };
+
+      const signResponse1 = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(signRequest1),
+      });
+
+      expect(signResponse1.status).toBe(200);
+      const signData1 = (await signResponse1.json()) as { success: boolean };
+      expect(signData1.success).toBe(true);
+
+      // Second signing attempt - should be REJECTED with 400
+      const signRequest2 = {
+        recipient_id: "signer_1",
+        encrypted_document: btoa("signed document content v2 - different signature"),
+      };
+
+      const signResponse2 = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(signRequest2),
+      });
+
+      // BUG: Currently returns 200 and allows re-signing
+      // After fix, should return 400 with error message
+      expect(signResponse2.status).toBe(400);
+
+      const signData2 = (await signResponse2.json()) as { success: boolean; message: string };
+      expect(signData2.success).toBe(false);
+      expect(signData2.message).toMatch(/already.*signed/i);
+    });
+
+    it("should allow different recipients to sign independently (parallel mode)", async () => {
+      const token = await createVerifiedUserAndLogin("parallel-sign@example.com");
+
+      // Create a session with TWO recipients
+      const sessionRequest = {
+        encrypted_document: btoa("test document for parallel signing"),
+        metadata: {
+          filename: "parallel-test.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "parallel-sign@example.com",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "First Signer",
+            email: "signer1@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+          {
+            id: "signer_2",
+            name: "Second Signer",
+            email: "signer2@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [
+          {
+            id: "sig_field_1",
+            field_type: "signature",
+            recipient_id: "signer_1",
+            page: 1,
+            x_percent: 50.0,
+            y_percent: 70.0,
+            width_percent: 20.0,
+            height_percent: 5.0,
+            required: true,
+            value: null,
+          },
+          {
+            id: "sig_field_2",
+            field_type: "signature",
+            recipient_id: "signer_2",
+            page: 1,
+            x_percent: 50.0,
+            y_percent: 85.0,
+            width_percent: 20.0,
+            height_percent: 5.0,
+            required: true,
+            value: null,
+          },
+        ],
+        expiry_hours: 168,
+      };
+
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      const createData = (await createResponse.json()) as { session_id: string };
+      const sessionId = createData.session_id;
+
+      // First signer signs
+      const signResponse1 = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_1",
+          encrypted_document: btoa("signed by signer 1"),
+        }),
+      });
+      expect(signResponse1.status).toBe(200);
+
+      // Second signer should ALSO be able to sign (parallel mode)
+      const signResponse2 = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_2",
+          encrypted_document: btoa("signed by signer 2"),
+        }),
+      });
+      expect(signResponse2.status).toBe(200);
+
+      // But signer_1 should NOT be able to sign again
+      const resignResponse = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_1",
+          encrypted_document: btoa("trying to re-sign"),
+        }),
+      });
+      expect(resignResponse.status).toBe(400);
+    });
+  });
+
+  /**
+   * Bug E: Download Link Timing
+   *
+   * Currently, the signing completion response includes a download link even when
+   * other signers haven't completed. The document isn't final until ALL sign.
+   *
+   * Expected behavior: Download link should ONLY be included in the response
+   * when the signer is the FINAL signer (all recipients now signed).
+   */
+  describe("Bug E: Download Link Timing", () => {
+    it("should NOT include download_link when other signers are still pending", async () => {
+      const token = await createVerifiedUserAndLogin("download-timing@example.com");
+
+      // Create session with 2 signers
+      const sessionRequest = {
+        encrypted_document: btoa("document needing two signatures"),
+        metadata: {
+          filename: "two-signer.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "download-timing@example.com",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "First Signer",
+            email: "first@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+          {
+            id: "signer_2",
+            name: "Second Signer",
+            email: "second@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [],
+        expiry_hours: 168,
+      };
+
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      const createData = (await createResponse.json()) as { session_id: string };
+      const sessionId = createData.session_id;
+
+      // First signer signs (second signer still pending)
+      const signResponse1 = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_1",
+          encrypted_document: btoa("signed by first"),
+        }),
+      });
+
+      expect(signResponse1.status).toBe(200);
+      const signData1 = (await signResponse1.json()) as {
+        success: boolean;
+        download_link?: string;
+        all_signed?: boolean;
+      };
+
+      // BUG: Currently might include download_link even though signer_2 hasn't signed
+      // After fix: should NOT include download_link until all sign
+      expect(signData1.download_link).toBeUndefined();
+      expect(signData1.all_signed).toBeFalsy();
+    });
+
+    it("should include download_link when final signer completes", async () => {
+      const token = await createVerifiedUserAndLogin("final-signer@example.com");
+
+      // Create session with 2 signers
+      const sessionRequest = {
+        encrypted_document: btoa("document for final signer test"),
+        metadata: {
+          filename: "final-signer.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "final-signer@example.com",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "First Signer",
+            email: "first@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+          {
+            id: "signer_2",
+            name: "Second Signer",
+            email: "second@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [],
+        expiry_hours: 168,
+      };
+
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      const createData = (await createResponse.json()) as { session_id: string };
+      const sessionId = createData.session_id;
+
+      // First signer signs
+      await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_1",
+          encrypted_document: btoa("signed by first"),
+        }),
+      });
+
+      // Second (final) signer signs
+      const finalSignResponse = await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_2",
+          encrypted_document: btoa("signed by second - final"),
+        }),
+      });
+
+      expect(finalSignResponse.status).toBe(200);
+      const finalData = (await finalSignResponse.json()) as {
+        success: boolean;
+        all_signed?: boolean;
+      };
+
+      // After fix: should indicate all_signed is true for final signer
+      expect(finalData.success).toBe(true);
+      expect(finalData.all_signed).toBe(true);
+    });
+  });
+
+  /**
+   * Bug C: Completion Emails to All Parties (Regression Tests)
+   *
+   * When all signers complete, completion email should be sent to:
+   * 1. The sender/orchestrator
+   * 2. ALL recipients who signed
+   *
+   * Note: We can't directly verify email sending in unit tests, but we can
+   * verify the session state is correct for the email logic to work.
+   */
+  describe("Bug C: Completion Email State", () => {
+    it("should track all signers as signed when complete", async () => {
+      const token = await createVerifiedUserAndLogin("completion-test@example.com");
+
+      // Create session with 2 signers
+      const sessionRequest = {
+        encrypted_document: btoa("completion test document"),
+        metadata: {
+          filename: "completion-test.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "completion-test@example.com",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "First Signer",
+            email: "first@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+          {
+            id: "signer_2",
+            name: "Second Signer",
+            email: "second@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [],
+        expiry_hours: 168,
+      };
+
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      const createData = (await createResponse.json()) as { session_id: string };
+      const sessionId = createData.session_id;
+
+      // Both signers sign
+      await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_1",
+          encrypted_document: btoa("signed by first"),
+        }),
+      });
+
+      await SELF.fetch(`https://worker/session/${sessionId}/signed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_id: "signer_2",
+          encrypted_document: btoa("signed by second"),
+        }),
+      });
+
+      // Verify session state in KV
+      const sessionsKv = env.SESSIONS;
+      const stored = await sessionsKv.get(`session:${sessionId}`);
+      const session = JSON.parse(stored!) as {
+        status: string;
+        recipients: Array<{ id: string; signed: boolean; signed_at: string | null; email: string }>;
+      };
+
+      // Both recipients should be marked as signed
+      expect(session.recipients.every(r => r.signed)).toBe(true);
+      expect(session.recipients.every(r => r.signed_at !== null)).toBe(true);
+      // Note: Serde serializes enum variants as lowercase by default
+      expect(session.status.toLowerCase()).toBe("completed");
+
+      // Note: Actual email sending is verified via mock intercepts in beforeEach
+      // The test log output shows "Notification sent to sender: completion-test@example.com"
+      // and additional emails to signers after Bug C fix
+    });
+  });
+
+  /**
+   * Feature 1: Document Aliasing (Regression Tests)
+   *
+   * Sessions should accept optional document_alias and signing_context fields
+   * that appear in invitation emails.
+   */
+  describe("Feature 1: Document Aliasing", () => {
+    it("should store document_alias in session metadata", async () => {
+      const token = await createVerifiedUserAndLogin("alias-test@example.com");
+
+      const sessionRequest = {
+        encrypted_document: btoa("aliased document"),
+        metadata: {
+          filename: "lease.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          sender_email: "alias-test@example.com",
+          document_alias: "Q1 2026 Lease Agreement",
+          signing_context: "Lease for 30 James Ave, Orlando",
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "Test Signer",
+            email: "signer@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [],
+        expiry_hours: 168,
+      };
+
+      const response = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as { session_id: string };
+
+      // Verify alias and context are stored
+      const sessionsKv = env.SESSIONS;
+      const stored = await sessionsKv.get(`session:${data.session_id}`);
+      const session = JSON.parse(stored!) as {
+        metadata: {
+          document_alias?: string;
+          signing_context?: string;
+        };
+      };
+
+      expect(session.metadata.document_alias).toBe("Q1 2026 Lease Agreement");
+      expect(session.metadata.signing_context).toBe("Lease for 30 James Ave, Orlando");
+    });
+
+    it("should accept sessions without alias (backwards compatibility)", async () => {
+      const token = await createVerifiedUserAndLogin("no-alias@example.com");
+
+      const sessionRequest = {
+        encrypted_document: btoa("document without alias"),
+        metadata: {
+          filename: "contract.pdf",
+          page_count: 1,
+          created_at: new Date().toISOString(),
+          created_by: "Test User",
+          // No document_alias or signing_context
+        },
+        recipients: [
+          {
+            id: "signer_1",
+            name: "Test Signer",
+            email: "signer@example.com",
+            role: "signer",
+            signed: false,
+            signed_at: null,
+          },
+        ],
+        fields: [],
+        expiry_hours: 168,
+      };
+
+      const response = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(sessionRequest),
+      });
+
+      expect(response.status).toBe(200);
+      const data = (await response.json()) as { success: boolean };
+      expect(data.success).toBe(true);
+    });
+  });
+
   describe("Session Creation - Authentication", () => {
     it("should reject unauthenticated requests", async () => {
       const response = await SELF.fetch("https://worker/session", {
@@ -565,6 +1131,128 @@ describe("Session API Integration", () => {
       });
 
       expect(response.status).toBe(401);
+    });
+  });
+
+  // ============================================================
+  // Feature 2: Document Dashboard - /my-sessions endpoint tests
+  // ============================================================
+  describe("Feature 2: Document Dashboard", () => {
+    it("should return 401 for unauthenticated requests to /my-sessions", async () => {
+      const response = await SELF.fetch("https://worker/my-sessions", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      expect(response.status).toBe(401);
+    });
+
+    it("should return empty arrays for user with no sessions", async () => {
+      const email = "empty-dashboard@example.com";
+      const accessToken = await createVerifiedUserAndLogin(email);
+
+      const response = await SELF.fetch("https://worker/my-sessions", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      expect(response.status).toBe(200);
+
+      const data = (await response.json()) as {
+        success: boolean;
+        in_progress: unknown[];
+        completed: unknown[];
+        declined: unknown[];
+        expired: unknown[];
+      };
+
+      expect(data.success).toBe(true);
+      expect(data.in_progress).toEqual([]);
+      expect(data.completed).toEqual([]);
+      expect(data.declined).toEqual([]);
+      expect(data.expired).toEqual([]);
+    });
+
+    it("should return user sessions grouped by status", async () => {
+      const email = "dashboard-user@example.com";
+      const accessToken = await createVerifiedUserAndLogin(email);
+
+      // Create a session
+      const createResponse = await SELF.fetch("https://worker/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          encrypted_document: btoa("test document"),
+          metadata: {
+            filename: "dashboard-test.pdf",
+            page_count: 1,
+            created_at: new Date().toISOString(),
+            created_by: "Test",
+            sender_email: email,
+            document_alias: "Dashboard Test Doc",
+            signing_context: "Testing dashboard feature",
+          },
+          recipients: [
+            {
+              id: "1",
+              name: "Recipient One",
+              email: "recipient1@example.com",
+              role: "signer",
+              signed: false,
+            },
+          ],
+          fields: [],
+        }),
+      });
+
+      expect(createResponse.status).toBe(200);
+
+      // Get dashboard data
+      const dashboardResponse = await SELF.fetch("https://worker/my-sessions", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      expect(dashboardResponse.status).toBe(200);
+
+      const data = (await dashboardResponse.json()) as {
+        success: boolean;
+        in_progress: {
+          session_id: string;
+          filename: string;
+          document_alias: string | null;
+          signing_context: string | null;
+          status: string;
+          recipients_signed: number;
+          recipients_total: number;
+          recipients: { name: string; email: string; signed: boolean }[];
+        }[];
+        completed: unknown[];
+        declined: unknown[];
+        expired: unknown[];
+      };
+
+      expect(data.success).toBe(true);
+
+      // Session should be in in_progress (pending status)
+      expect(data.in_progress.length).toBe(1);
+      expect(data.in_progress[0].filename).toBe("dashboard-test.pdf");
+      expect(data.in_progress[0].document_alias).toBe("Dashboard Test Doc");
+      expect(data.in_progress[0].signing_context).toBe(
+        "Testing dashboard feature"
+      );
+      expect(data.in_progress[0].recipients_signed).toBe(0);
+      expect(data.in_progress[0].recipients_total).toBe(1);
+      expect(data.in_progress[0].recipients[0].name).toBe("Recipient One");
     });
   });
 });

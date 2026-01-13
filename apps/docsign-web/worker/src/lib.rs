@@ -190,6 +190,12 @@ struct SessionMetadata {
     created_by: String,
     #[serde(default)]
     sender_email: Option<String>,
+    /// Feature 1: Optional document alias (e.g., "Q1 2026 Lease Agreement")
+    #[serde(default)]
+    document_alias: Option<String>,
+    /// Feature 1: Optional signing context (e.g., "Lease for 30 James Ave, Orlando")
+    #[serde(default)]
+    signing_context: Option<String>,
 }
 
 fn default_filename() -> String {
@@ -450,6 +456,12 @@ struct InviteRequest {
     document_name: String,
     sender_name: String,
     invitations: Vec<InvitationInfo>,
+    /// Feature 1: Optional document alias (e.g., "Q1 2026 Lease Agreement")
+    #[serde(default)]
+    document_alias: Option<String>,
+    /// Feature 1: Optional signing context (e.g., "Lease for 30 James Ave, Orlando")
+    #[serde(default)]
+    signing_context: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -926,6 +938,52 @@ impl SenderSessionIndex {
 }
 
 // ============================================================
+// Feature 2: Document Dashboard - Response Types
+// ============================================================
+
+/// Summary of a document for the dashboard (excludes PDF content for efficiency)
+#[derive(Serialize)]
+struct SessionSummary {
+    session_id: String,
+    filename: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    document_alias: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signing_context: Option<String>,
+    created_at: String,
+    expires_at: String,
+    status: SessionStatus,
+    recipients_signed: u32,
+    recipients_total: u32,
+    /// List of recipient names and their signed status
+    recipients: Vec<RecipientSummary>,
+}
+
+/// Recipient status for dashboard display
+#[derive(Serialize)]
+struct RecipientSummary {
+    name: String,
+    email: String,
+    signed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signed_at: Option<String>,
+}
+
+/// Response for /my-sessions endpoint - documents grouped by status
+#[derive(Serialize)]
+struct MySessionsResponse {
+    success: bool,
+    /// Documents where invitations have been sent, awaiting signatures
+    in_progress: Vec<SessionSummary>,
+    /// Documents where all signers have completed
+    completed: Vec<SessionSummary>,
+    /// Documents that were declined by any signer
+    declined: Vec<SessionSummary>,
+    /// Documents that expired before completion
+    expired: Vec<SessionSummary>,
+}
+
+// ============================================================
 // UX-006: Sender Notification Helper Functions
 // ============================================================
 
@@ -1188,6 +1246,90 @@ fn format_decline_notification_email(
     )
 }
 
+/// Bug C: Format completion email sent to each signer when all signatures are collected
+fn format_recipient_completion_email(
+    recipient_name: &str,
+    document_name: &str,
+    download_link: &str,
+    all_recipients: &[RecipientInfo],
+) -> String {
+    // Build list of all signers with timestamps
+    let signers_list: Vec<String> = all_recipients
+        .iter()
+        .filter(|r| r.role == "signer" && r.signed)
+        .map(|r| {
+            let time = r
+                .signed_at
+                .as_ref()
+                .map(|t| format_timestamp(t))
+                .unwrap_or_else(|| "Unknown".to_string());
+            format!(
+                "<li style=\"margin: 10px 0;\"><strong>{}</strong> - {}</li>",
+                r.name, time
+            )
+        })
+        .collect();
+
+    let signers_html = signers_list.join("\n                ");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #059669 0%, #047857 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Signing Complete</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Hello {recipient_name},</p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            Great news! All parties have signed the document. Your copy is ready for download.
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0 0 10px 0; font-size: 14px; color: #6b7280;">All Signers</p>
+            <ul style="margin: 0; padding-left: 20px; list-style-type: none;">
+                {signers_list}
+            </ul>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{download_link}" style="display: inline-block; background: #059669; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Download Signed Document</a>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            This is your official copy of the fully signed document. Please save it for your records.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+
+    <div style="text-align: center; margin-top: 10px; padding-top: 15px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #6b7280;">
+        <p style="margin: 0;">
+            Electronic signatures have the same legal effect as handwritten signatures under the ESIGN Act and UETA.
+        </p>
+    </div>
+</body>
+</html>"#,
+        recipient_name = recipient_name,
+        document_name = document_name,
+        signers_list = signers_html,
+        download_link = download_link
+    )
+}
+
 /// Send notification email to sender when recipient signs
 async fn send_sender_notification(
     env: &Env,
@@ -1398,6 +1540,16 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 return cors_response(Response::error("Unauthorized", 401));
             }
             handle_create_session(req, env).await
+        }
+        // Feature 2: Document Dashboard - list user's sessions grouped by status
+        (Method::Get, "/my-sessions") => {
+            // Apply SessionRead rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionRead).await
+            {
+                return response;
+            }
+            handle_my_sessions(&req, env).await
         }
         (Method::Get, p) if p.starts_with("/session/") => {
             // Apply SessionRead rate limit
@@ -2361,6 +2513,28 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             invitation.name.clone()
         };
 
+        // Feature 1: Build optional alias and context sections for email
+        let alias_section = body.document_alias.as_ref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|alias| format!(
+                r#"<p style="margin: 8px 0 0 0; font-size: 14px; color: #6b7280;">Also known as: <strong>{}</strong></p>"#,
+                alias
+            ))
+            .unwrap_or_default();
+
+        let context_section = body.signing_context.as_ref()
+            .filter(|s| !s.trim().is_empty())
+            .map(|context| format!(
+                r#"
+        <div style="background: #dbeafe; padding: 12px 15px; border-radius: 6px; margin-bottom: 25px; border-left: 4px solid #3b82f6;">
+            <p style="margin: 0; font-size: 14px; color: #1e40af;">
+                <strong>Context:</strong> {}
+            </p>
+        </div>"#,
+                context
+            ))
+            .unwrap_or_default();
+
         // Build HTML email template
         let email_html = format!(
             r#"<!DOCTYPE html>
@@ -2383,8 +2557,8 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
 
         <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
             <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
-            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
-        </div>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>{alias_section}
+        </div>{context_section}
 
         <div style="text-align: center; margin: 30px 0;">
             <a href="{signing_link}" style="display: inline-block; background: #1e40af; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Review & Sign Document</a>
@@ -2404,9 +2578,16 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             You received this email because <strong>{sender_name}</strong> requested your signature on a document.
             This is a transactional email related to a specific signature request.
         </p>
-        <p style="margin: 0;">
+        <p style="margin: 0 0 8px 0;">
             If you believe you received this email in error or do not wish to receive future requests,
-            please contact the sender directly or reply to this email.
+            please email <a href="mailto:bobamatchasolutions@gmail.com" style="color: #1e40af;">bobamatchasolutions@gmail.com</a>.
+        </p>
+        <p style="margin: 0 0 8px 0;">
+            <a href="https://getsignatures.org/legal.html" style="color: #1e40af;">Privacy Policy</a> |
+            <a href="https://getsignatures.org/legal.html#esign" style="color: #1e40af;">E-Sign Disclosure</a>
+        </p>
+        <p style="margin: 0; font-size: 10px;">
+            Electronic signatures have the same legal effect as handwritten signatures under the ESIGN Act and UETA.
         </p>
     </div>
 </body>
@@ -2414,13 +2595,23 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
             recipient_name = recipient_name,
             sender_name = body.sender_name,
             document_name = body.document_name,
-            signing_link = signing_link_with_token
+            signing_link = signing_link_with_token,
+            alias_section = alias_section,
+            context_section = context_section
         );
+
+        // Feature 1: Build email subject with alias if provided
+        let email_subject = match &body.document_alias {
+            Some(alias) if !alias.trim().is_empty() => {
+                format!("Signature Requested: {} ({})", alias, body.document_name)
+            }
+            _ => format!("Signature Requested: {}", body.document_name),
+        };
 
         // Send via email module
         let email_request = email::EmailSendRequest {
             to: vec![invitation.email.clone()],
-            subject: format!("Signature Requested: {}", body.document_name),
+            subject: email_subject,
             html: email_html,
             text: None,
             reply_to: None,
@@ -2783,6 +2974,112 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         success: true,
         session_id,
         message: None,
+    }))
+}
+
+// ============================================================
+// Feature 2: Document Dashboard - /my-sessions handler
+// ============================================================
+
+/// Handle GET /my-sessions - returns user's documents grouped by status
+async fn handle_my_sessions(req: &Request, env: Env) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return cors_response(Ok(response)),
+        Err(e) => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication error",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(500)));
+        }
+    };
+
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "SESSIONS KV not configured"
+            }))?
+            .with_status(500)));
+        }
+    };
+
+    // Get sender index using user's email
+    let sender_hash = hash_sender_email(&user.email);
+    let mut sender_index = get_sender_index(&kv, &sender_hash).await;
+
+    // Prune expired sessions from index
+    sender_index.prune_expired(SESSION_INDEX_PRUNE_DAYS);
+
+    // Fetch each session and group by status
+    let mut in_progress = Vec::new();
+    let mut completed = Vec::new();
+    let mut declined = Vec::new();
+    let mut expired = Vec::new();
+
+    for session_id in &sender_index.session_ids {
+        let session: Option<SigningSession> =
+            match kv.get(&format!("session:{}", session_id)).json().await {
+                Ok(s) => s,
+                Err(_) => continue, // Skip sessions that can't be parsed
+            };
+
+        if let Some(session) = session {
+            // Calculate recipient progress
+            let recipients_total = session.recipients.len() as u32;
+            let recipients_signed = session.recipients.iter().filter(|r| r.signed).count() as u32;
+
+            // Build recipient summaries
+            let recipient_summaries: Vec<RecipientSummary> = session
+                .recipients
+                .iter()
+                .map(|r| RecipientSummary {
+                    name: r.name.clone(),
+                    email: r.email.clone(),
+                    signed: r.signed,
+                    signed_at: r.signed_at.clone(),
+                })
+                .collect();
+
+            let summary = SessionSummary {
+                session_id: session.id.clone(),
+                filename: session.metadata.filename.clone(),
+                document_alias: session.metadata.document_alias.clone(),
+                signing_context: session.metadata.signing_context.clone(),
+                created_at: session.metadata.created_at.clone(),
+                expires_at: session.expires_at.clone(),
+                status: session.status.clone(),
+                recipients_signed,
+                recipients_total,
+                recipients: recipient_summaries,
+            };
+
+            // Group by status
+            match session.status {
+                SessionStatus::Completed => completed.push(summary),
+                SessionStatus::Declined => declined.push(summary),
+                SessionStatus::Expired => expired.push(summary),
+                SessionStatus::Pending | SessionStatus::Accepted => in_progress.push(summary),
+            }
+        }
+    }
+
+    // Sort by created_at descending (newest first)
+    in_progress.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    completed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    declined.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    expired.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    cors_response(Response::from_json(&MySessionsResponse {
+        success: true,
+        in_progress,
+        completed,
+        declined,
+        expired,
     }))
 }
 
@@ -3387,6 +3684,23 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
 
     match session {
         Some(mut s) => {
+            // Bug A Fix: Check if recipient has already signed (prevent re-signing)
+            if let Some(recipient) = s.recipients.iter().find(|r| r.id == body.recipient_id) {
+                if recipient.signed {
+                    return cors_response(Ok(Response::from_json(&serde_json::json!({
+                        "success": false,
+                        "message": "You have already signed this document"
+                    }))?
+                    .with_status(400)));
+                }
+            } else {
+                return cors_response(Ok(Response::from_json(&serde_json::json!({
+                    "success": false,
+                    "message": "Recipient not found in session"
+                }))?
+                .with_status(404)));
+            }
+
             // Mark recipient as signed
             for r in s.recipients.iter_mut() {
                 if r.id == body.recipient_id {
@@ -3431,7 +3745,7 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
 
                     // Check if all recipients have signed
                     if all_recipients_signed(&s.recipients) {
-                        // Send "all signed" completion email
+                        // Send "all signed" completion email to SENDER
                         let subject = format!("All Recipients Signed: {}", s.metadata.filename);
                         let html_body = format_all_signed_notification_email(
                             &s.recipients,
@@ -3440,6 +3754,29 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
                         );
                         let _ = send_sender_notification(&env, sender_email, &subject, &html_body)
                             .await;
+
+                        // Bug C Fix: Also send completion email to ALL signers
+                        for signer in s
+                            .recipients
+                            .iter()
+                            .filter(|r| r.signed && r.role == "signer")
+                        {
+                            let signer_subject =
+                                format!("Document Signed: {}", s.metadata.filename);
+                            let signer_html = format_recipient_completion_email(
+                                &signer.name,
+                                &s.metadata.filename,
+                                &download_link,
+                                &s.recipients,
+                            );
+                            let _ = send_sender_notification(
+                                &env,
+                                &signer.email,
+                                &signer_subject,
+                                &signer_html,
+                            )
+                            .await;
+                        }
                     } else {
                         // Send individual recipient signed notification
                         let subject = format!("{} Signed: {}", recipient.name, s.metadata.filename);
@@ -3466,9 +3803,12 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
                 .execute()
                 .await?;
 
+            // Bug E Fix: Include all_signed status in response
+            let all_signed = all_recipients_signed(&s.recipients);
             cors_response(Response::from_json(&serde_json::json!({
                 "success": true,
-                "message": "Signed document submitted"
+                "message": "Signed document submitted",
+                "all_signed": all_signed
             })))
         }
         None => cors_response(Ok(Response::from_json(&serde_json::json!({
