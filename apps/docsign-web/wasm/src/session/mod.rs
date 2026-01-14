@@ -885,3 +885,511 @@ mod tests {
         assert_eq!(session.get_status(), "expired");
     }
 }
+
+// ============================================================
+// Property-Based Tests for Session Management
+// ============================================================
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ============================================================
+    // Session ID Validation Properties
+    // ============================================================
+
+    proptest! {
+        /// Property 1: Valid session IDs (length >= 3) are accepted
+        #[test]
+        fn valid_session_ids_accepted(session_id in "[a-zA-Z0-9_-]{3,64}") {
+            let result = validate_session_params(
+                Some(session_id),
+                Some("r1".to_string()),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(result.valid(), "Session ID with length >= 3 should be valid");
+        }
+
+        /// Property 2: Short session IDs (length < 3) are rejected
+        #[test]
+        fn short_session_ids_rejected(session_id in "[a-zA-Z0-9]{1,2}") {
+            let result = validate_session_params(
+                Some(session_id),
+                Some("r1".to_string()),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(!result.valid(), "Session ID with length < 3 should be invalid");
+            prop_assert!(
+                result.error_message().unwrap().contains("session ID"),
+                "Error should mention session ID"
+            );
+        }
+
+        /// Property 3: Empty session IDs are rejected
+        #[test]
+        fn empty_session_id_rejected(_unused in Just(())) {
+            let result = validate_session_params(
+                Some(String::new()),
+                Some("r1".to_string()),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(!result.valid(), "Empty session ID should be invalid");
+        }
+
+        /// Property 4: None session IDs are rejected
+        #[test]
+        fn none_session_id_rejected(_unused in Just(())) {
+            let result = validate_session_params(
+                None,
+                Some("r1".to_string()),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(!result.valid(), "None session ID should be invalid");
+            prop_assert!(
+                result.error_message().unwrap().contains("session"),
+                "Error should mention session"
+            );
+        }
+    }
+
+    // ============================================================
+    // Recipient ID Validation Properties
+    // ============================================================
+
+    proptest! {
+        /// Property 5: Non-empty recipient IDs are accepted
+        #[test]
+        fn nonempty_recipient_ids_accepted(recipient_id in "[a-zA-Z0-9_-]{1,64}") {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                Some(recipient_id),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(result.valid(), "Non-empty recipient ID should be valid");
+        }
+
+        /// Property 6: Empty recipient IDs are rejected
+        #[test]
+        fn empty_recipient_id_rejected(_unused in Just(())) {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                Some(String::new()),
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(!result.valid(), "Empty recipient ID should be invalid");
+        }
+
+        /// Property 7: None recipient IDs are rejected
+        #[test]
+        fn none_recipient_id_rejected(_unused in Just(())) {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                None,
+                Some("key_abc".to_string()),
+            );
+            prop_assert!(!result.valid(), "None recipient ID should be invalid");
+            prop_assert!(
+                result.error_message().unwrap().contains("recipient"),
+                "Error should mention recipient"
+            );
+        }
+    }
+
+    // ============================================================
+    // Signing Key Validation Properties
+    // ============================================================
+
+    proptest! {
+        /// Property 8: Valid signing keys (length >= 3) are accepted
+        #[test]
+        fn valid_signing_keys_accepted(key in "[a-zA-Z0-9_-]{3,128}") {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                Some("r1".to_string()),
+                Some(key),
+            );
+            prop_assert!(result.valid(), "Signing key with length >= 3 should be valid");
+        }
+
+        /// Property 9: Short signing keys (length < 3) are rejected
+        #[test]
+        fn short_signing_keys_rejected(key in "[a-zA-Z0-9]{1,2}") {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                Some("r1".to_string()),
+                Some(key),
+            );
+            prop_assert!(!result.valid(), "Signing key with length < 3 should be invalid");
+            prop_assert!(
+                result.error_message().unwrap().contains("signing key"),
+                "Error should mention signing key"
+            );
+        }
+
+        /// Property 10: None signing keys are rejected
+        #[test]
+        fn none_signing_key_rejected(_unused in Just(())) {
+            let result = validate_session_params(
+                Some("sess_123".to_string()),
+                Some("r1".to_string()),
+                None,
+            );
+            prop_assert!(!result.valid(), "None signing key should be invalid");
+            prop_assert!(
+                result.error_message().unwrap().contains("key"),
+                "Error should mention key"
+            );
+        }
+    }
+
+    // ============================================================
+    // Session State Transitions Properties
+    // ============================================================
+
+    proptest! {
+        /// Property 11: Consent giving transitions session from Pending to Accepted
+        #[test]
+        fn consent_transitions_pending_to_accepted(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}"
+        ) {
+            let mut session = SigningSession::new(&session_id, &recipient_id, &key);
+
+            // Initially pending
+            prop_assert_eq!(session.get_status(), "pending");
+            prop_assert!(!session.has_consent());
+
+            // After consent
+            session.give_consent();
+            prop_assert!(session.has_consent());
+            prop_assert_eq!(session.get_status(), "accepted");
+        }
+
+        /// Property 12: Decline transitions session and stores reason
+        #[test]
+        fn decline_transitions_and_stores_reason(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}",
+            reason in prop::option::of("[a-zA-Z0-9 ,.!?]{0,256}")
+        ) {
+            let mut session = SigningSession::new(&session_id, &recipient_id, &key);
+
+            session.decline(reason.clone());
+
+            prop_assert!(session.is_declined());
+            prop_assert_eq!(session.get_status(), "declined");
+            prop_assert_eq!(session.decline_reason(), reason);
+            prop_assert!(!session.can_finish(), "Declined session cannot finish");
+        }
+
+        /// Property 13: Expired sessions block finishing
+        #[test]
+        fn expired_sessions_block_finish(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}"
+        ) {
+            let mut session = SigningSession::new(&session_id, &recipient_id, &key);
+
+            session.set_expired();
+
+            prop_assert!(session.is_expired());
+            prop_assert_eq!(session.get_status(), "expired");
+            prop_assert!(!session.can_finish(), "Expired session cannot finish");
+        }
+    }
+
+    // ============================================================
+    // Session Expiry Detection Properties
+    // ============================================================
+
+    proptest! {
+        /// Property 14: Created timestamps are positive
+        #[test]
+        fn session_data_timestamps_positive(created_at in 0.0f64..1e15) {
+            let data = SigningSessionData {
+                session_id: "sess_123".to_string(),
+                recipient_id: "r1".to_string(),
+                signing_key: "key_abc".to_string(),
+                document_name: "Contract.pdf".to_string(),
+                fields: vec![],
+                completed_fields: vec![],
+                created_at,
+                sender_name: "Alice".to_string(),
+                sender_email: "alice@example.com".to_string(),
+                sent_at: "2025-12-21T12:00:00Z".to_string(),
+                status: SessionStatus::Pending,
+            };
+
+            prop_assert!(data.created_at >= 0.0, "Created timestamp should be non-negative");
+        }
+
+        /// Property 15: Status serialization roundtrip
+        #[test]
+        fn status_serialization_roundtrip(status_idx in 0usize..5) {
+            let status = match status_idx {
+                0 => SessionStatus::Pending,
+                1 => SessionStatus::Accepted,
+                2 => SessionStatus::Declined,
+                3 => SessionStatus::Completed,
+                _ => SessionStatus::Expired,
+            };
+
+            let data = SigningSessionData {
+                session_id: "sess_123".to_string(),
+                recipient_id: "r1".to_string(),
+                signing_key: "key_abc".to_string(),
+                document_name: "Contract.pdf".to_string(),
+                fields: vec![],
+                completed_fields: vec![],
+                created_at: 1234567890.0,
+                sender_name: "Alice".to_string(),
+                sender_email: "alice@example.com".to_string(),
+                sent_at: "2025-12-21T12:00:00Z".to_string(),
+                status,
+            };
+
+            let json = serde_json::to_string(&data).expect("Should serialize");
+            let deserialized: SigningSessionData = serde_json::from_str(&json).expect("Should deserialize");
+
+            prop_assert_eq!(data.status, deserialized.status, "Status should roundtrip correctly");
+        }
+    }
+
+    // ============================================================
+    // Field Filtering Properties
+    // ============================================================
+
+    /// Helper to create test fields
+    fn create_test_fields(recipient_ids: Vec<String>) -> Vec<SigningField> {
+        recipient_ids
+            .into_iter()
+            .enumerate()
+            .map(|(i, recipient_id)| SigningField {
+                id: format!("field_{}", i),
+                field_type: "signature".to_string(),
+                page: 1,
+                x: 100.0 + (i as f64 * 50.0),
+                y: 500.0,
+                width: 200.0,
+                height: 50.0,
+                required: true,
+                recipient_id,
+            })
+            .collect()
+    }
+
+    proptest! {
+        /// Property 16: Field recording tracks completion correctly
+        #[test]
+        fn field_recording_tracks_completion(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}",
+            num_fields in 1usize..10
+        ) {
+            let mut session = SigningSession::new(&session_id, &recipient_id, &key);
+
+            // Record signatures for multiple fields
+            for i in 0..num_fields {
+                let field_id = format!("field_{}", i);
+                session.record_signature(&field_id, "signature_data");
+            }
+
+            prop_assert_eq!(
+                session.completed_field_count(),
+                num_fields,
+                "Should track correct number of completed fields"
+            );
+        }
+
+        /// Property 17: Duplicate field recording doesn't double count
+        #[test]
+        fn duplicate_recording_no_double_count(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}"
+        ) {
+            let mut session = SigningSession::new(&session_id, &recipient_id, &key);
+
+            // Record same field twice
+            session.record_signature("field_1", "sig_v1");
+            session.record_signature("field_1", "sig_v2");
+
+            prop_assert_eq!(
+                session.completed_field_count(),
+                1,
+                "Duplicate recording should not double count"
+            );
+            prop_assert!(
+                session.is_field_completed("field_1"),
+                "Field should be marked completed"
+            );
+        }
+
+        /// Property 18: Field completion check works for recorded fields
+        #[test]
+        fn field_completion_check(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            num_fields in 1usize..10
+        ) {
+            let mut session = SigningSession::new(&session_id, "r1", "key_abc");
+
+            // Generate unique field IDs to avoid collision issues
+            let field_ids: Vec<String> = (0..num_fields).map(|i| format!("unique_field_{}", i)).collect();
+
+            // Record even-indexed fields
+            for (i, field_id) in field_ids.iter().enumerate() {
+                if i % 2 == 0 {
+                    session.record_signature(field_id, "sig_data");
+                }
+            }
+
+            // Verify completion status
+            for (i, field_id) in field_ids.iter().enumerate() {
+                let should_be_complete = i % 2 == 0;
+                prop_assert_eq!(
+                    session.is_field_completed(field_id),
+                    should_be_complete,
+                    "Field {} at index {} completion status should match (expected {})",
+                    field_id, i, should_be_complete
+                );
+            }
+        }
+    }
+
+    // ============================================================
+    // Offline Queue Serialization Properties
+    // ============================================================
+
+    /// Helper for comparing f64 with tolerance (JSON roundtrip can lose precision)
+    fn f64_approx_eq(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-10 || (a - b).abs() / a.abs().max(b.abs()).max(1.0) < 1e-14
+    }
+
+    proptest! {
+        /// Property 19: QueuedSubmission serializes and deserializes correctly
+        #[test]
+        fn queued_submission_roundtrip(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,64}",
+            // Use integer timestamps to avoid floating point precision issues
+            timestamp_int in 0i64..1_000_000_000_000i64
+        ) {
+            let timestamp = timestamp_int as f64;
+            let queued = QueuedSubmission {
+                session_id: session_id.clone(),
+                recipient_id: recipient_id.clone(),
+                signing_key: key.clone(),
+                signatures: r#"{"field_1":"sig_data"}"#.to_string(),
+                completed_at: "2025-12-21T12:00:00Z".to_string(),
+                timestamp,
+            };
+
+            let json = serde_json::to_string(&queued).expect("Should serialize");
+            let deserialized: QueuedSubmission = serde_json::from_str(&json).expect("Should deserialize");
+
+            prop_assert_eq!(queued.session_id, deserialized.session_id);
+            prop_assert_eq!(queued.recipient_id, deserialized.recipient_id);
+            prop_assert_eq!(queued.signing_key, deserialized.signing_key);
+            prop_assert_eq!(queued.signatures, deserialized.signatures);
+            prop_assert_eq!(queued.completed_at, deserialized.completed_at);
+            prop_assert!(f64_approx_eq(queued.timestamp, deserialized.timestamp),
+                "Timestamp mismatch: {} vs {}", queued.timestamp, deserialized.timestamp);
+        }
+
+        /// Property 20: SigningField serializes and deserializes correctly
+        #[test]
+        fn signing_field_roundtrip(
+            id in "[a-zA-Z0-9_-]{1,32}",
+            field_type in "(signature|initials|date|text)",
+            page in 1u32..100,
+            // Use integer coords to avoid floating point precision issues in JSON roundtrip
+            x_int in 0i32..1000,
+            y_int in 0i32..1000,
+            width_int in 10i32..500,
+            height_int in 10i32..200,
+            required in prop::bool::ANY,
+            recipient_id in "[a-zA-Z0-9_-]{1,32}"
+        ) {
+            let x = x_int as f64;
+            let y = y_int as f64;
+            let width = width_int as f64;
+            let height = height_int as f64;
+
+            let field = SigningField {
+                id: id.clone(),
+                field_type: field_type.clone(),
+                page,
+                x,
+                y,
+                width,
+                height,
+                required,
+                recipient_id: recipient_id.clone(),
+            };
+
+            let json = serde_json::to_string(&field).expect("Should serialize");
+            let deserialized: SigningField = serde_json::from_str(&json).expect("Should deserialize");
+
+            prop_assert_eq!(field.id, deserialized.id);
+            prop_assert_eq!(field.field_type, deserialized.field_type);
+            prop_assert_eq!(field.page, deserialized.page);
+            prop_assert!(f64_approx_eq(field.x, deserialized.x), "x mismatch");
+            prop_assert!(f64_approx_eq(field.y, deserialized.y), "y mismatch");
+            prop_assert!(f64_approx_eq(field.width, deserialized.width), "width mismatch");
+            prop_assert!(f64_approx_eq(field.height, deserialized.height), "height mismatch");
+            prop_assert_eq!(field.required, deserialized.required);
+            prop_assert_eq!(field.recipient_id, deserialized.recipient_id);
+        }
+
+        /// Property 21: SigningSessionData full roundtrip
+        #[test]
+        fn session_data_full_roundtrip(
+            session_id in "[a-zA-Z0-9_-]{3,32}",
+            recipient_id in "[a-zA-Z0-9_-]{1,32}",
+            key in "[a-zA-Z0-9_-]{3,32}",
+            doc_name in "[a-zA-Z0-9_. -]{1,64}",
+            sender_name in "[a-zA-Z ]{1,64}",
+            sender_email in "[a-z]{3,10}@[a-z]{3,10}\\.[a-z]{2,4}",
+            status_idx in 0usize..5
+        ) {
+            let status = match status_idx {
+                0 => SessionStatus::Pending,
+                1 => SessionStatus::Accepted,
+                2 => SessionStatus::Declined,
+                3 => SessionStatus::Completed,
+                _ => SessionStatus::Expired,
+            };
+
+            let data = SigningSessionData {
+                session_id,
+                recipient_id,
+                signing_key: key,
+                document_name: doc_name,
+                fields: vec![],
+                completed_fields: vec![],
+                created_at: 1234567890.0,
+                sender_name,
+                sender_email,
+                sent_at: "2025-12-21T12:00:00Z".to_string(),
+                status,
+            };
+
+            let json = serde_json::to_string(&data).expect("Should serialize");
+            let deserialized: SigningSessionData = serde_json::from_str(&json).expect("Should deserialize");
+
+            prop_assert_eq!(data.session_id, deserialized.session_id);
+            prop_assert_eq!(data.recipient_id, deserialized.recipient_id);
+            prop_assert_eq!(data.signing_key, deserialized.signing_key);
+            prop_assert_eq!(data.document_name, deserialized.document_name);
+            prop_assert_eq!(data.sender_name, deserialized.sender_name);
+            prop_assert_eq!(data.sender_email, deserialized.sender_email);
+            prop_assert_eq!(data.status, deserialized.status);
+        }
+    }
+}

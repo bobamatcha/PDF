@@ -1,0 +1,649 @@
+/**
+ * DOCSIGN_PLAN: Geriatric UX CSS Foundation
+ *
+ * Design for users 65+ with:
+ * - Vision impairments (cataracts, macular degeneration)
+ * - Reduced fine motor control
+ * - Technology anxiety
+ *
+ * Standards:
+ * - WCAG 2.1 AAA compliance (7:1 contrast)
+ * - 60px minimum touch targets
+ * - 18px base font size
+ * - No time-limited actions
+ */
+
+/* ==========================================================================
+   CSS Custom Properties (Design Tokens)
+   ========================================================================== */
+
+:root {
+    /* Typography - Larger than typical, 18px MINIMUM for all text */
+    --font-size-base: 18px;
+    --font-size-sm: 18px;  /* Geriatric UX: no text smaller than 18px */
+    --font-size-lg: 22px;
+    --font-size-xl: 28px;
+    --font-size-action: 24px;
+    --font-size-heading: 32px;
+
+    /* Line heights for readability */
+    --line-height-body: 1.6;
+    --line-height-heading: 1.3;
+
+    /* Font families - high x-height, clear letterforms */
+    --font-family-body: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-family-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+    /* Touch targets - MINIMUM 60px */
+    --touch-target-min: 60px;
+    --touch-target-comfortable: 72px;
+
+    /* Spacing - generous for reduced dexterity */
+    --spacing-xs: 8px;
+    --spacing-sm: 16px;
+    --spacing-md: 24px;
+    --spacing-lg: 32px;
+    --spacing-xl: 48px;
+    --button-gap: 24px;
+
+    /* Colors - AAA contrast (7:1 minimum) */
+    --color-text-primary: #1a1a1a;
+    --color-text-secondary: #4a4a4a;
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f8f8f8;
+
+    /* High-visibility action colors */
+    --color-action-bg: #0056b3;
+    --color-action-text: #ffffff;
+    --color-action-bg-hover: #003d82;
+    --color-action-border: #003d82;
+
+    /* Status colors - distinct by pattern, not just hue */
+    --color-success: #006644;
+    --color-success-bg: #e6f4ed;
+    --color-success-border: #00a86b;
+
+    --color-error: #b30000;
+    --color-error-bg: #fce8e8;
+    --color-error-border: #cc0000;
+
+    --color-warning: #8a5700;
+    --color-warning-bg: #fef3cd;
+    --color-warning-border: #d4a200;
+
+    /* Focus indicators - highly visible */
+    --focus-ring-width: 4px;
+    --focus-ring-color: #0066cc;
+    --focus-ring-offset: 2px;
+
+    /* Borders */
+    --border-width: 2px;
+    --border-radius: 8px;
+    --border-radius-lg: 12px;
+}
+
+/* Dark mode with maintained contrast */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-text-primary: #f5f5f5;
+        --color-text-secondary: #d0d0d0;
+        --color-bg-primary: #1a1a1a;
+        --color-bg-secondary: #2a2a2a;
+        --color-action-bg: #4da6ff;
+        --color-action-text: #000000;
+        --color-action-bg-hover: #80bfff;
+        --focus-ring-color: #80bfff;
+    }
+}
+
+/* ==========================================================================
+   Base Typography
+   ========================================================================== */
+
+body {
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-body);
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    line-height: var(--line-height-heading);
+    font-weight: 600;
+    margin-bottom: var(--spacing-sm);
+}
+
+h1 { font-size: var(--font-size-heading); }
+h2 { font-size: var(--font-size-xl); }
+h3 { font-size: var(--font-size-lg); }
+
+p {
+    margin-bottom: var(--spacing-sm);
+}
+
+/* ==========================================================================
+   Interactive Elements - 60px minimum touch targets
+   ========================================================================== */
+
+button,
+.btn,
+a.btn,
+[role="button"],
+input[type="submit"],
+input[type="button"],
+input[type="reset"] {
+    min-width: var(--touch-target-min);
+    min-height: var(--touch-target-min);
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-action);
+    font-weight: 600;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    text-decoration: none;
+    border: var(--border-width) solid transparent;
+}
+
+/* Primary action buttons */
+.btn-primary,
+button.primary,
+[data-action="primary"] {
+    background-color: var(--color-action-bg);
+    color: var(--color-action-text);
+    border-color: var(--color-action-border);
+}
+
+.btn-primary:hover,
+button.primary:hover,
+[data-action="primary"]:hover {
+    background-color: var(--color-action-bg-hover);
+}
+
+/* Secondary action buttons */
+.btn-secondary,
+button.secondary,
+[data-action="secondary"] {
+    background-color: var(--color-bg-primary);
+    color: var(--color-action-bg);
+    border-color: var(--color-action-bg);
+}
+
+.btn-secondary:hover,
+button.secondary:hover,
+[data-action="secondary"]:hover {
+    background-color: var(--color-bg-secondary);
+}
+
+/* Large buttons for critical actions */
+.btn-large,
+button.large,
+[data-size="large"] {
+    min-height: var(--touch-target-comfortable);
+    padding: var(--spacing-md) var(--spacing-lg);
+    font-size: var(--font-size-xl);
+}
+
+/* Button groups with adequate spacing */
+.button-group,
+.btn-group,
+[role="group"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--button-gap);
+}
+
+/* ==========================================================================
+   Form Elements
+   ========================================================================== */
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="tel"],
+input[type="url"],
+input[type="search"],
+input[type="date"],
+textarea,
+select {
+    min-height: var(--touch-target-min);
+    padding: var(--spacing-sm);
+    font-size: var(--font-size-base);
+    font-family: var(--font-family-body);
+    border: var(--border-width) solid var(--color-text-secondary);
+    border-radius: var(--border-radius);
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    width: 100%;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+    border-color: var(--focus-ring-color);
+}
+
+/* Large checkboxes and radio buttons */
+input[type="checkbox"],
+input[type="radio"] {
+    width: 32px;
+    height: 32px;
+    accent-color: var(--color-action-bg);
+    cursor: pointer;
+}
+
+/* Labels - clear association with inputs */
+label {
+    display: block;
+    font-size: var(--font-size-lg);
+    font-weight: 500;
+    margin-bottom: var(--spacing-xs);
+    color: var(--color-text-primary);
+}
+
+/* Form groups */
+.form-group,
+.input-group {
+    margin-bottom: var(--spacing-lg);
+}
+
+/* ==========================================================================
+   Focus Indicators - Highly Visible
+   ========================================================================== */
+
+*:focus {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+}
+
+*:focus:not(:focus-visible) {
+    outline: none;
+}
+
+*:focus-visible {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+}
+
+/* Skip link for keyboard navigation */
+.skip-link {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--color-action-bg);
+    color: var(--color-action-text);
+    font-size: var(--font-size-lg);
+    z-index: 10000;
+    text-decoration: none;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* ==========================================================================
+   Error and Status Messages
+   ========================================================================== */
+
+.error-message,
+.alert-error,
+[role="alert"][data-type="error"] {
+    background-color: var(--color-error-bg);
+    border: var(--border-width) solid var(--color-error-border);
+    color: var(--color-error);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-md);
+}
+
+.success-message,
+.alert-success,
+[role="alert"][data-type="success"] {
+    background-color: var(--color-success-bg);
+    border: var(--border-width) solid var(--color-success-border);
+    color: var(--color-success);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-md);
+}
+
+.warning-message,
+.alert-warning,
+[role="alert"][data-type="warning"] {
+    background-color: var(--color-warning-bg);
+    border: var(--border-width) solid var(--color-warning-border);
+    color: var(--color-warning);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-md);
+}
+
+/* ==========================================================================
+   Progress Indicators
+   ========================================================================== */
+
+.progress-container {
+    padding: var(--spacing-lg);
+    text-align: center;
+}
+
+.progress-bar {
+    height: 24px;
+    background-color: var(--color-bg-secondary);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    margin: var(--spacing-md) 0;
+}
+
+.progress-fill {
+    height: 100%;
+    background-color: var(--color-action-bg);
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-primary);
+}
+
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--color-bg-secondary);
+    border-top-color: var(--color-action-bg);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: var(--spacing-md) auto;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ==========================================================================
+   Signature Capture - Geriatric-Optimized
+   ========================================================================== */
+
+.signature-container {
+    border: 3px solid var(--color-text-secondary);
+    border-radius: var(--border-radius-lg);
+    padding: var(--spacing-md);
+    background-color: var(--color-bg-primary);
+}
+
+.signature-pad {
+    width: 100%;
+    min-height: 200px;
+    background-color: #ffffff;
+    border: 2px dashed var(--color-text-secondary);
+    border-radius: var(--border-radius);
+    cursor: crosshair;
+    touch-action: none;
+}
+
+.signature-instructions {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-secondary);
+    text-align: center;
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.signature-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--button-gap);
+    margin-top: var(--spacing-md);
+}
+
+/* ==========================================================================
+   Modal and Dialog
+   ========================================================================== */
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: var(--spacing-md);
+}
+
+.modal-content {
+    background-color: var(--color-bg-primary);
+    border-radius: var(--border-radius-lg);
+    padding: var(--spacing-xl);
+    max-width: 600px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.modal-title {
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--spacing-md);
+}
+
+.modal-body {
+    font-size: var(--font-size-base);
+    margin-bottom: var(--spacing-lg);
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--button-gap);
+    flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   Confirmation Dialog - Clear and Deliberate
+   ========================================================================== */
+
+.confirm-dialog {
+    text-align: center;
+}
+
+.confirm-icon {
+    font-size: 64px;
+    margin-bottom: var(--spacing-md);
+}
+
+.confirm-title {
+    font-size: var(--font-size-xl);
+    font-weight: 700;
+    margin-bottom: var(--spacing-sm);
+}
+
+.confirm-message {
+    font-size: var(--font-size-lg);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.confirm-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--button-gap);
+    flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   Step Indicators - Larger and Clearer
+   ========================================================================== */
+
+.stepper-geriatric {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: var(--spacing-lg);
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.step-geriatric {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.step-circle-geriatric {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background-color: var(--color-bg-secondary);
+    border: 3px solid var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--color-text-secondary);
+}
+
+.step-geriatric.active .step-circle-geriatric {
+    background-color: var(--color-action-bg);
+    border-color: var(--color-action-bg);
+    color: var(--color-action-text);
+}
+
+.step-geriatric.completed .step-circle-geriatric {
+    background-color: var(--color-success);
+    border-color: var(--color-success);
+    color: #ffffff;
+}
+
+.step-label-geriatric {
+    font-size: var(--font-size-lg);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+}
+
+.step-geriatric.active .step-label-geriatric {
+    color: var(--color-action-bg);
+    font-weight: 700;
+}
+
+.step-geriatric.completed .step-label-geriatric {
+    color: var(--color-success);
+}
+
+.step-connector-geriatric {
+    width: 40px;
+    height: 4px;
+    background-color: var(--color-bg-secondary);
+    border-radius: 2px;
+}
+
+.step-geriatric.completed + .step-connector-geriatric {
+    background-color: var(--color-success);
+}
+
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+
+@media (max-width: 768px) {
+    :root {
+        --font-size-base: 20px;
+        --font-size-action: 22px;
+        --spacing-md: 20px;
+        --spacing-lg: 28px;
+    }
+
+    .button-group,
+    .btn-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .button-group button,
+    .btn-group button {
+        width: 100%;
+    }
+
+    .modal-content {
+        padding: var(--spacing-md);
+        margin: var(--spacing-sm);
+    }
+
+    .stepper-geriatric {
+        flex-direction: column;
+    }
+
+    .step-connector-geriatric {
+        width: 4px;
+        height: 24px;
+    }
+}
+
+/* ==========================================================================
+   Utility Classes
+   ========================================================================== */
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
+.mt-sm { margin-top: var(--spacing-sm); }
+.mt-md { margin-top: var(--spacing-md); }
+.mt-lg { margin-top: var(--spacing-lg); }
+.mb-sm { margin-bottom: var(--spacing-sm); }
+.mb-md { margin-bottom: var(--spacing-md); }
+.mb-lg { margin-bottom: var(--spacing-lg); }
+
+.hidden { display: none !important; }
+
+/* Ensure no content is cut off */
+.safe-area {
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* ==========================================================================
+   Mobile Signature Modal
+   Note: Primary styles are injected by mobile-signature-modal.ts
+   These are fallback/additional styles for integration
+   ========================================================================== */
+
+/* Prevent body scroll when modal is open */
+body.mobile-signature-modal-open {
+    overflow: hidden !important;
+    position: fixed !important;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Ensure modal appears above all other content */
+.mobile-signature-modal {
+    z-index: 10000;
+}

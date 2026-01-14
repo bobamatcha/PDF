@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Simple, transparent pricing for document signing. Pay only for what you use.">
+    <title>Pricing - Get Signatures</title>
+    <link rel="stylesheet" href="geriatric.css">
+    <style>
+        /* Pricing page styles - follows geriatric.css patterns */
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --text-primary: #1a1a1a;
+            --text-secondary: #4a4a4a;
+            --text-muted: #6b7280;
+            --border-primary: #d1d5db;
+            --accent-primary: #0056b3;
+            --accent-hover: #003d82;
+            --accent-light: #e6f0ff;
+            --success: #006644;
+            --success-bg: #e6f4ed;
+            --highlight: #fef3c7;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: var(--accent-primary);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .header-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .header-links a {
+            color: white;
+            text-decoration: none;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .header-links a:hover {
+            opacity: 1;
+            text-decoration: underline;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        .pricing-header {
+            text-align: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .pricing-header h2 {
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .pricing-header p {
+            font-size: 20px;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Billing toggle */
+        .billing-toggle {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .billing-toggle label {
+            font-size: 16px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+
+        .billing-toggle label.active {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 60px;
+            height: 32px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--border-primary);
+            transition: 0.3s;
+            border-radius: 32px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 24px;
+            width: 24px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: var(--accent-primary);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(28px);
+        }
+
+        .annual-badge {
+            background: var(--success-bg);
+            color: var(--success);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        /* Pricing cards */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        @media (max-width: 1024px) {
+            .pricing-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .pricing-card {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            flex-direction: column;
+            border: 2px solid transparent;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .pricing-card:hover {
+            box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+        }
+
+        .pricing-card.recommended {
+            border-color: var(--accent-primary);
+            transform: scale(1.02);
+        }
+
+        .pricing-card.recommended::before {
+            content: "Most Popular";
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent-primary);
+            color: white;
+            padding: 0.25rem 1rem;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .tier-name {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .tier-price {
+            margin-bottom: 1rem;
+        }
+
+        .price-amount {
+            font-size: 42px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .price-period {
+            font-size: 16px;
+            color: var(--text-secondary);
+        }
+
+        .price-annual {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .tier-docs {
+            font-size: 18px;
+            color: var(--text-secondary);
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-primary);
+            margin-bottom: 1rem;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-bottom: 1.5rem;
+            flex-grow: 1;
+        }
+
+        .feature-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
+            font-size: 16px;
+            color: var(--text-secondary);
+        }
+
+        .feature-list li::before {
+            content: "\2713";
+            color: var(--success);
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .tier-cta {
+            width: 100%;
+            padding: 1rem;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+            text-decoration: none;
+            display: block;
+        }
+
+        .tier-cta.primary {
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+        }
+
+        .tier-cta.primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .tier-cta.secondary {
+            background: white;
+            color: var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+        }
+
+        .tier-cta.secondary:hover {
+            background: var(--accent-light);
+        }
+
+        /* Bottom info */
+        .pricing-footer {
+            text-align: center;
+            padding: 2rem;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            margin-bottom: 2rem;
+        }
+
+        .pricing-footer p {
+            color: var(--text-secondary);
+            font-size: 16px;
+            margin-bottom: 0.5rem;
+        }
+
+        .pricing-footer .highlight {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .trust-badges {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+            margin-top: 1.5rem;
+        }
+
+        .trust-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .trust-badge svg {
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }
+
+        /* Current plan badge */
+        .current-plan-badge {
+            background: var(--success-bg);
+            color: var(--success);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            display: none;
+        }
+
+        .pricing-card.current .current-plan-badge {
+            display: inline-block;
+        }
+
+        .pricing-card.current .tier-cta {
+            background: var(--border-primary);
+            color: var(--text-secondary);
+            cursor: default;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .footer a {
+            color: var(--accent-primary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-inner">
+            <h1>Get Signatures</h1>
+            <nav class="header-links">
+                <a href="/">Home</a>
+                <a href="/legal.html">Legal</a>
+                <a href="/auth.html">Sign In</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="pricing-header">
+            <h2>Pricing</h2>
+            <p>Send documents for signing. You pay only for how many documents you send per month.</p>
+        </div>
+
+        <!-- Billing toggle -->
+        <div class="billing-toggle">
+            <label id="monthly-label" class="active">Monthly</label>
+            <div class="toggle-switch">
+                <input type="checkbox" id="billing-toggle">
+                <label for="billing-toggle" class="toggle-slider"></label>
+            </div>
+            <label id="annual-label">Annual</label>
+            <span class="annual-badge">2 months free</span>
+        </div>
+
+        <!-- Pricing cards -->
+        <div class="pricing-grid">
+            <!-- Free -->
+            <div class="pricing-card" data-tier="free">
+                <span class="current-plan-badge">Current Plan</span>
+                <h3 class="tier-name">Free</h3>
+                <div class="tier-price">
+                    <span class="price-amount">$0</span>
+                    <span class="price-period">/month</span>
+                </div>
+                <p class="tier-docs">3 documents per month</p>
+                <ul class="feature-list">
+                    <li>Basic audit log</li>
+                    <li>Email delivery</li>
+                    <li>Hard limit (no credit card)</li>
+                </ul>
+                <a href="/auth.html" class="tier-cta secondary">Get Started</a>
+            </div>
+
+            <!-- Personal -->
+            <div class="pricing-card" data-tier="personal">
+                <span class="current-plan-badge">Current Plan</span>
+                <h3 class="tier-name">Personal</h3>
+                <div class="tier-price">
+                    <span class="price-amount" data-monthly="$10" data-annual="$100">$10</span>
+                    <span class="price-period" data-monthly="/month" data-annual="/year">/month</span>
+                    <p class="price-annual" data-monthly="" data-annual="$8.33/month billed annually"></p>
+                </div>
+                <p class="tier-docs">25 documents per month</p>
+                <ul class="feature-list">
+                    <li>Full audit log</li>
+                    <li>Signed PDF download</li>
+                    <li>Overages: $0.50/doc (max 50/month)</li>
+                </ul>
+                <a href="#" class="tier-cta secondary" onclick="handleUpgrade('personal')">Upgrade</a>
+            </div>
+
+            <!-- Professional (Recommended) -->
+            <div class="pricing-card recommended" data-tier="professional">
+                <span class="current-plan-badge">Current Plan</span>
+                <h3 class="tier-name">Professional</h3>
+                <div class="tier-price">
+                    <span class="price-amount" data-monthly="$25" data-annual="$250">$25</span>
+                    <span class="price-period" data-monthly="/month" data-annual="/year">/month</span>
+                    <p class="price-annual" data-monthly="" data-annual="$20.83/month billed annually"></p>
+                </div>
+                <p class="tier-docs">100 documents per month</p>
+                <ul class="feature-list">
+                    <li>Templates & reusable fields</li>
+                    <li>Full audit log</li>
+                    <li>Overages: $0.50/doc (max 200/month)</li>
+                </ul>
+                <a href="#" class="tier-cta primary" onclick="handleUpgrade('professional')">Upgrade</a>
+            </div>
+
+            <!-- Business -->
+            <div class="pricing-card" data-tier="business">
+                <span class="current-plan-badge">Current Plan</span>
+                <h3 class="tier-name">Business</h3>
+                <div class="tier-price">
+                    <span class="price-amount" data-monthly="$60" data-annual="$600">$60</span>
+                    <span class="price-period" data-monthly="/month" data-annual="/year">/month</span>
+                    <p class="price-annual" data-monthly="" data-annual="$50/month billed annually"></p>
+                </div>
+                <p class="tier-docs">300 documents per month</p>
+                <ul class="feature-list">
+                    <li>Multiple senders</li>
+                    <li>Templates & reusable fields</li>
+                    <li>Overages: $0.50/doc (max 600/month)</li>
+                </ul>
+                <a href="#" class="tier-cta secondary" onclick="handleUpgrade('business')">Upgrade</a>
+            </div>
+        </div>
+
+        <!-- Bottom info -->
+        <div class="pricing-footer">
+            <p><span class="highlight">Upgrade or downgrade instantly.</span> Limits update immediately.</p>
+            <p>No seats. No envelopes. Cancel anytime.</p>
+            <div class="trust-badges">
+                <div class="trust-badge">
+                    <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+                    Secure & Encrypted
+                </div>
+                <div class="trust-badge">
+                    <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/></svg>
+                    No Credit Card for Free
+                </div>
+                <div class="trust-badge">
+                    <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                    Instant Access
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <p>Questions? <a href="mailto:support@getsignatures.org">Contact us</a> | <a href="/legal.html">Terms of Service</a></p>
+    </footer>
+
+    <script>
+        // Billing toggle functionality
+        const billingToggle = document.getElementById('billing-toggle');
+        const monthlyLabel = document.getElementById('monthly-label');
+        const annualLabel = document.getElementById('annual-label');
+
+        billingToggle.addEventListener('change', function() {
+            const isAnnual = this.checked;
+
+            // Update labels
+            monthlyLabel.classList.toggle('active', !isAnnual);
+            annualLabel.classList.toggle('active', isAnnual);
+
+            // Update prices
+            document.querySelectorAll('.price-amount[data-monthly]').forEach(el => {
+                el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
+            });
+            document.querySelectorAll('.price-period[data-monthly]').forEach(el => {
+                el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
+            });
+            document.querySelectorAll('.price-annual[data-monthly]').forEach(el => {
+                el.textContent = isAnnual ? el.dataset.annual : el.dataset.monthly;
+            });
+        });
+
+        // Price ID mapping (loaded from API or hardcoded)
+        // User must configure these in wrangler.toml after creating products in Stripe Dashboard
+        const priceIds = {
+            personal_monthly: 'price_1SoEplCqoxDf48Hlm1gVmoQh',
+            personal_annual: 'price_1SoEplCqoxDf48HlAoPYdjaW',
+            professional_monthly: 'price_1SoEsnCqoxDf48Hle6HEw5ug',
+            professional_annual: 'price_1SoEsnCqoxDf48HlyQdHYDZc',
+            business_monthly: 'price_1SoEtOCqoxDf48HlyHWebJG5',
+            business_annual: 'price_1SoEtOCqoxDf48Hl0ZiI3tLl'
+        };
+
+        // Handle upgrade click
+        async function handleUpgrade(tier) {
+            // Check if user is logged in
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                // Redirect to login with return URL
+                window.location.href = '/auth.html?redirect=' + encodeURIComponent('/pricing.html?upgrade=' + tier);
+                return;
+            }
+
+            const isAnnual = billingToggle.checked;
+            const billingType = isAnnual ? 'annual' : 'monthly';
+            const priceKey = tier + '_' + billingType;
+            const priceId = priceIds[priceKey];
+
+            // Check if Stripe is configured
+            if (!priceId) {
+                alert(
+                    'Thank you for your interest in upgrading!\n\n' +
+                    'Payment processing is being configured.\n\n' +
+                    'Please contact support@getsignatures.org ' +
+                    'to upgrade to the ' + tier.charAt(0).toUpperCase() + tier.slice(1) +
+                    ' plan (' + billingType + ' billing).'
+                );
+                return;
+            }
+
+            // Show loading state on button
+            const button = event.target;
+            const originalText = button.textContent;
+            button.textContent = 'Loading...';
+            button.disabled = true;
+
+            try {
+                const response = await fetch('/billing/checkout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        price_id: priceId,
+                        annual: isAnnual
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.checkout_url) {
+                    // Redirect to Stripe Checkout
+                    window.location.href = data.checkout_url;
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to create checkout session'));
+                    button.textContent = originalText;
+                    button.disabled = false;
+                }
+            } catch (e) {
+                console.error('Checkout error:', e);
+                alert('Error connecting to payment service. Please try again.');
+                button.textContent = originalText;
+                button.disabled = false;
+            }
+        }
+
+        // Handle manage subscription click
+        async function handleManageSubscription() {
+            const token = localStorage.getItem('access_token');
+            if (!token) {
+                window.location.href = '/auth.html?redirect=' + encodeURIComponent('/pricing.html');
+                return;
+            }
+
+            try {
+                const response = await fetch('/billing/portal', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success && data.portal_url) {
+                    window.location.href = data.portal_url;
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to open billing portal'));
+                }
+            } catch (e) {
+                console.error('Portal error:', e);
+                alert('Error connecting to billing service. Please try again.');
+            }
+        }
+
+        // Check for logged-in user and mark current plan
+        async function checkUserPlan() {
+            const token = localStorage.getItem('access_token');
+            if (!token) return;
+
+            try {
+                const response = await fetch('/auth/me', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const userTier = data.user?.tier || 'free';
+
+                    // Mark current plan
+                    document.querySelectorAll('.pricing-card').forEach(card => {
+                        card.classList.remove('current');
+                    });
+
+                    const currentCard = document.querySelector(`.pricing-card[data-tier="${userTier}"]`);
+                    if (currentCard) {
+                        currentCard.classList.add('current');
+                        const cta = currentCard.querySelector('.tier-cta');
+                        if (cta) cta.textContent = 'Current Plan';
+                    }
+
+                    // Update header with user info
+                    const headerLinks = document.querySelector('.header-links');
+                    if (headerLinks && data.user) {
+                        headerLinks.innerHTML = `
+                            <a href="/">Home</a>
+                            <span style="opacity: 0.7">${data.user.first_name || data.user.email}</span>
+                        `;
+                    }
+
+                    // If user has a paid subscription, show manage link
+                    if (userTier !== 'free') {
+                        const footer = document.querySelector('.pricing-footer');
+                        if (footer) {
+                            const manageLink = document.createElement('p');
+                            manageLink.style.marginTop = '1rem';
+                            manageLink.innerHTML = '<a href="#" onclick="handleManageSubscription(); return false;" style="color: var(--accent-primary); font-weight: 600;">Manage Your Subscription</a>';
+                            footer.appendChild(manageLink);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log('Not logged in or error fetching user');
+            }
+        }
+
+        // Check URL for query params
+        const urlParams = new URLSearchParams(window.location.search);
+
+        // Handle upgrade param (post-login redirect)
+        const upgradeTier = urlParams.get('upgrade');
+        if (upgradeTier) {
+            // Clear the URL param
+            window.history.replaceState({}, '', '/pricing.html');
+            // Trigger upgrade after a short delay to let the page load
+            setTimeout(() => handleUpgrade(upgradeTier), 500);
+        }
+
+        // Handle success param (returned from Stripe Checkout)
+        const success = urlParams.get('success');
+        if (success === 'true') {
+            window.history.replaceState({}, '', '/pricing.html');
+            // Show success message
+            const banner = document.createElement('div');
+            banner.style.cssText = 'background: var(--success-bg); color: var(--success); padding: 1rem; text-align: center; font-weight: 600; border-radius: 8px; margin-bottom: 1.5rem;';
+            banner.textContent = 'Payment successful! Your plan has been upgraded. It may take a moment to update.';
+            document.querySelector('.pricing-header').after(banner);
+            // Refresh user info after a short delay
+            setTimeout(checkUserPlan, 2000);
+        }
+
+        // Handle canceled param (returned from Stripe Checkout)
+        const canceled = urlParams.get('canceled');
+        if (canceled === 'true') {
+            window.history.replaceState({}, '', '/pricing.html');
+            // Show canceled message
+            const banner = document.createElement('div');
+            banner.style.cssText = 'background: #fef2f2; color: #991b1b; padding: 1rem; text-align: center; font-weight: 600; border-radius: 8px; margin-bottom: 1.5rem;';
+            banner.textContent = 'Payment was canceled. You can try again anytime.';
+            document.querySelector('.pricing-header').after(banner);
+        }
+
+        // Initialize
+        checkUserPlan();
+    </script>
+</body>
+</html>

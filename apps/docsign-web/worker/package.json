@@ -1,0 +1,18 @@
+{
+  "name": "docsign-worker-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Integration tests for docsign-worker using vitest-pool-workers",
+  "scripts": {
+    "build": "cargo install -q worker-build && worker-build --release",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.9.0",
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "vitest": "~3.0.0",
+    "typescript": "^5.7.0"
+  }
+}

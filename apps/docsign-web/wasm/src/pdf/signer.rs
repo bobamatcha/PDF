@@ -4,8 +4,12 @@ use crate::crypto::cms::build_signed_data;
 use crate::crypto::keys::SigningIdentity;
 use crate::pdf::parser::PdfDocument;
 use chrono::Utc;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use lopdf::{Dictionary, Object, ObjectId, Stream};
+use png::Decoder as PngDecoder;
 use sha2::{Digest, Sha256};
+use std::io::Write;
 
 /// Escape special characters for PDF string literals
 fn escape_pdf_string(s: &str) -> String {
@@ -813,6 +817,216 @@ Q",
         stream_dict.set("Length", Object::Integer(content_bytes.len() as i64));
 
         Ok(Object::Stream(Stream::new(stream_dict, content_bytes)))
+    }
+
+    /// Add an image stamp (signature/initials) to the document
+    /// Image data should be raw PNG bytes (NOT base64)
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_image_stamp(
+        &mut self,
+        page: u32,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        image_data: &[u8],
+    ) -> Result<(), String> {
+        // Decode PNG and get pixel data
+        let (img_width, img_height, rgb_data) = decode_png_to_rgb(image_data)?;
+
+        // Compress pixel data with zlib/deflate
+        let compressed = compress_data(&rgb_data)?;
+
+        // Create the image XObject
+        let image_xobject = self.create_image_xobject(img_width, img_height, &compressed)?;
+        let image_id = self.doc.doc_mut().add_object(image_xobject);
+
+        // Create form XObject that draws the image at the correct size
+        let form_xobject = self.create_image_form_xobject(width, height, image_id)?;
+        let form_id = self.doc.doc_mut().add_object(form_xobject);
+
+        // Create AP dictionary
+        let mut ap_dict = Dictionary::new();
+        ap_dict.set("N", Object::Reference(form_id));
+
+        // Create stamp annotation
+        let mut annot_dict = Dictionary::new();
+        annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
+        annot_dict.set("Subtype", Object::Name(b"Stamp".to_vec()));
+        annot_dict.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Real(x as f32),
+                Object::Real(y as f32),
+                Object::Real((x + width) as f32),
+                Object::Real((y + height) as f32),
+            ]),
+        );
+        annot_dict.set("F", Object::Integer(4)); // Print flag
+        annot_dict.set("AP", Object::Dictionary(ap_dict));
+
+        // Add page reference
+        if let Some(page_id) = self.doc.page_id(page) {
+            annot_dict.set("P", Object::Reference(page_id));
+        }
+
+        let annot_id = self
+            .doc
+            .doc_mut()
+            .add_object(Object::Dictionary(annot_dict));
+
+        // Add to page annotations
+        self.add_to_page_annots(page, annot_id)?;
+
+        Ok(())
+    }
+
+    /// Create an Image XObject from compressed RGB data
+    fn create_image_xobject(
+        &self,
+        width: u32,
+        height: u32,
+        compressed_data: &[u8],
+    ) -> Result<Object, String> {
+        let mut img_dict = Dictionary::new();
+        img_dict.set("Type", Object::Name(b"XObject".to_vec()));
+        img_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+        img_dict.set("Width", Object::Integer(width as i64));
+        img_dict.set("Height", Object::Integer(height as i64));
+        img_dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+        img_dict.set("BitsPerComponent", Object::Integer(8));
+        img_dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+        img_dict.set("Length", Object::Integer(compressed_data.len() as i64));
+
+        Ok(Object::Stream(Stream::new(
+            img_dict,
+            compressed_data.to_vec(),
+        )))
+    }
+
+    /// Create a Form XObject that draws the image scaled to the specified dimensions
+    fn create_image_form_xobject(
+        &self,
+        width: f64,
+        height: f64,
+        image_id: ObjectId,
+    ) -> Result<Object, String> {
+        // Content stream: scale and draw image
+        // The cm operator applies a transformation matrix
+        // [width 0 0 height 0 0 cm] scales the image to fill the form bbox
+        let content = format!(
+            "q\n{} 0 0 {} 0 0 cm\n/Im0 Do\nQ",
+            width as i64, height as i64
+        );
+        let content_bytes = content.into_bytes();
+
+        // Create XObject resources pointing to the image
+        let mut xobject_dict = Dictionary::new();
+        xobject_dict.set("Im0", Object::Reference(image_id));
+
+        let mut resources = Dictionary::new();
+        resources.set("XObject", Object::Dictionary(xobject_dict));
+
+        let mut form_dict = Dictionary::new();
+        form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+        form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+        form_dict.set("FormType", Object::Integer(1));
+        form_dict.set(
+            "BBox",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Real(width as f32),
+                Object::Real(height as f32),
+            ]),
+        );
+        form_dict.set("Resources", Object::Dictionary(resources));
+        form_dict.set("Length", Object::Integer(content_bytes.len() as i64));
+
+        Ok(Object::Stream(Stream::new(form_dict, content_bytes)))
+    }
+}
+
+/// Decode PNG image data to raw RGB pixels
+fn decode_png_to_rgb(png_data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let cursor = std::io::Cursor::new(png_data);
+    let decoder = PngDecoder::new(cursor);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("PNG decode error: {}", e))?;
+
+    let info = reader.info();
+    let width = info.width;
+    let height = info.height;
+    let color_type = info.color_type;
+
+    // Allocate buffer for decoded pixels
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("PNG frame error: {}", e))?;
+
+    // Convert to RGB based on color type
+    let rgb_data = match color_type {
+        png::ColorType::Rgb => buf,
+        png::ColorType::Rgba => {
+            // Strip alpha channel - convert RGBA to RGB
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for chunk in buf.chunks(4) {
+                rgb.push(chunk[0]); // R
+                rgb.push(chunk[1]); // G
+                rgb.push(chunk[2]); // B
+            }
+            rgb
+        }
+        png::ColorType::Grayscale => {
+            // Convert grayscale to RGB
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for &gray in &buf {
+                rgb.push(gray);
+                rgb.push(gray);
+                rgb.push(gray);
+            }
+            rgb
+        }
+        png::ColorType::GrayscaleAlpha => {
+            // Convert grayscale+alpha to RGB (dropping alpha)
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for chunk in buf.chunks(2) {
+                let gray = chunk[0];
+                rgb.push(gray);
+                rgb.push(gray);
+                rgb.push(gray);
+            }
+            rgb
+        }
+        png::ColorType::Indexed => {
+            // For indexed color, we'd need the palette - return error for now
+            return Err("Indexed PNG color not supported - use RGB or RGBA".to_string());
+        }
+    };
+
+    Ok((width, height, rgb_data))
+}
+
+/// Compress data using zlib (FlateDecode compatible)
+fn compress_data(data: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(data)
+        .map_err(|e| format!("Compression write error: {}", e))?;
+    encoder
+        .finish()
+        .map_err(|e| format!("Compression finish error: {}", e))
+}
+
+/// Strip data URL prefix from base64 string
+/// Handles: "data:image/png;base64,XXXXX" -> "XXXXX"
+pub fn strip_data_url(data: &str) -> &str {
+    if let Some(pos) = data.find(",") {
+        &data[pos + 1..]
+    } else {
+        data
     }
 }
 

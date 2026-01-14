@@ -18,6 +18,16 @@ echo "🔍 Running pre-commit checks..."
 
 cd "$PROJECT_ROOT"
 
+# Check for misconfigured build output directories
+# docsign-web should output to www/dist, NOT dist/
+if [[ -d "$PROJECT_ROOT/apps/docsign-web/dist" ]]; then
+    echo "❌ apps/docsign-web/dist/ exists but shouldn't!"
+    echo "   Trunk should output to www/dist/, not dist/"
+    echo "   This usually means Trunk.toml was misconfigured."
+    echo "   Fix: Remove dist/ and ensure Trunk.toml has: dist = \"www/dist\""
+    exit 1
+fi
+
 # Format check
 echo "  Checking formatting..."
 if ! cargo fmt --all -- --check; then
@@ -78,6 +88,80 @@ if [ -n "$ENABLE_BROWSER_TESTS" ]; then
     fi
 else
     echo "  ⏭️  Skipping browser tests (run ./scripts/test-browser.sh manually)"
+fi
+
+# =============================================================================
+# Intelligent TypeScript/Worker Tests (only run if relevant files changed)
+# =============================================================================
+
+# Get list of staged files
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || echo "")
+
+# Check if docsign-web frontend files changed
+DOCSIGN_FRONTEND_CHANGED=false
+if echo "$STAGED_FILES" | grep -qE "^apps/docsign-web/(src/ts/|www/|package\.json)"; then
+    DOCSIGN_FRONTEND_CHANGED=true
+fi
+
+# Check if docsign-web worker files changed
+DOCSIGN_WORKER_CHANGED=false
+if echo "$STAGED_FILES" | grep -qE "^apps/docsign-web/worker/"; then
+    DOCSIGN_WORKER_CHANGED=true
+fi
+
+# Run docsign-web frontend tests if relevant files changed
+if [ "$DOCSIGN_FRONTEND_CHANGED" = true ]; then
+    echo "  Running docsign-web frontend tests (TypeScript files changed)..."
+    cd "$PROJECT_ROOT/apps/docsign-web"
+    if ! npm test 2>/dev/null; then
+        echo "❌ Frontend tests failed."
+        exit 1
+    fi
+    cd "$PROJECT_ROOT"
+else
+    echo "  ⏭️  Skipping frontend tests (no TypeScript changes)"
+fi
+
+# Check if docsign-web build-related files changed (wasm, trunk config, www source)
+DOCSIGN_BUILD_CHANGED=false
+if echo "$STAGED_FILES" | grep -qE "^apps/docsign-web/(wasm/|www/index\.html|www/sign\.html|Trunk\.toml)"; then
+    DOCSIGN_BUILD_CHANGED=true
+fi
+
+# Verify docsign-web dist output if build files changed
+# This prevents deploying unbuilt source files (the #1 cause of "Loading..." stuck bugs)
+if [ "$DOCSIGN_BUILD_CHANGED" = true ]; then
+    echo "  Verifying docsign-web build output (build files changed)..."
+    if [ -d "$PROJECT_ROOT/apps/docsign-web/www/dist" ]; then
+        cd "$PROJECT_ROOT/apps/docsign-web"
+        if ! ./scripts/verify-dist.sh 2>/dev/null; then
+            echo "❌ Build verification failed. Run 'trunk build --release' in apps/docsign-web"
+            exit 1
+        fi
+        cd "$PROJECT_ROOT"
+    else
+        echo "  ⚠️  www/dist not found - run 'trunk build --release' in apps/docsign-web before deploying"
+    fi
+else
+    echo "  ⏭️  Skipping build verification (no build files changed)"
+fi
+
+# Run docsign-web worker tests if relevant files changed
+if [ "$DOCSIGN_WORKER_CHANGED" = true ]; then
+    echo "  Running docsign-web worker tests (Worker files changed)..."
+    cd "$PROJECT_ROOT/apps/docsign-web/worker"
+    # Check if npm dependencies are installed
+    if [ -d "node_modules" ]; then
+        if ! npm test 2>/dev/null; then
+            echo "❌ Worker tests failed."
+            exit 1
+        fi
+    else
+        echo "  ⚠️  Worker test deps not installed, skipping (run: cd apps/docsign-web/worker && npm install)"
+    fi
+    cd "$PROJECT_ROOT"
+else
+    echo "  ⏭️  Skipping worker tests (no worker changes)"
 fi
 
 echo "✅ All pre-commit checks passed!"

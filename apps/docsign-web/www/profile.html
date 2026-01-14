@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Manage your Get Signatures account">
+    <title>Your Account - Get Signatures</title>
+    <link rel="stylesheet" href="geriatric.css">
+    <style>
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --text-primary: #1a1a1a;
+            --text-secondary: #4a4a4a;
+            --text-muted: #6b7280;
+            --border-primary: #e5e7eb;
+            --accent-primary: #0056b3;
+            --accent-hover: #003d82;
+            --success: #10b981;
+            --success-bg: #d1fae5;
+            --warning: #f59e0b;
+            --warning-bg: #fef3c7;
+            --purple: #7c3aed;
+            --purple-bg: #ede9fe;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            font-size: 18px;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: var(--accent-primary);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .header-nav {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .header-nav a {
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .header-nav a:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .card-header h2 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: var(--text-muted);
+            font-size: 16px;
+        }
+
+        .info-value {
+            font-weight: 500;
+        }
+
+        /* Tier badges */
+        .badge {
+            display: inline-block;
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-free {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .badge-personal {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-professional {
+            background: var(--purple-bg);
+            color: var(--purple);
+        }
+
+        .badge-business {
+            background: var(--success-bg);
+            color: #065f46;
+        }
+
+        .badge-beta {
+            background: var(--purple-bg);
+            color: var(--purple);
+            margin-left: 0.5rem;
+        }
+
+        /* Usage bar */
+        .usage-section {
+            margin: 1.5rem 0;
+        }
+
+        .usage-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+
+        .usage-bar {
+            height: 12px;
+            background: #e5e7eb;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .usage-fill {
+            height: 100%;
+            background: var(--accent-primary);
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        .usage-fill.warning {
+            background: var(--warning);
+        }
+
+        .usage-fill.danger {
+            background: #ef4444;
+        }
+
+        .usage-details {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-block;
+            padding: 0.875rem 1.5rem;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 8px;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--purple);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #6d28d9;
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+        }
+
+        .btn-outline:hover {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* Beta callout */
+        .beta-callout {
+            background: var(--purple-bg);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin-top: 1rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .beta-callout-icon {
+            font-size: 24px;
+        }
+
+        .beta-callout-text {
+            font-size: 15px;
+            color: #5b21b6;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal h3 {
+            font-size: 22px;
+            margin-bottom: 0.5rem;
+        }
+
+        .modal-subtitle {
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-section h4 {
+            font-size: 16px;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .modal-list {
+            margin: 0;
+            padding-left: 1.25rem;
+            color: var(--text-secondary);
+        }
+
+        .modal-list li {
+            margin-bottom: 0.375rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.375rem;
+        }
+
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            font-size: 16px;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            resize: vertical;
+            min-height: 100px;
+            font-family: inherit;
+        }
+
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            margin-top: 2px;
+        }
+
+        .checkbox-group label {
+            font-size: 15px;
+            cursor: pointer;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-primary);
+        }
+
+        .btn-cancel {
+            background: #e5e7eb;
+            color: var(--text-primary);
+        }
+
+        .btn-cancel:hover {
+            background: #d1d5db;
+        }
+
+        /* Status messages */
+        .status-message {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .status-message.success {
+            display: block;
+            background: var(--success-bg);
+            color: #065f46;
+        }
+
+        .status-message.pending {
+            display: block;
+            background: var(--warning-bg);
+            color: #92400e;
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+
+        /* Not logged in state */
+        .not-logged-in {
+            text-align: center;
+            padding: 3rem;
+        }
+
+        .not-logged-in p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Get Signatures</h1>
+        <nav class="header-nav">
+            <a href="/">Dashboard</a>
+            <a href="#" id="logout-link">Sign Out</a>
+        </nav>
+    </header>
+
+    <main class="container" id="main-content">
+        <div class="loading">Loading...</div>
+    </main>
+
+    <!-- Beta Request Modal -->
+    <div class="modal-overlay" id="beta-modal">
+        <div class="modal">
+            <h3>Help Us Build Something Great</h3>
+            <p class="modal-subtitle">We're looking for beta testers to help us find and squash bugs.</p>
+
+            <div class="modal-section">
+                <h4>As a beta tester, you get:</h4>
+                <ul class="modal-list">
+                    <li>Professional tier access (100 docs/month)</li>
+                    <li>Early access to new features</li>
+                    <li>Direct line to our team</li>
+                </ul>
+            </div>
+
+            <div class="modal-section">
+                <h4>In return, we ask that you:</h4>
+                <ul class="modal-list">
+                    <li>Report bugs when you encounter them</li>
+                    <li>Share screenshots of any issues</li>
+                    <li>Share problematic PDFs so we can fix compatibility issues</li>
+                    <li>Give us honest feedback</li>
+                </ul>
+            </div>
+
+            <form id="beta-form" onsubmit="submitBetaRequest(event)">
+                <div class="form-group">
+                    <label for="beta-reason">Tell us how you plan to use GetSignatures</label>
+                    <textarea id="beta-reason" placeholder="e.g., I send contracts to clients for my real estate business..."></textarea>
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="beta-agree" required>
+                    <label for="beta-agree">I understand and agree to help test and report bugs</label>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-cancel" onclick="closeBetaModal()">Cancel</button>
+                    <button type="submit" class="btn btn-secondary">Request Access</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import { AuthManager, API_BASE_URL } from './js/bundle.js';
+
+        const authManager = new AuthManager();
+        let currentUser = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const user = authManager.getStoredUser();
+            const token = authManager.getAccessToken();
+
+            if (!user || !token) {
+                showNotLoggedIn();
+                return;
+            }
+
+            currentUser = user;
+            await loadProfile(token);
+        });
+
+        // Logout handler
+        document.getElementById('logout-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            authManager.logout();
+            window.location.href = '/auth.html';
+        });
+
+        function showNotLoggedIn() {
+            document.getElementById('main-content').innerHTML = `
+                <div class="not-logged-in">
+                    <h2>Not Signed In</h2>
+                    <p>Please sign in to view your account.</p>
+                    <a href="/auth.html" class="btn btn-primary">Sign In</a>
+                </div>
+            `;
+        }
+
+        async function loadProfile(token) {
+            try {
+                // Refresh user data from server
+                const res = await fetch(`${API_BASE_URL}/auth/me`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.user) {
+                        currentUser = data.user;
+                    }
+                }
+
+                // Check for pending beta request
+                let hasPendingBetaRequest = false;
+                try {
+                    const reqRes = await fetch(`${API_BASE_URL}/requests/my`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    if (reqRes.ok) {
+                        const reqData = await reqRes.json();
+                        hasPendingBetaRequest = (reqData.requests || []).some(
+                            r => r.request_type === 'beta_access' && r.status === 'pending'
+                        );
+                    }
+                } catch (e) {
+                    // Ignore - endpoint may not exist
+                }
+
+                renderProfile(hasPendingBetaRequest);
+            } catch (error) {
+                console.error('Error loading profile:', error);
+                renderProfile(false);
+            }
+        }
+
+        function renderProfile(hasPendingBetaRequest) {
+            const user = currentUser;
+            const isBetaUser = user.is_beta_user || user.grant_source === 'beta_grant' || user.grant_source === 'pre_grant';
+            const usagePercent = user.usage_percentage || Math.round((user.monthly_documents_used / user.monthly_limit) * 100) || 0;
+            const memberSince = new Date(user.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+            let usageClass = '';
+            if (usagePercent >= 90) usageClass = 'danger';
+            else if (usagePercent >= 70) usageClass = 'warning';
+
+            const tierBadgeClass = `badge-${user.tier || 'free'}`;
+
+            document.getElementById('main-content').innerHTML = `
+                <!-- Account Info -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Your Account</h2>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Name</span>
+                        <span class="info-value">${user.first_name || ''} ${user.last_name || ''}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Email</span>
+                        <span class="info-value">${user.email}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Member Since</span>
+                        <span class="info-value">${memberSince}</span>
+                    </div>
+                </div>
+
+                <!-- Plan Info -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2>Your Plan</h2>
+                        <span class="badge ${tierBadgeClass}">${user.tier_display_name || user.tier || 'Free'}${isBetaUser ? '</span><span class="badge badge-beta">BETA' : ''}</span>
+                    </div>
+
+                    ${hasPendingBetaRequest ? `
+                        <div class="status-message pending">
+                            Your beta access request is pending review. We'll get back to you soon!
+                        </div>
+                    ` : ''}
+
+                    ${isBetaUser ? `
+                        <div class="beta-callout">
+                            <span class="beta-callout-icon">&#127881;</span>
+                            <span class="beta-callout-text">Thank you for being a beta tester! Your feedback helps us improve GetSignatures for everyone.</span>
+                        </div>
+                    ` : ''}
+
+                    <div class="usage-section">
+                        <div class="usage-header">
+                            <span>Monthly Usage</span>
+                            <span><strong>${user.monthly_documents_used || 0}</strong> of ${user.monthly_limit || 3} documents</span>
+                        </div>
+                        <div class="usage-bar">
+                            <div class="usage-fill ${usageClass}" style="width: ${Math.min(usagePercent, 100)}%"></div>
+                        </div>
+                        <div class="usage-details">
+                            <span>${user.monthly_documents_remaining || (user.monthly_limit - (user.monthly_documents_used || 0))} remaining</span>
+                            <span>Resets on the 1st</span>
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        ${user.tier === 'free' || user.tier === 'Free' ? `
+                            <a href="/pricing.html" class="btn btn-primary">Upgrade Plan</a>
+                            ${!isBetaUser && !hasPendingBetaRequest ? `
+                                <button class="btn btn-secondary" onclick="openBetaModal()">Request Beta Access</button>
+                            ` : ''}
+                        ` : `
+                            <a href="/pricing.html" class="btn btn-outline">Manage Plan</a>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Beta modal functions
+        window.openBetaModal = function() {
+            document.getElementById('beta-reason').value = '';
+            document.getElementById('beta-agree').checked = false;
+            document.getElementById('beta-modal').classList.add('active');
+        };
+
+        window.closeBetaModal = function() {
+            document.getElementById('beta-modal').classList.remove('active');
+        };
+
+        window.submitBetaRequest = async function(event) {
+            event.preventDefault();
+
+            const reason = document.getElementById('beta-reason').value.trim();
+            const agreed = document.getElementById('beta-agree').checked;
+
+            if (!agreed) {
+                alert('Please agree to help test and report bugs');
+                return;
+            }
+
+            const token = authManager.getAccessToken();
+            if (!token) {
+                alert('Please sign in to submit a request');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/requests`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        request_type: 'beta_access',
+                        description: reason || 'User requested beta access'
+                    })
+                });
+
+                if (res.ok) {
+                    closeBetaModal();
+                    // Reload to show pending status
+                    await loadProfile(token);
+                    alert('Thanks for your interest! We\'ll review your request and get back to you soon.');
+                } else {
+                    const data = await res.json();
+                    alert(data.message || 'Failed to submit request. Please try again.');
+                }
+            } catch (error) {
+                console.error('Error submitting beta request:', error);
+                alert('Error submitting request. Please try again.');
+            }
+        };
+    </script>
+</body>
+</html>

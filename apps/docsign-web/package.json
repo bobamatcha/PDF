@@ -1,0 +1,37 @@
+{
+  "name": "docsign-web-ts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/ts/main.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --sourcemap",
+    "build:prod": "esbuild src/ts/main.ts --bundle --outfile=www/js/bundle.js --format=esm --target=es2020 --minify --sourcemap --tree-shaking=true --drop:console --drop:debugger",
+    "build:trunk": "trunk build --release",
+    "build:watch": "npm run build -- --watch",
+    "build:analyze": "esbuild src/ts/main.ts --bundle --outfile=/dev/null --format=esm --target=es2020 --analyze --metafile=dist/meta.json 2>&1 | tee dist/bundle-analysis.txt",
+    "build:analyze:prod": "esbuild src/ts/main.ts --bundle --outfile=/dev/null --format=esm --target=es2020 --minify --analyze 2>&1",
+    "typecheck": "tsc --noEmit",
+    "dev": "concurrently \"npm run build:watch\" \"trunk serve\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:perf": "vitest run --testNamePattern='performance'",
+    "test:worker": "cd worker && npm test",
+    "test:worker:watch": "cd worker && npm run test:watch",
+    "test:all": "npm test && npm run test:worker",
+    "test:parallel": "concurrently --names 'frontend,worker' -c 'blue,green' 'npm test' 'npm run test:worker'",
+    "verify-dist": "./scripts/verify-dist.sh",
+    "verify-dist:build": "./scripts/verify-dist.sh --build"
+  },
+  "devDependencies": {
+    "@axe-core/cli": "^4.11.0",
+    "@types/jsdom": "^27.0.0",
+    "@types/node": "^22.0.0",
+    "axe-core": "^4.11.0",
+    "concurrently": "^9.1.0",
+    "esbuild": "^0.24.0",
+    "fast-check": "^3.23.0",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

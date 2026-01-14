@@ -1,46 +1,39 @@
 #!/bin/bash
 set -e
 
-# Deploy getsignatures.org to Cloudflare Pages + Worker
-# Usage: ./scripts/deploy-docsign.sh
+# Deploy getsignatures.org
+#
+# Frontend: getsigs (Cloudflare Pages) -> www/dist
+# API: docsign-worker-production -> api.getsignatures.org
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=== Deploying getsignatures.org ==="
+echo "=== getsignatures.org deployment ==="
 
-# Build WASM
-echo "Building WASM..."
-cd "$PROJECT_ROOT/apps/docsign-web/wasm"
-wasm-pack build --target web --release --out-dir ../www/pkg
+# Step 1: Build frontend
+echo ""
+echo "[1/4] Building frontend with Trunk..."
+cd "$PROJECT_ROOT/apps/docsign-web"
+trunk build --release
 
-# Deploy static site to Cloudflare Pages
-echo "Deploying static site to Cloudflare Pages..."
-cd "$PROJECT_ROOT/apps/docsign-web/www"
+# Step 2: Verify build (catches the "deployed source instead of dist" bug)
+echo ""
+echo "[2/4] Verifying build output..."
+./scripts/verify-dist.sh
 
-if command -v npx &> /dev/null; then
-    npx wrangler pages deploy . --project-name getsignatures-org
-else
-    echo "Error: npx not found. Please install Node.js and npm."
-    exit 1
-fi
+# Step 3: Deploy frontend to Cloudflare Pages
+echo ""
+echo "[3/4] Deploying frontend to getsigs..."
+npx wrangler pages deploy www/dist --project-name getsigs
 
-# Build and deploy Worker
-echo "Building Worker..."
+# Step 4: Deploy API worker
+echo ""
+echo "[4/4] Deploying API worker..."
 cd "$PROJECT_ROOT/apps/docsign-web/worker"
-
-if ! command -v worker-build &> /dev/null; then
-    echo "Installing worker-build..."
-    cargo install worker-build
-fi
-
-worker-build --release
-
-echo "Deploying Worker..."
 npx wrangler deploy --env production
 
-echo "=== getsignatures.org deployment complete ==="
 echo ""
-echo "Don't forget to set Worker secrets:"
-echo "  wrangler secret put RESEND_API_KEY"
-echo "  wrangler secret put DOCSIGN_API_KEY  (optional, leave unset for open access)"
+echo "=== Deployment complete ==="
+echo "Frontend: https://getsignatures.org"
+echo "API: https://api.getsignatures.org"

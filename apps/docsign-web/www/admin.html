@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Admin Dashboard - Get Signatures</title>
+    <link rel="stylesheet" href="geriatric.css">
+    <style>
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: white;
+            --bg-tertiary: #f9fafb;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --text-tertiary: #9ca3af;
+            --border-primary: #e5e7eb;
+            --border-secondary: #d1d5db;
+            --header-bg: #1e40af;
+            --header-text: white;
+            --accent-primary: #1e40af;
+            --accent-hover: #1e3a8a;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --shadow-sm: rgba(0,0,0,0.1);
+        }
+
+        body.dark-mode {
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --bg-tertiary: #374151;
+            --text-primary: #f9fafb;
+            --text-secondary: #d1d5db;
+            --text-tertiary: #9ca3af;
+            --border-primary: #374151;
+            --border-secondary: #4b5563;
+            --header-bg: #1e3a8a;
+            --header-text: #f9fafb;
+            --accent-primary: #3b82f6;
+            --accent-hover: #2563eb;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .header {
+            background: var(--header-bg);
+            color: var(--header-text);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-nav {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .header-nav a {
+            color: var(--header-text);
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .header-nav a:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px var(--shadow-sm);
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .section-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .filter-btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border-secondary);
+            border-radius: 4px;
+            background: var(--bg-tertiary);
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover {
+            border-color: var(--accent-primary);
+        }
+
+        .filter-btn.active {
+            background: var(--accent-primary);
+            color: white;
+            border-color: var(--accent-primary);
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table th,
+        .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-primary);
+        }
+
+        .table th {
+            font-weight: 600;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            text-transform: uppercase;
+        }
+
+        .table tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-in-progress {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-resolved {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-rejected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-verified {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-unverified {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-free {
+            background: #f3f4f6;
+            color: #374151;
+        }
+
+        .badge-personal {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-professional {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .badge-business {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-active {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .badge-revoked {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .badge-beta {
+            background: #ede9fe;
+            color: #6b21a8;
+        }
+
+        .badge-pre-grant {
+            background: #ffedd5;
+            color: #c2410c;
+        }
+
+        .badge-exists {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .badge-pending-signup {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .action-btn {
+            padding: 0.375rem 0.75rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            margin-right: 0.25rem;
+        }
+
+        .action-btn-approve {
+            background: var(--success);
+            color: white;
+        }
+
+        .action-btn-approve:hover {
+            background: #059669;
+        }
+
+        .action-btn-deny {
+            background: var(--danger);
+            color: white;
+        }
+
+        .action-btn-deny:hover {
+            background: #dc2626;
+        }
+
+        .action-btn-progress {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .action-btn-progress:hover {
+            background: var(--accent-hover);
+        }
+
+        .action-btn-delete {
+            background: var(--danger);
+            color: white;
+        }
+
+        .action-btn-delete:hover {
+            background: #dc2626;
+        }
+
+        .action-btn-quota {
+            background: var(--warning);
+            color: white;
+        }
+
+        .action-btn-quota:hover {
+            background: #d97706;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state p {
+            margin-top: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+        }
+
+        .error-message {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px var(--shadow-sm);
+        }
+
+        .stat-card h3 {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal h3 {
+            margin-bottom: 1rem;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border-secondary);
+            border-radius: 4px;
+            font-size: 1rem;
+            background: var(--bg-tertiary);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .access-denied {
+            text-align: center;
+            padding: 4rem 2rem;
+        }
+
+        .access-denied h2 {
+            color: var(--danger);
+            margin-bottom: 1rem;
+        }
+
+        .request-description {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .request-description:hover {
+            white-space: normal;
+            overflow: visible;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Admin Dashboard</h1>
+        <nav class="header-nav">
+            <a href="/">Back to App</a>
+            <span id="admin-email"></span>
+        </nav>
+    </header>
+
+    <main class="container" id="main-content">
+        <div class="loading" id="loading">Loading...</div>
+    </main>
+
+    <!-- Access Denied Template -->
+    <template id="access-denied-template">
+        <div class="access-denied">
+            <h2>Access Denied</h2>
+            <p>You don't have permission to access this page.</p>
+            <p style="margin-top: 1rem;"><a href="/">Return to home</a></p>
+        </div>
+    </template>
+
+    <!-- Dashboard Template -->
+    <template id="dashboard-template">
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Pending Requests</h3>
+                <div class="value" id="stat-pending">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Users</h3>
+                <div class="value" id="stat-users">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Unverified Users</h3>
+                <div class="value" id="stat-unverified">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Beta Grants</h3>
+                <div class="value" id="stat-grants">0</div>
+            </div>
+        </div>
+
+        <!-- Beta Grants Section -->
+        <section class="section">
+            <div class="section-header">
+                <h2>Beta Access Grants</h2>
+                <button class="action-btn action-btn-approve" onclick="openGrantModal()">+ Grant Access</button>
+            </div>
+            <div id="grants-container">
+                <div class="empty-state">
+                    <p>No grants found</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Requests Section -->
+        <section class="section">
+            <div class="section-header">
+                <h2>User Requests</h2>
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter="pending" onclick="filterRequests('pending')">Pending</button>
+                    <button class="filter-btn" data-filter="in_progress" onclick="filterRequests('in_progress')">In Progress</button>
+                    <button class="filter-btn" data-filter="all" onclick="filterRequests('all')">All</button>
+                </div>
+            </div>
+            <div id="requests-container">
+                <div class="empty-state">
+                    <p>No requests found</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Users Section -->
+        <section class="section">
+            <div class="section-header">
+                <h2>Users</h2>
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter-user="all" onclick="filterUsers('all')">All</button>
+                    <button class="filter-btn" data-filter-user="unverified" onclick="filterUsers('unverified')">Unverified</button>
+                    <button class="filter-btn" data-filter-user="verified" onclick="filterUsers('verified')">Verified</button>
+                </div>
+            </div>
+            <div id="users-container">
+                <div class="empty-state">
+                    <p>No users found</p>
+                </div>
+            </div>
+        </section>
+    </template>
+
+    <!-- Quota Modal -->
+    <div class="modal-overlay" id="quota-modal">
+        <div class="modal">
+            <h3>Adjust User Quota</h3>
+            <p id="quota-user-info" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <form id="quota-form" onsubmit="submitQuotaChange(event)">
+                <input type="hidden" id="quota-user-id">
+                <div class="form-group">
+                    <label for="quota-tier">Change Tier (optional)</label>
+                    <select id="quota-tier">
+                        <option value="">Keep current tier</option>
+                        <option value="free">Free</option>
+                        <option value="personal">Personal</option>
+                        <option value="professional">Professional</option>
+                        <option value="business">Business</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="quota-bonus">Grant Bonus Documents</label>
+                    <input type="number" id="quota-bonus" min="0" max="100" placeholder="Number of documents to grant">
+                </div>
+                <div class="form-group">
+                    <label for="quota-notes">Admin Notes</label>
+                    <textarea id="quota-notes" placeholder="Reason for adjustment (optional)"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="action-btn" style="background: var(--text-secondary);" onclick="closeQuotaModal()">Cancel</button>
+                    <button type="submit" class="action-btn action-btn-approve">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Request Action Modal -->
+    <div class="modal-overlay" id="request-modal">
+        <div class="modal">
+            <h3 id="request-modal-title">Update Request</h3>
+            <p id="request-info" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <form id="request-form" onsubmit="submitRequestAction(event)">
+                <input type="hidden" id="request-id">
+                <input type="hidden" id="request-action">
+                <div class="form-group" id="granted-docs-group" style="display: none;">
+                    <label for="granted-docs">Documents to Grant</label>
+                    <input type="number" id="granted-docs" min="1" max="100" placeholder="Number of documents">
+                </div>
+                <div class="form-group">
+                    <label for="request-notes">Admin Notes</label>
+                    <textarea id="request-notes" placeholder="Notes (optional)"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="action-btn" style="background: var(--text-secondary);" onclick="closeRequestModal()">Cancel</button>
+                    <button type="submit" class="action-btn" id="request-submit-btn">Confirm</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Beta Grant Modal -->
+    <div class="modal-overlay" id="grant-modal">
+        <div class="modal">
+            <h3>Grant Beta Access</h3>
+            <p style="margin-bottom: 1rem; color: var(--text-secondary);">Grant Professional tier access to an email address. Works for existing users or future signups.</p>
+            <form id="grant-form" onsubmit="submitGrant(event)">
+                <div class="form-group">
+                    <label for="grant-email">Email Address</label>
+                    <input type="email" id="grant-email" placeholder="user@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="grant-notes">Notes (optional)</label>
+                    <textarea id="grant-notes" placeholder="Reason for granting access"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="action-btn" style="background: var(--text-secondary);" onclick="closeGrantModal()">Cancel</button>
+                    <button type="submit" class="action-btn action-btn-approve">Grant Access</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script type="module">
+        import { AuthManager, API_BASE_URL } from './js/bundle.js';
+
+        const ADMIN_EMAIL = 'orlandodowntownhome@gmail.com';
+        let currentRequestFilter = 'pending';
+        let currentUserFilter = 'all';
+        let allRequests = [];
+        let allUsers = [];
+        let allGrants = [];
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', async () => {
+            const authManager = new AuthManager();
+            const user = authManager.getStoredUser();
+            const token = authManager.getAccessToken();
+
+            if (!user || !token) {
+                showAccessDenied();
+                return;
+            }
+
+            // Check if admin
+            if (user.email.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+                showAccessDenied();
+                return;
+            }
+
+            // Show dashboard
+            document.getElementById('admin-email').textContent = user.email;
+            showDashboard();
+            await loadData(token);
+        });
+
+        function showAccessDenied() {
+            const main = document.getElementById('main-content');
+            const template = document.getElementById('access-denied-template');
+            main.innerHTML = '';
+            main.appendChild(template.content.cloneNode(true));
+        }
+
+        function showDashboard() {
+            const main = document.getElementById('main-content');
+            const template = document.getElementById('dashboard-template');
+            main.innerHTML = '';
+            main.appendChild(template.content.cloneNode(true));
+        }
+
+        async function loadData(token) {
+            try {
+                // Load requests, users, and grants in parallel
+                const [requestsRes, usersRes, grantsRes] = await Promise.all([
+                    fetch(`${API_BASE_URL}/admin/requests`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    }),
+                    fetch(`${API_BASE_URL}/admin/users`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    }),
+                    fetch(`${API_BASE_URL}/admin/beta-grants`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    })
+                ]);
+
+                if (requestsRes.ok) {
+                    const requestsData = await requestsRes.json();
+                    allRequests = requestsData.requests || [];
+                    renderRequests();
+                }
+
+                if (usersRes.ok) {
+                    const usersData = await usersRes.json();
+                    allUsers = usersData.users || [];
+                    renderUsers();
+                }
+
+                if (grantsRes.ok) {
+                    const grantsData = await grantsRes.json();
+                    allGrants = grantsData.grants || [];
+                    renderGrants();
+                }
+
+                updateStats();
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        function updateStats() {
+            const pendingCount = allRequests.filter(r => r.status === 'pending').length;
+            const unverifiedCount = allUsers.filter(u => !u.email_verified).length;
+            const activeGrantsCount = allGrants.filter(g => !g.revoked).length;
+
+            document.getElementById('stat-pending').textContent = pendingCount;
+            document.getElementById('stat-users').textContent = allUsers.length;
+            document.getElementById('stat-unverified').textContent = unverifiedCount;
+            document.getElementById('stat-grants').textContent = activeGrantsCount;
+        }
+
+        function renderRequests() {
+            const container = document.getElementById('requests-container');
+            let filtered = allRequests;
+
+            if (currentRequestFilter !== 'all') {
+                filtered = allRequests.filter(r => r.status === currentRequestFilter);
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No requests found</p></div>';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>User</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filtered.map(r => `
+                        <tr>
+                            <td>${formatDate(r.created_at)}</td>
+                            <td>${r.user_email}</td>
+                            <td>${formatRequestType(r.request_type)}</td>
+                            <td class="request-description" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}</td>
+                            <td><span class="badge badge-${r.status}">${r.status}</span></td>
+                            <td>
+                                ${r.status === 'pending' || r.status === 'in_progress' ? `
+                                    <button class="action-btn action-btn-approve" onclick="openRequestModal('${r.id}', 'approve', '${r.request_type}')">Approve</button>
+                                    <button class="action-btn action-btn-deny" onclick="openRequestModal('${r.id}', 'deny', '${r.request_type}')">Deny</button>
+                                    ${r.status === 'pending' ? `<button class="action-btn action-btn-progress" onclick="openRequestModal('${r.id}', 'mark_in_progress', '${r.request_type}')">In Progress</button>` : ''}
+                                ` : '-'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+            container.innerHTML = '';
+            container.appendChild(table);
+        }
+
+        function renderUsers() {
+            const container = document.getElementById('users-container');
+            let filtered = allUsers;
+
+            if (currentUserFilter === 'unverified') {
+                filtered = allUsers.filter(u => !u.email_verified);
+            } else if (currentUserFilter === 'verified') {
+                filtered = allUsers.filter(u => u.email_verified);
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No users found</p></div>';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Tier</th>
+                        <th>Status</th>
+                        <th>Docs Used</th>
+                        <th>Joined</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${filtered.map(u => `
+                        <tr>
+                            <td>${u.email}</td>
+                            <td>${u.first_name} ${u.last_name}</td>
+                            <td><span class="badge badge-${u.tier}">${u.tier}</span></td>
+                            <td><span class="badge badge-${u.email_verified ? 'verified' : 'unverified'}">${u.email_verified ? 'Verified' : 'Unverified'}</span></td>
+                            <td>${u.monthly_document_count}</td>
+                            <td>${formatDate(u.created_at)}</td>
+                            <td>
+                                <button class="action-btn action-btn-quota" onclick="openQuotaModal('${u.id}', '${u.email}', '${u.tier}')">Quota</button>
+                                ${!u.email_verified ? `<button class="action-btn action-btn-delete" onclick="deleteUser('${u.id}', '${u.email}')">Delete</button>` : ''}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+            container.innerHTML = '';
+            container.appendChild(table);
+        }
+
+        function renderGrants() {
+            const container = document.getElementById('grants-container');
+
+            if (allGrants.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No grants found. Click "+ Grant Access" to add one.</p></div>';
+                return;
+            }
+
+            const table = document.createElement('table');
+            table.className = 'table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Tier</th>
+                        <th>Status</th>
+                        <th>User Status</th>
+                        <th>Granted</th>
+                        <th>Notes</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${allGrants.map(g => `
+                        <tr>
+                            <td>${g.email}</td>
+                            <td><span class="badge badge-${g.tier}">${g.tier}</span></td>
+                            <td><span class="badge badge-${g.revoked ? 'revoked' : 'active'}">${g.revoked ? 'Revoked' : 'Active'}</span></td>
+                            <td><span class="badge badge-${g.user_exists ? 'exists' : 'pending-signup'}">${g.user_exists ? 'Registered' : 'Pending Signup'}</span></td>
+                            <td>${formatDate(g.granted_at)}</td>
+                            <td class="request-description" title="${escapeHtml(g.notes || '')}">${escapeHtml(g.notes || '-')}</td>
+                            <td>
+                                ${!g.revoked ? `<button class="action-btn action-btn-deny" onclick="revokeGrant('${g.email}')">Revoke</button>` : '-'}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+            container.innerHTML = '';
+            container.appendChild(table);
+        }
+
+        function formatDate(isoString) {
+            if (!isoString) return '-';
+            const date = new Date(isoString);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+        }
+
+        function formatRequestType(type) {
+            const types = {
+                'bug': 'Bug Report',
+                'feature': 'Feature Request',
+                'more_documents': 'More Documents',
+                'feedback': 'Feedback',
+                'name_change': 'Name Change',
+                'beta_access': 'Beta Access'
+            };
+            return types[type] || type;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Filter functions
+        window.filterRequests = function(filter) {
+            currentRequestFilter = filter;
+            document.querySelectorAll('[data-filter]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.filter === filter);
+            });
+            renderRequests();
+        };
+
+        window.filterUsers = function(filter) {
+            currentUserFilter = filter;
+            document.querySelectorAll('[data-filter-user]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.filterUser === filter);
+            });
+            renderUsers();
+        };
+
+        // Quota modal
+        window.openQuotaModal = function(userId, email, tier) {
+            document.getElementById('quota-user-id').value = userId;
+            document.getElementById('quota-user-info').textContent = `User: ${email} (Current tier: ${tier})`;
+            document.getElementById('quota-tier').value = '';
+            document.getElementById('quota-bonus').value = '';
+            document.getElementById('quota-notes').value = '';
+            document.getElementById('quota-modal').classList.add('active');
+        };
+
+        window.closeQuotaModal = function() {
+            document.getElementById('quota-modal').classList.remove('active');
+        };
+
+        window.submitQuotaChange = async function(event) {
+            event.preventDefault();
+            const userId = document.getElementById('quota-user-id').value;
+            const tier = document.getElementById('quota-tier').value;
+            const bonus = document.getElementById('quota-bonus').value;
+            const notes = document.getElementById('quota-notes').value;
+
+            const body = {};
+            if (tier) body.new_tier = tier;
+            if (bonus) body.bonus_documents = parseInt(bonus);
+            if (notes) body.admin_notes = notes;
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/users/${userId}/quota`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                if (res.ok) {
+                    closeQuotaModal();
+                    await loadData(token);
+                    alert('Quota updated successfully');
+                } else {
+                    const data = await res.json();
+                    alert(data.message || 'Failed to update quota');
+                }
+            } catch (error) {
+                console.error('Error updating quota:', error);
+                alert('Error updating quota');
+            }
+        };
+
+        // Request modal
+        window.openRequestModal = function(requestId, action, requestType) {
+            document.getElementById('request-id').value = requestId;
+            document.getElementById('request-action').value = action;
+            document.getElementById('request-notes').value = '';
+            document.getElementById('granted-docs').value = '';
+
+            const titles = {
+                'approve': 'Approve Request',
+                'deny': 'Deny Request',
+                'mark_in_progress': 'Mark In Progress'
+            };
+            document.getElementById('request-modal-title').textContent = titles[action] || 'Update Request';
+
+            const request = allRequests.find(r => r.id === requestId);
+            document.getElementById('request-info').textContent = request ? `${formatRequestType(request.request_type)}: ${request.description.substring(0, 100)}...` : '';
+
+            // Show granted docs field only for approve action on more_documents requests
+            const showGrantedDocs = action === 'approve' && requestType === 'more_documents';
+            document.getElementById('granted-docs-group').style.display = showGrantedDocs ? 'block' : 'none';
+
+            const submitBtn = document.getElementById('request-submit-btn');
+            submitBtn.className = 'action-btn';
+            if (action === 'approve') {
+                submitBtn.classList.add('action-btn-approve');
+                submitBtn.textContent = 'Approve';
+            } else if (action === 'deny') {
+                submitBtn.classList.add('action-btn-deny');
+                submitBtn.textContent = 'Deny';
+            } else {
+                submitBtn.classList.add('action-btn-progress');
+                submitBtn.textContent = 'Mark In Progress';
+            }
+
+            document.getElementById('request-modal').classList.add('active');
+        };
+
+        window.closeRequestModal = function() {
+            document.getElementById('request-modal').classList.remove('active');
+        };
+
+        window.submitRequestAction = async function(event) {
+            event.preventDefault();
+            const requestId = document.getElementById('request-id').value;
+            const action = document.getElementById('request-action').value;
+            const notes = document.getElementById('request-notes').value;
+            const grantedDocs = document.getElementById('granted-docs').value;
+
+            const body = { action };
+            if (notes) body.admin_notes = notes;
+            if (grantedDocs) body.granted_documents = parseInt(grantedDocs);
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/requests/${requestId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+
+                if (res.ok) {
+                    closeRequestModal();
+                    await loadData(token);
+                } else {
+                    const data = await res.json();
+                    alert(data.message || 'Failed to update request');
+                }
+            } catch (error) {
+                console.error('Error updating request:', error);
+                alert('Error updating request');
+            }
+        };
+
+        // Delete user
+        window.deleteUser = async function(userId, email) {
+            if (!confirm(`Are you sure you want to delete ${email}?\n\nThis action cannot be undone.`)) {
+                return;
+            }
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (res.ok) {
+                    await loadData(token);
+                    alert('User deleted successfully');
+                } else {
+                    const data = await res.json();
+                    alert(data.message || 'Failed to delete user');
+                }
+            } catch (error) {
+                console.error('Error deleting user:', error);
+                alert('Error deleting user');
+            }
+        };
+
+        // Grant modal functions
+        window.openGrantModal = function() {
+            document.getElementById('grant-email').value = '';
+            document.getElementById('grant-notes').value = '';
+            document.getElementById('grant-modal').classList.add('active');
+        };
+
+        window.closeGrantModal = function() {
+            document.getElementById('grant-modal').classList.remove('active');
+        };
+
+        window.submitGrant = async function(event) {
+            event.preventDefault();
+            const email = document.getElementById('grant-email').value.trim();
+            const notes = document.getElementById('grant-notes').value.trim();
+
+            if (!email) {
+                alert('Please enter an email address');
+                return;
+            }
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/beta-grants`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, notes: notes || undefined })
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    closeGrantModal();
+                    await loadData(token);
+                    alert(data.message || 'Grant created successfully');
+                } else {
+                    alert(data.message || 'Failed to create grant');
+                }
+            } catch (error) {
+                console.error('Error creating grant:', error);
+                alert('Error creating grant');
+            }
+        };
+
+        window.revokeGrant = async function(email) {
+            if (!confirm(`Are you sure you want to revoke beta access for ${email}?\n\nIf they don't have a paid subscription, they will be downgraded to Free tier.`)) {
+                return;
+            }
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/beta-grants/${encodeURIComponent(email)}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                const data = await res.json();
+
+                if (res.ok) {
+                    await loadData(token);
+                    alert(data.message || 'Grant revoked successfully');
+                } else {
+                    alert(data.message || 'Failed to revoke grant');
+                }
+            } catch (error) {
+                console.error('Error revoking grant:', error);
+                alert('Error revoking grant');
+            }
+        };
+    </script>
+</body>
+</html>

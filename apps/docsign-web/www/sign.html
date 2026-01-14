@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="DocSigner - Sign your documents">
-    <title>Sign Document - DocSigner</title>
+    <meta name="description" content="Get Signatures - Sign your documents securely">
+    <title>Sign Document - Get Signatures</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Allura&family=Dancing+Script&family=Great+Vibes&family=Pacifico&family=Sacramento&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Allura&family=Dancing+Script&family=Great+Vibes&family=Pacifico&family=Sacramento&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Geriatric UX CSS - 60px targets, 18px fonts, AAA contrast -->
+    <link rel="stylesheet" href="geriatric.css">
     <style>
         :root {
             --bg-primary: #f5f5f5;
@@ -32,7 +34,9 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 18px;
+            line-height: 1.6;
             background: var(--bg-primary);
             color: var(--text-primary);
             min-height: 100vh;
@@ -40,22 +44,22 @@
             flex-direction: column;
         }
 
-        /* Header */
+        /* Header - Geriatric UX: larger, clearer */
         .header {
             background: var(--header-bg);
             color: var(--header-text);
-            padding: 1rem 2rem;
+            padding: 20px 24px;
             box-shadow: 0 2px 4px var(--shadow-sm);
         }
 
         .header h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
+            font-size: 28px;
+            font-weight: 700;
         }
 
-        /* Loading Indicator */
+        /* Loading Indicator - Geriatric UX: larger, clearer text */
         #loading-indicator {
-            padding: 2rem;
+            padding: 3rem 2rem;
             text-align: center;
             color: var(--text-secondary);
         }
@@ -64,19 +68,49 @@
             display: none;
         }
 
+        #loading-indicator p {
+            font-size: 22px;
+            font-weight: 500;
+            margin-top: 1rem;
+        }
+
         .spinner {
-            border: 4px solid var(--border-primary);
-            border-top: 4px solid var(--accent-primary);
+            border: 5px solid var(--border-primary);
+            border-top: 5px solid var(--accent-primary);
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
+            width: 64px;
+            height: 64px;
             animation: spin 1s linear infinite;
-            margin: 0 auto 1rem;
+            margin: 0 auto 1.5rem;
         }
 
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+
+        /* Loading progress steps for long operations */
+        .loading-steps {
+            margin-top: 1.5rem;
+            font-size: 18px;
+            color: var(--text-tertiary);
+        }
+
+        .loading-step {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin: 8px 0;
+        }
+
+        .loading-step.completed {
+            color: var(--success);
+        }
+
+        .loading-step.completed::before {
+            content: "✓";
+            font-weight: bold;
         }
 
         /* Signing Toolbar */
@@ -100,24 +134,61 @@
             gap: 0.75rem;
         }
 
-        /* Progress Indicator */
+        /* Progress Indicator - Geriatric UX: larger, clearer */
         #field-progress {
-            font-size: 0.875rem;
+            font-size: 20px;
             color: var(--text-secondary);
-            font-weight: 500;
+            font-weight: 600;
         }
 
-        /* Buttons */
-        .btn {
-            padding: 0.625rem 1.25rem;
-            border: none;
+        /* Signing Progress Bar */
+        .signing-progress {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .signing-progress-bar {
+            flex: 1;
+            height: 12px;
+            background: var(--border-primary);
             border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .signing-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #1e40af, #10b981);
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        .signing-progress-text {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            min-width: 80px;
+            text-align: right;
+        }
+
+        /* Buttons - Geriatric UX: 60px min touch targets, 24px font */
+        .btn {
+            min-height: 60px;
+            min-width: 60px;
+            padding: 16px 24px;
+            border: 2px solid transparent;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 0.875rem;
-            font-weight: 500;
+            font-size: 20px;
+            font-weight: 600;
             transition: all 0.2s;
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 0.5rem;
         }
 
@@ -229,19 +300,25 @@
         }
 
         .modal-header h3 {
-            font-size: 1.125rem;
-            font-weight: 600;
+            font-size: 24px;
+            font-weight: 700;
             color: var(--text-primary);
         }
 
+        /* Modal close button - Geriatric UX: 60px touch target */
         .modal-close {
             background: none;
             border: none;
-            font-size: 1.5rem;
+            font-size: 32px;
             color: var(--text-tertiary);
             cursor: pointer;
-            padding: 0.25rem;
+            min-width: 60px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             line-height: 1;
+            border-radius: 8px;
         }
 
         .modal-close:hover {
@@ -262,23 +339,24 @@
             gap: 0.75rem;
         }
 
-        /* Tab Navigation */
+        /* Tab Navigation - Geriatric UX: larger touch targets */
         .tab-nav {
             display: flex;
             gap: 0.5rem;
             margin-bottom: 1.5rem;
-            border-bottom: 1px solid var(--border-primary);
+            border-bottom: 2px solid var(--border-primary);
         }
 
         .tab-btn {
-            padding: 0.75rem 1.5rem;
+            min-height: 60px;
+            padding: 16px 24px;
             border: none;
             background: none;
             color: var(--text-secondary);
             cursor: pointer;
-            font-size: 0.875rem;
-            font-weight: 500;
-            border-bottom: 2px solid transparent;
+            font-size: 20px;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
             transition: all 0.2s;
         }
 
@@ -299,15 +377,16 @@
             display: block;
         }
 
-        /* Signature Canvas */
+        /* Signature Canvas - Geriatric UX: larger pad, clearer border */
         #signature-canvas {
-            border: 1px solid var(--border-primary);
-            border-radius: 8px;
+            border: 3px solid var(--border-secondary);
+            border-radius: 12px;
             cursor: crosshair;
             display: block;
             width: 100%;
-            max-width: 500px;
-            height: 200px;
+            max-width: 550px;
+            height: 250px;
+            background: #ffffff;
         }
 
         .canvas-controls {
@@ -316,23 +395,25 @@
             gap: 0.5rem;
         }
 
-        /* Signature Type Input */
+        /* Signature Type Input - Geriatric UX: 60px height, larger text */
         #typed-name {
             width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--border-primary);
+            min-height: 60px;
+            padding: 16px;
+            border: 2px solid var(--border-primary);
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 20px;
             text-align: center;
-            margin-bottom: 0.75rem;
+            margin-bottom: 1rem;
         }
 
         .font-select {
             width: 100%;
-            padding: 0.5rem;
-            border: 1px solid var(--border-primary);
-            border-radius: 6px;
-            font-size: 0.875rem;
+            min-height: 60px;
+            padding: 16px;
+            border: 2px solid var(--border-primary);
+            border-radius: 8px;
+            font-size: 18px;
             margin-bottom: 1rem;
         }
 
@@ -387,7 +468,8 @@
 
         .consent-header h2 {
             margin: 0;
-            font-size: 1.75rem;
+            font-size: 28px;
+            font-weight: 700;
             color: var(--text-primary);
         }
 
@@ -427,14 +509,16 @@
         }
 
         .consent-text h3 {
-            font-size: 1.25rem;
+            font-size: 22px;
+            font-weight: 600;
             margin-bottom: 1rem;
             color: var(--text-primary);
         }
 
         .consent-text p {
             color: var(--text-secondary);
-            line-height: 1.6;
+            font-size: 18px;
+            line-height: 1.7;
             margin-bottom: 1rem;
         }
 
@@ -445,12 +529,13 @@
 
         .consent-text li {
             color: var(--text-secondary);
+            font-size: 18px;
             line-height: 1.8;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.75rem;
         }
 
         .consent-note {
-            font-size: 0.875rem;
+            font-size: 18px;
             color: var(--text-tertiary);
             font-style: italic;
         }
@@ -459,9 +544,11 @@
             text-align: center;
         }
 
+        /* Large buttons for critical actions - Geriatric UX: 72px height */
         .btn-large {
-            font-size: 1.125rem;
-            padding: 1rem 2.5rem;
+            font-size: 24px;
+            padding: 20px 32px;
+            min-height: 72px;
             min-width: 200px;
         }
 
@@ -470,7 +557,7 @@
             margin-top: 1.5rem;
             color: var(--text-tertiary);
             text-decoration: none;
-            font-size: 0.875rem;
+            font-size: 18px;
             transition: color 0.2s;
         }
 
@@ -555,7 +642,7 @@
 
         .expiry-document-info .info-label {
             color: var(--text-tertiary);
-            font-size: 0.875rem;
+            font-size: 18px;
         }
 
         .expiry-document-info .info-value {
@@ -593,7 +680,7 @@
             margin-top: 1.5rem;
             padding-top: 1.5rem;
             border-top: 1px solid var(--border-primary);
-            font-size: 0.875rem;
+            font-size: 18px;
             color: var(--text-tertiary);
         }
 
@@ -661,11 +748,11 @@
 
             .info-label {
                 min-width: 90px;
-                font-size: 0.875rem;
+                font-size: 18px;
             }
 
             .info-value {
-                font-size: 0.875rem;
+                font-size: 18px;
             }
 
             .btn-large {
@@ -980,74 +1067,24 @@
     </style>
 </head>
 <body>
+    <!-- Skip Link for Keyboard Navigation -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
     <!-- Offline Indicator -->
-    <div id="offline-indicator" class="offline-indicator hidden">
+    <div id="offline-indicator" class="offline-indicator hidden" role="status" aria-live="polite">
         <span>You're offline. Changes will sync when you reconnect.</span>
     </div>
 
     <!-- Header -->
-    <header class="header">
+    <header class="header" role="banner">
         <h1>Sign Document</h1>
     </header>
 
-    <!-- Loading Indicator -->
-    <div id="loading-indicator">
-        <div class="spinner"></div>
-        <p>Loading document...</p>
-    </div>
-
-    <!-- Email Verification Screen (UX-003) -->
-    <div id="verification-screen" class="consent-landing hidden">
-        <div style="max-width: 500px; width: 100%; background: var(--bg-secondary); border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 2rem;">
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <div style="font-size: 3rem; margin-bottom: 1rem;">🔐</div>
-                <h2 style="font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--text-primary);">Verify Your Identity</h2>
-                <p style="color: var(--text-secondary); font-size: 0.875rem;">
-                    Please confirm you are the intended recipient
-                </p>
-            </div>
-
-            <div style="background: var(--bg-tertiary); padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
-                <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
-                    Enter the last <strong>4 characters</strong> of your email address:
-                </p>
-                <p id="masked-email" style="font-size: 1.125rem; font-weight: 600; color: var(--accent-primary); margin-bottom: 1rem;">
-                    <!-- Will be filled by JS -->
-                </p>
-                <input
-                    type="text"
-                    id="email-suffix-input"
-                    placeholder="Last 4 characters"
-                    maxlength="4"
-                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-size: 1rem; text-align: center; font-family: monospace; text-transform: lowercase;"
-                    autocomplete="off"
-                />
-            </div>
-
-            <div id="verification-error" class="hidden" style="background: #fee2e2; border-left: 4px solid #ef4444; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
-                <p style="color: #991b1b; font-size: 0.875rem; margin: 0;">
-                    <strong id="error-message">Incorrect input. Please try again.</strong>
-                </p>
-                <p id="attempts-remaining" style="color: #991b1b; font-size: 0.75rem; margin: 0.5rem 0 0 0;">
-                    <!-- Will be filled by JS -->
-                </p>
-            </div>
-
-            <div id="lockout-message" class="hidden" style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 4px; margin-bottom: 1rem;">
-                <p style="color: #92400e; font-size: 0.875rem; margin: 0;">
-                    <strong>Too many failed attempts.</strong><br>
-                    Please wait <span id="lockout-timer">15:00</span> before trying again.
-                </p>
-            </div>
-
-            <button id="verify-button" class="btn btn-primary" style="width: 100%; padding: 0.875rem; font-size: 1rem;">
-                Verify & Continue
-            </button>
-
-            <p style="text-align: center; margin-top: 1.5rem; font-size: 0.75rem; color: var(--text-tertiary);">
-                This verification helps ensure the document reaches the intended recipient.
-            </p>
-        </div>
+    <!-- Loading Indicator - Geriatric UX: reassuring message -->
+    <div id="loading-indicator" role="status" aria-live="polite" aria-busy="true">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Loading your document...</p>
+        <p style="font-size: 16px; color: var(--text-tertiary); margin-top: 8px;">This may take a moment. Please wait.</p>
     </div>
 
     <!-- Consent Landing Page -->
@@ -1079,13 +1116,18 @@
 
                 <div class="consent-text">
                     <h3>Electronic Signature Consent</h3>
-                    <p>By clicking "Review Document" below, you agree to:</p>
+                    <p>By clicking "Review Document" below, I acknowledge and agree that:</p>
                     <ul>
-                        <li>Use electronic signatures in place of handwritten signatures</li>
-                        <li>Electronically sign documents sent to you</li>
-                        <li>Conduct this transaction electronically</li>
+                        <li>I consent to sign this document electronically pursuant to the Florida Uniform Electronic Transactions Act (F.S. 668.50)</li>
+                        <li>My electronic signature shall have the same legal force and effect as a handwritten signature</li>
+                        <li>I have received a copy of this consent disclosure and may withdraw consent at any time prior to signing</li>
                     </ul>
-                    <p class="consent-note">Your electronic signature will have the same legal effect as a handwritten signature.</p>
+                    <p class="consent-note" style="font-size: 14px; color: var(--text-tertiary); margin-top: 1rem; line-height: 1.5;">
+                        <strong>Service Availability:</strong> This service is provided for use within the State of Florida, excluding Miami-Dade County.
+                        This service does not provide legal advice. Users are solely responsible for ensuring compliance with applicable laws and regulations
+                        governing their specific transactions. By using this service, you agree that the service provider assumes no liability for
+                        the legal validity or enforceability of documents signed through this platform.
+                    </p>
                 </div>
 
                 <div class="consent-actions">
@@ -1151,61 +1193,79 @@
         </div>
     </div>
 
-    <!-- Signing Toolbar -->
+    <!-- Signing Toolbar - Geriatric UX: clear progress and large buttons -->
     <div class="signing-toolbar" style="display: none;">
+        <!-- Progress Bar (shown during signing) -->
+        <div id="signing-progress-container" class="signing-progress hidden">
+            <div class="signing-progress-bar">
+                <div id="signing-progress-fill" class="signing-progress-fill" style="width: 0%"></div>
+            </div>
+            <div class="signing-progress-text">
+                <span id="current">0</span> of <span id="total">0</span>
+            </div>
+        </div>
+
         <div class="toolbar-left">
-            <button id="btn-start" class="btn btn-primary">Start Signing</button>
+            <button id="btn-start" class="btn btn-primary btn-large">Start Signing</button>
             <div class="nav-buttons hidden">
-                <button id="btn-prev" class="btn btn-secondary" disabled>Back</button>
-                <button id="btn-next" class="btn btn-primary">Next</button>
+                <button id="btn-prev" class="btn btn-secondary" disabled>← Back</button>
+                <button id="btn-next" class="btn btn-primary">Next →</button>
             </div>
         </div>
         <div class="toolbar-right">
-            <span class="progress hidden">
-                <span id="current">0</span> of <span id="total">0</span>
+            <span class="progress hidden" style="font-size: 20px; font-weight: 600;">
+                Field <span id="current-alt">0</span> of <span id="total-alt">0</span>
             </span>
-            <button id="btn-decline" class="btn btn-secondary">Decline</button>
-            <button id="btn-finish" class="btn btn-success hidden">Finish</button>
+            <button id="btn-decline" class="btn btn-secondary">Decline to Sign</button>
+            <button id="btn-finish" class="btn btn-success btn-large hidden">✓ Finish Signing</button>
         </div>
     </div>
 
     <!-- Document Viewer -->
-    <div class="viewer-container" style="display: none;">
-        <div id="pdf-pages" class="pdf-pages-wrapper">
+    <main id="main-content" class="viewer-container" style="display: none;" role="main" aria-label="Document viewer">
+        <div id="pdf-pages" class="pdf-pages-wrapper" role="document" aria-label="PDF document pages">
             <!-- PDF pages will be rendered here -->
         </div>
-    </div>
+    </main>
 
     <!-- Signature Modal -->
-    <div id="signature-modal" class="modal-overlay hidden">
+    <div id="signature-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="signature-modal-title">
         <div class="modal">
             <div class="modal-header">
-                <h3>Add Signature</h3>
-                <button class="modal-close" id="close-signature-modal">&times;</button>
+                <h3 id="signature-modal-title">Add Signature</h3>
+                <button class="modal-close" id="close-signature-modal" aria-label="Close signature dialog">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="tab-nav">
-                    <button id="tab-draw" class="tab-btn active" data-tab="draw">Draw</button>
-                    <button id="tab-type" class="tab-btn" data-tab="type">Type</button>
+                <div class="tab-nav" role="tablist" aria-label="Signature method">
+                    <button id="tab-type" class="tab-btn active" data-tab="type" role="tab" aria-selected="true" aria-controls="type-tab">Type</button>
+                    <button id="tab-draw" class="tab-btn" data-tab="draw" role="tab" aria-selected="false" aria-controls="draw-tab">Draw</button>
                 </div>
 
-                <div id="draw-tab" class="tab-content active">
-                    <canvas id="signature-pad"></canvas>
-                    <div class="canvas-controls">
-                        <button id="clear-signature" class="btn btn-secondary btn-sm">Clear</button>
-                    </div>
-                </div>
-
-                <div id="type-tab" class="tab-content">
-                    <input type="text" id="typed-name" placeholder="Type your name">
-                    <select id="font-selector" class="font-select">
+                <div id="type-tab" class="tab-content active" role="tabpanel" aria-labelledby="tab-type">
+                    <label for="typed-name" class="visually-hidden">Type your full name for signature</label>
+                    <input type="text" id="typed-name" placeholder="Type your name" aria-label="Type your full name for signature" autocomplete="name">
+                    <label for="font-selector" class="visually-hidden">Choose signature style</label>
+                    <select id="font-selector" class="font-select" aria-label="Choose signature style">
                         <option value="Dancing Script">Dancing Script</option>
                         <option value="Great Vibes">Great Vibes</option>
                         <option value="Allura">Allura</option>
                         <option value="Sacramento">Sacramento</option>
                         <option value="Pacifico">Pacifico</option>
                     </select>
-                    <div class="signature-preview" id="cursive-preview"></div>
+                    <div class="signature-preview" id="cursive-preview" aria-live="polite" aria-label="Signature preview"></div>
+                </div>
+
+                <div id="draw-tab" class="tab-content" role="tabpanel" aria-labelledby="tab-draw" hidden>
+                    <canvas id="signature-pad" role="img" tabindex="0" aria-label="Signature drawing area. Use mouse or touch to draw your signature."></canvas>
+                    <div class="canvas-controls">
+                        <button id="undo-signature" class="btn btn-secondary btn-sm" aria-label="Undo last stroke (Ctrl+Z)" title="Undo (Ctrl+Z)">
+                            <span aria-hidden="true">↶</span> Undo
+                        </button>
+                        <button id="clear-signature" class="btn btn-secondary btn-sm" aria-label="Clear signature and start over">Clear</button>
+                    </div>
+                    <p class="keyboard-hint" style="font-size: 16px; color: var(--text-tertiary); margin-top: 0.5rem; text-align: center;">
+                        Tip: Press <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo
+                    </p>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1216,25 +1276,37 @@
     </div>
 
     <!-- Decline Modal -->
-    <div id="decline-modal" class="modal-overlay hidden">
-        <div class="modal">
+    <div id="decline-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="decline-modal-title" aria-describedby="decline-modal-desc">
+        <div class="modal" style="max-width: 450px;">
             <div class="modal-header">
-                <h3>Decline to Sign</h3>
-                <button class="modal-close" id="close-decline-modal">&times;</button>
+                <h3 id="decline-modal-title">Decline to Sign</h3>
+                <button class="modal-close" id="close-decline-modal" aria-label="Close decline dialog">&times;</button>
             </div>
             <div class="modal-body">
-                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
-                    Are you sure you want to decline this document? The sender will be notified.
+                <p id="decline-modal-desc" style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    The sender will be notified of your decision. Other signers will be blocked until the sender revises or discards this document.
                 </p>
-                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
-                    Reason (optional):
+
+                <!-- Reason field - more prominent -->
+                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--text-primary);">
+                    Reason for declining (helps the sender understand):
                 </label>
                 <textarea
                     id="decline-reason"
-                    rows="4"
-                    placeholder="Provide a reason for declining (optional)"
-                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical;"
+                    rows="3"
+                    placeholder="e.g., Incorrect information in section 3, Need to discuss terms first..."
+                    aria-label="Reason for declining document"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical; margin-bottom: 1rem;"
                 ></textarea>
+
+                <!-- Encourage direct contact -->
+                <div id="decline-sender-contact" style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem;">
+                    <p style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">Consider contacting the sender directly</p>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong id="decline-sender-name-text">The sender</strong><br>
+                        <a id="decline-sender-email-link" href="#" style="color: var(--accent-primary);"></a>
+                    </p>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="cancel-decline" class="btn btn-secondary">Cancel</button>
@@ -1243,6 +1315,8 @@
         </div>
     </div>
 
+    <!-- TypeScript bundle with PDF preview and coordinate utilities -->
+    <script type="module" src="js/bundle.js"></script>
     <script type="module" src="sign.js"></script>
 </body>
 </html>

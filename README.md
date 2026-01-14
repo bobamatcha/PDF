@@ -571,6 +571,73 @@ Rate limits (free tier):
 - 100 emails/day
 - 3,000 emails/month
 
+## DocSign-Web (getsignatures.org)
+
+> **Bug Tracker**: See [apps/docsign-web/DOCSIGN_BUGS.md](./apps/docsign-web/DOCSIGN_BUGS.md) for priority-ordered bugs and feature requests.
+
+### What's Working
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| PDF Upload | Working | Drag-drop or file picker |
+| Add Recipients | Working | Name + email for each signer |
+| Place Signature Fields | Working | Click to place, drag to resize |
+| Draw Signature | Working | Canvas-based signature capture |
+| Type Signature | Working | Font-based signatures |
+| Send via Email | Working | Magic links via Resend |
+| Magic Link Signing | Working | Recipients sign via browser |
+| E2E Encryption | Working | AES-256-GCM, zero-knowledge |
+| Dark Mode | Working | Toggle in header |
+
+### Known Issues / Not Working
+
+| Feature | Status | Bug # |
+|---------|--------|-------|
+| Size Limit UX | Broken | #1 - No clear errors for PDF/field limits |
+| Drafts Sync | Broken | #3 - Local-only, no cross-device |
+| Templates Sync | Broken | #3 - Local-only, no cross-device |
+| Rate Limit Display | Planned Removal | #4 - "docs left" display being removed |
+| Legal/TOS | Missing | #5 - No terms of service |
+| Admin Dashboard | Missing | #8 - No admin interface |
+
+### Current Limits
+
+| Limit | Value | Enforcement |
+|-------|-------|-------------|
+| PDF Size | 100 MB | Backend only (no frontend validation) |
+| Recipients | 10 max | Planned (Bug #1) |
+| Signature Dimensions | 50x20 min, 500x200 max | WASM validation |
+| Session Expiry | 7 days | Automatic |
+| Free Tier | 1 per month | Planned (Bug #6) |
+
+### Architecture
+
+```
+Browser (Client-Side)                    Cloudflare (Server-Side)
+┌─────────────────────────┐              ┌─────────────────────────┐
+│ docsign-wasm (3MB)      │              │ docsign-worker          │
+│ - PDF rendering         │  HTTPS/KV    │ - Auth (JWT)            │
+│ - Signature capture     │◄────────────►│ - Session storage       │
+│ - Field placement       │              │ - Email (Resend)        │
+│ - E2E encryption        │              │ - Rate limiting         │
+│ - IndexedDB storage     │              │                         │
+└─────────────────────────┘              └─────────────────────────┘
+         │                                        │
+         │ Zero-knowledge                         │ KV Namespaces:
+         │ (docs encrypted                        │ - USERS
+         │  before upload)                        │ - AUTH_SESSIONS
+         │                                        │ - VERIFICATIONS
+         ▼                                        │ - SESSIONS
+┌─────────────────────────┐                      │ - RATE_LIMITS
+│ IndexedDB               │                      │
+│ - documents             │                      │
+│ - keys                  │                      │
+│ - drafts                │                      │
+└─────────────────────────┘                      │
+
+Planned: Neon Postgres + R2 for cross-device sync (Bug #3)
+```
+
 ## Current Status
 
 See [PLAN.md](./PLAN.md#current-progress) for detailed progress tracking.

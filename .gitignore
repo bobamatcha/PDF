@@ -31,6 +31,11 @@ Thumbs.db
 *.key
 credentials.json
 
+# Tauri signing keys (NEVER commit these)
+.tauri-private-key
+*.tauri-private-key
+tauri-private-key*
+
 # Test artifacts
 *.profraw
 coverage/
@@ -61,3 +66,4 @@ logs/
 tmp/
 temp/
 *.tmp
+.env.secrets

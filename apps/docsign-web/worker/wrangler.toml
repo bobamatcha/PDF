@@ -1,52 +1,67 @@
-name = "docsign-worker"
+# Production worker for getsignatures.org
+# Deploy with: wrangler deploy (user runs this, not Claude)
+name = "docsign-worker-production"
 main = "build/worker/shim.mjs"
 compatibility_date = "2024-01-01"
 
-# Account ID - set via environment or wrangler login
-# account_id = "YOUR_ACCOUNT_ID"
-
-# Routes for getsignatures.org
-# Uncomment and configure for production:
-# routes = [
-#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
-# ]
-
-# For development, use workers.dev subdomain
-workers_dev = true
+# Production routing
+workers_dev = false
+routes = [
+  { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
+]
 
 # Build configuration for Rust WASM worker
 [build]
 command = "cargo install -q worker-build && worker-build --release"
 
 # KV Namespace bindings
-# Create these in Cloudflare dashboard first, then add IDs:
-# wrangler kv:namespace create "SESSIONS"
-# wrangler kv:namespace create "RATE_LIMITS"
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = ""  # Add after creating: wrangler kv:namespace create "SESSIONS"
+id = "0bf12b5d4fca450b8c4fab1d3ef58a96"
 
 [[kv_namespaces]]
 binding = "RATE_LIMITS"
-id = ""  # Add after creating: wrangler kv:namespace create "RATE_LIMITS"
+id = "9384f737469a494db2f447c5c57743f4"
+
+[[kv_namespaces]]
+binding = "VERIFICATIONS"
+id = "1929d880b7944f239a91032379a39eec"
+
+[[kv_namespaces]]
+binding = "USERS"
+id = "bfa8b86b600641b18c8b326b7245384b"
+
+[[kv_namespaces]]
+binding = "AUTH_SESSIONS"
+id = "4eb009c51065436fb761c3b640400da3"
+
+# Beta access grants - stores pre-granted email access
+[[kv_namespaces]]
+binding = "BETA_GRANTS"
+id = "97d04bc8cbc64444aa3d0b253a2203e8"
 
 # Environment variables (non-secret)
 [vars]
-DAILY_LIMIT = "100"
-MONTHLY_LIMIT = "3000"
+ALLOW_DUPLICATE_EMAILS = "false"
+EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"
+
+# Stripe Configuration (public keys only - safe to commit)
+# User must set these after creating products in Stripe Dashboard
+STRIPE_PUBLISHABLE_KEY = "pk_live_51Sn1TKCqoxDf48HlaOQnA9UvQtsYPSxYsNw5Jps3wlknfxNtXGNnttVCEWVAcV4I6qlJ8PbTZ1xaRYGp9gLT3WhE00Q5Zvhhvj"
+
+# Stripe Price IDs - Create products in Stripe Dashboard, then fill these in
+# Format: price_XXXX... from Stripe Dashboard > Products > [Product] > Pricing
+STRIPE_PRICE_PERSONAL_MONTHLY = "price_1SoEplCqoxDf48Hlm1gVmoQh"
+STRIPE_PRICE_PERSONAL_ANNUAL = "price_1SoEplCqoxDf48HlAoPYdjaW"
+STRIPE_PRICE_PROFESSIONAL_MONTHLY = "price_1SoEsnCqoxDf48Hle6HEw5ug"
+STRIPE_PRICE_PROFESSIONAL_ANNUAL = "price_1SoEsnCqoxDf48HlyQdHYDZc"
+STRIPE_PRICE_BUSINESS_MONTHLY = "price_1SoEtOCqoxDf48HlyHWebJG5"
+STRIPE_PRICE_BUSINESS_ANNUAL = "price_1SoEtOCqoxDf48Hl0ZiI3tLl"
 
 # Secrets (set via wrangler secret put):
-# wrangler secret put RESEND_API_KEY
-# wrangler secret put DOCSIGN_API_KEY
-
-# Development environment
-[env.dev]
-workers_dev = true
-vars = { DAILY_LIMIT = "10", MONTHLY_LIMIT = "100" }
-
-# Production environment
-[env.production]
-workers_dev = false
-# routes = [
-#   { pattern = "api.getsignatures.org/*", zone_name = "getsignatures.org" }
-# ]
+# wrangler secret put DOCSIGN_API_KEY      # API key for protected endpoints
+# wrangler secret put TOKEN_SECRET         # Secret for signing recipient tokens
+# wrangler secret put RESEND_API_KEY       # Resend API key for email sending
+# wrangler secret put JWT_SECRET           # Secret for signing JWT auth tokens (min 32 bytes)
+# wrangler secret put STRIPE_SECRET_KEY    # Stripe secret key (sk_live_... or sk_test_...)
+# wrangler secret put STRIPE_WEBHOOK_SECRET # Stripe webhook signing secret (whsec_...)

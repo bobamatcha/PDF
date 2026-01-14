@@ -20,3 +20,7 @@ p256 = { workspace = true }
 sha2 = { workspace = true }
 cms = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
+pretty_assertions = { workspace = true }
