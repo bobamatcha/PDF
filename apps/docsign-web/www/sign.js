@@ -136,6 +136,16 @@ function validateSessionParams() {
 }
 
 /**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
  * Show error message to user (NO mock data fallback)
  */
 function showSessionError(message) {
@@ -165,6 +175,61 @@ function showSessionError(message) {
     // Hide toolbar buttons
     if (elements.btnStart) elements.btnStart.style.display = 'none';
     if (elements.btnFinish) elements.btnFinish.style.display = 'none';
+}
+
+// ============================================================
+// Already Signed Page
+// ============================================================
+
+/**
+ * Show the "already signed" page when recipient has already signed
+ * @param {Object} session - Session data from API
+ * @param {Object} recipient - Recipient data with signed_at timestamp
+ */
+function showAlreadySignedPage(session, recipient) {
+    console.log('[ALREADY-SIGNED] Showing already signed page');
+
+    // Hide loading indicator
+    if (elements.loadingIndicator) {
+        elements.loadingIndicator.classList.add('hidden');
+    }
+
+    // Hide other pages
+    if (elements.consentLanding) {
+        elements.consentLanding.classList.add('hidden');
+    }
+    if (elements.signingToolbar) {
+        elements.signingToolbar.style.display = 'none';
+    }
+    if (elements.viewerContainer) {
+        elements.viewerContainer.style.display = 'none';
+    }
+
+    // Format the signed date
+    const signedDate = recipient.signed_at
+        ? new Date(recipient.signed_at).toLocaleString()
+        : 'a previous visit';
+
+    const documentName = session.metadata?.filename || 'Document';
+
+    // Create and show the already signed page
+    const container = document.querySelector('.main-container') || document.body;
+    container.innerHTML = `
+        <div class="already-signed-page" style="text-align: center; padding: 60px 20px; max-width: 500px; margin: 0 auto;">
+            <div style="font-size: 72px; margin-bottom: 24px; color: #059669;">&#10003;</div>
+            <h1 style="color: #059669; margin-bottom: 16px; font-size: 28px; font-weight: 600;">Already Signed</h1>
+            <p style="color: #6b7280; margin-bottom: 12px; font-size: 16px;">
+                You signed this document on <strong>${signedDate}</strong>.
+            </p>
+            <p style="color: #6b7280; margin-bottom: 24px; font-size: 16px;">
+                Document: <strong>${documentName}</strong>
+            </p>
+            <p style="color: #9ca3af; font-size: 14px; line-height: 1.5;">
+                No further action is required.<br>
+                The sender will receive the completed document once all parties have signed.
+            </p>
+        </div>
+    `;
 }
 
 // ============================================================
@@ -232,6 +297,161 @@ function showExpiryPage(sessionData) {
         elements.btnRequestNewLink.disabled = false;
         elements.btnRequestNewLink.textContent = 'Request New Link';
     }
+}
+
+/**
+ * Show voided/discarded page when sender has cancelled the document
+ */
+function showVoidedPage(sessionData) {
+    console.log('[VOIDED] Showing voided page for session:', sessionData);
+
+    // Hide loading indicator
+    if (elements.loadingIndicator) {
+        elements.loadingIndicator.classList.add('hidden');
+    }
+
+    // Hide other pages
+    if (elements.consentLanding) {
+        elements.consentLanding.classList.add('hidden');
+    }
+    if (elements.signingToolbar) {
+        elements.signingToolbar.style.display = 'none';
+    }
+    if (elements.viewerContainer) {
+        elements.viewerContainer.style.display = 'none';
+    }
+    if (elements.expiryPage) {
+        elements.expiryPage.classList.add('hidden');
+    }
+
+    // Extract session info
+    const metadata = sessionData.metadata || {};
+    const documentName = metadata.filename || sessionData.document_name || 'Document';
+    const senderName = metadata.created_by || sessionData.sender_name || 'Unknown Sender';
+    const senderEmail = metadata.sender_email || sessionData.sender_email || '';
+    const voidReason = sessionData.void_reason || '';
+    const voidedAt = sessionData.voided_at ? new Date(sessionData.voided_at).toLocaleDateString() : '';
+
+    // Create and show voided page
+    const container = document.querySelector('.container') || document.body;
+    let voidedPage = document.getElementById('voided-page');
+
+    if (!voidedPage) {
+        voidedPage = document.createElement('div');
+        voidedPage.id = 'voided-page';
+        container.appendChild(voidedPage);
+    }
+
+    voidedPage.innerHTML = `
+        <div style="max-width: 500px; margin: 3rem auto; text-align: center; padding: 2rem;">
+            <div style="width: 80px; height: 80px; margin: 0 auto 1.5rem; background: #f3f4f6; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 2.5rem; color: #6b7280;">✗</span>
+            </div>
+            <h1 style="font-size: 1.5rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem;">This Signing Request Has Been Cancelled</h1>
+            <p style="color: #6b7280; margin-bottom: 1.5rem;">The sender has cancelled this document and it is no longer available for signing.</p>
+
+            ${voidReason ? `
+                <div style="background: #f9fafb; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; text-align: left;">
+                    <p style="font-weight: 500; color: #374151; margin-bottom: 0.5rem;">Reason provided:</p>
+                    <p style="color: #6b7280; font-style: italic;">"${escapeHtml(voidReason)}"</p>
+                </div>
+            ` : ''}
+
+            <div style="background: #f9fafb; border-radius: 8px; padding: 1rem; text-align: left;">
+                <h3 style="font-weight: 600; color: #374151; margin-bottom: 0.75rem;">Document Details</h3>
+                <p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>Document:</strong> ${escapeHtml(documentName)}</p>
+                <p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>From:</strong> ${escapeHtml(senderName)}</p>
+                ${senderEmail ? `<p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>Contact:</strong> <a href="mailto:${escapeHtml(senderEmail)}" style="color: #3b82f6;">${escapeHtml(senderEmail)}</a></p>` : ''}
+                ${voidedAt ? `<p style="color: #6b7280;"><strong>Cancelled on:</strong> ${voidedAt}</p>` : ''}
+            </div>
+
+            <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 1.5rem;">
+                If you have questions, please contact the sender directly.
+            </p>
+        </div>
+    `;
+    voidedPage.classList.remove('hidden');
+}
+
+/**
+ * Show blocked page when another signer has declined the document
+ */
+function showDeclinedBlockedPage(sessionData, currentRecipientId) {
+    console.log('[DECLINED] Showing declined-blocked page for session:', sessionData);
+
+    // Hide loading indicator
+    if (elements.loadingIndicator) {
+        elements.loadingIndicator.classList.add('hidden');
+    }
+
+    // Hide other pages
+    if (elements.consentLanding) {
+        elements.consentLanding.classList.add('hidden');
+    }
+    if (elements.signingToolbar) {
+        elements.signingToolbar.style.display = 'none';
+    }
+    if (elements.viewerContainer) {
+        elements.viewerContainer.style.display = 'none';
+    }
+    if (elements.expiryPage) {
+        elements.expiryPage.classList.add('hidden');
+    }
+
+    // Extract session info
+    const metadata = sessionData.metadata || {};
+    const documentName = metadata.filename || sessionData.document_name || 'Document';
+    const senderName = metadata.created_by || sessionData.sender_name || 'Unknown Sender';
+    const senderEmail = metadata.sender_email || sessionData.sender_email || '';
+
+    // Find who declined
+    const decliner = sessionData.recipients?.find(r => r.declined);
+    const declinerName = decliner?.name || 'Another signer';
+    const declineReason = decliner?.decline_reason || '';
+    const declinedAt = decliner?.declined_at ? new Date(decliner.declined_at).toLocaleDateString() : '';
+
+    // Create and show declined-blocked page
+    const container = document.querySelector('.container') || document.body;
+    let declinedPage = document.getElementById('declined-blocked-page');
+
+    if (!declinedPage) {
+        declinedPage = document.createElement('div');
+        declinedPage.id = 'declined-blocked-page';
+        container.appendChild(declinedPage);
+    }
+
+    declinedPage.innerHTML = `
+        <div style="max-width: 500px; margin: 3rem auto; text-align: center; padding: 2rem;">
+            <div style="width: 80px; height: 80px; margin: 0 auto 1.5rem; background: #fef2f2; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                <span style="font-size: 2.5rem; color: #ef4444;">!</span>
+            </div>
+            <h1 style="font-size: 1.5rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem;">This Document Was Declined</h1>
+            <p style="color: #6b7280; margin-bottom: 1.5rem;">
+                <strong>${escapeHtml(declinerName)}</strong> has declined to sign this document.
+                The sender has been notified and must revise or discard the document before signing can continue.
+            </p>
+
+            ${declineReason ? `
+                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; text-align: left;">
+                    <p style="font-weight: 500; color: #991b1b; margin-bottom: 0.5rem;">Reason for decline:</p>
+                    <p style="color: #7f1d1d; font-style: italic;">"${escapeHtml(declineReason)}"</p>
+                </div>
+            ` : ''}
+
+            <div style="background: #f9fafb; border-radius: 8px; padding: 1rem; text-align: left;">
+                <h3 style="font-weight: 600; color: #374151; margin-bottom: 0.75rem;">Document Details</h3>
+                <p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>Document:</strong> ${escapeHtml(documentName)}</p>
+                <p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>From:</strong> ${escapeHtml(senderName)}</p>
+                ${senderEmail ? `<p style="color: #6b7280; margin-bottom: 0.5rem;"><strong>Contact:</strong> <a href="mailto:${escapeHtml(senderEmail)}" style="color: #3b82f6;">${escapeHtml(senderEmail)}</a></p>` : ''}
+                ${declinedAt ? `<p style="color: #6b7280;"><strong>Declined on:</strong> ${declinedAt}</p>` : ''}
+            </div>
+
+            <p style="color: #9ca3af; font-size: 0.875rem; margin-top: 1.5rem;">
+                If you have questions, please contact the sender directly.
+            </p>
+        </div>
+    `;
+    declinedPage.classList.remove('hidden');
 }
 
 /**
@@ -439,7 +659,7 @@ async function fetchSession() {
     }
 
     // =========================================================
-    // LOCAL-FIRST: Try IndexedDB first
+    // LOCAL-FIRST: Try IndexedDB first (but check signed status!)
     // =========================================================
     if (window.DocSign?.LocalSessionManager) {
         try {
@@ -452,6 +672,14 @@ async function fetchSession() {
                     console.log('[LOCAL-FIRST] Cached session is expired');
                     showExpiryPage(localSession);
                     return { ...localSession, _isExpired: true };
+                }
+
+                // BUG FIX: Check if recipient already signed in cached session
+                const cachedRecipient = localSession.recipients?.find(r => r.id === recipientId);
+                if (cachedRecipient?.signed) {
+                    console.log('[LOCAL-FIRST] Cached session shows recipient already signed');
+                    showAlreadySignedPage(localSession, cachedRecipient);
+                    return { ...localSession, _alreadySigned: true };
                 }
 
                 // Use locally cached session
@@ -495,12 +723,8 @@ async function fetchSession() {
     const WORKER_API = window.API_BASE || 'https://api.getsignatures.org';
 
     try {
-        const response = await fetch(`${WORKER_API}/session/${sessionId}`, {
-            headers: {
-                'X-Recipient-Id': recipientId,
-                'X-Signing-Key': signingKey
-            }
-        });
+        // BUG FIX: Use token query parameter for authentication (not headers)
+        const response = await fetch(`${WORKER_API}/session/${sessionId}?token=${encodeURIComponent(signingKey)}`);
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -521,7 +745,29 @@ async function fetchSession() {
             return { ...session, _isExpired: true };
         }
 
+        // Check if session was voided/discarded by sender
+        if (session.status === 'voided') {
+            console.log('[VOIDED] Session was voided by sender');
+            showVoidedPage(session);
+            return { ...session, _isVoided: true };
+        }
+
+        // Check if session was declined by another signer (blocks all other signers)
+        if (session.status === 'declined') {
+            console.log('[DECLINED] Session was declined by a signer');
+            showDeclinedBlockedPage(session, recipientId);
+            return { ...session, _isDeclined: true };
+        }
+
         state.session = session;
+
+        // Check if this recipient has already signed (prevents re-signing)
+        const currentRecipient = session.recipients?.find(r => r.id === recipientId);
+        if (currentRecipient?.signed) {
+            console.log('[ALREADY-SIGNED] Recipient has already signed this document');
+            showAlreadySignedPage(session, currentRecipient);
+            return { ...session, _alreadySigned: true };
+        }
 
         // Extract fields for this recipient only
         state.fields = session.fields.filter(f => f.recipientId === recipientId);
@@ -1156,6 +1402,38 @@ function switchTab(tabName) {
 }
 
 /**
+ * Render typed signature text to a canvas and return data URL
+ * This converts typed signatures to images so we don't need to embed fonts server-side
+ * @param {string} text - The signature text
+ * @param {string} font - The font family name
+ * @returns {string} Data URL of the rendered signature
+ */
+function renderTypedSignatureToCanvas(text, font) {
+    // Create off-screen canvas sized for a signature
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 100;
+    const ctx = canvas.getContext('2d');
+
+    // White background (matches signature pad)
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Render text with selected font
+    ctx.fillStyle = '#1a365d'; // Dark blue like drawn signatures
+    ctx.font = `italic 48px "${font}", cursive`;
+    ctx.textBaseline = 'middle';
+
+    // Center text horizontally and vertically
+    const textMetrics = ctx.measureText(text);
+    const x = (canvas.width - textMetrics.width) / 2;
+    const y = canvas.height / 2;
+    ctx.fillText(text, Math.max(10, x), y);
+
+    return canvas.toDataURL('image/png');
+}
+
+/**
  * Apply signature
  */
 function applySignature() {
@@ -1180,14 +1458,17 @@ function applySignature() {
             markFieldComplete(field.id, { type: 'drawn', data: dataUrl });
         }
     } else {
-        // Save typed text
+        // Save typed text - render to canvas to avoid font embedding complexity
         const text = elements.typedName?.value.trim();
         if (!text) {
             alert('Please type your name');
             return;
         }
         const font = elements.fontSelector?.value || 'Dancing Script';
-        markFieldComplete(field.id, { type: 'typed', data: text, font: font });
+
+        // Render typed signature to canvas (server-side merge requires image, not font)
+        const dataUrl = renderTypedSignatureToCanvas(text, font);
+        markFieldComplete(field.id, { type: 'drawn', data: dataUrl });
     }
 
     closeSignatureModal();
@@ -1235,7 +1516,45 @@ async function finishSigning() {
     const { sessionId, recipientId, signingKey } = window.sessionParams;
     const completedAt = new Date().toISOString();
 
-    // Prepare signed document data
+    // Convert signatures to annotation format for new lightweight storage
+    // This stores ~50KB per signer instead of ~13MB full PDF copies
+    // Note: All signatures are now 'drawn' type (typed signatures are rendered to canvas)
+    const annotations = Object.entries(state.signatures).map(([fieldId, sigData]) => {
+        // Convert signature data to annotation format
+        let data;
+        if (typeof sigData === 'object' && sigData.type) {
+            if (sigData.type === 'drawn') {
+                data = { type: 'DrawnSignature', image_base64: sigData.data };
+            } else if (sigData.type === 'typed') {
+                // Legacy fallback: render typed signature to canvas if it somehow wasn't pre-rendered
+                const font = sigData.font || 'Dancing Script';
+                const imageData = renderTypedSignatureToCanvas(sigData.data, font);
+                data = { type: 'DrawnSignature', image_base64: imageData };
+            } else {
+                // Fallback - treat as text
+                data = { type: 'Text', value: String(sigData.data || sigData) };
+            }
+        } else if (typeof sigData === 'string') {
+            // Simple text value (date, text field)
+            data = { type: 'Text', value: sigData };
+        } else {
+            data = { type: 'Text', value: String(sigData) };
+        }
+
+        return {
+            field_id: fieldId,
+            data: data
+            // field_type and position will be looked up from session fields on backend
+        };
+    });
+
+    // Prepare annotation request (new lightweight format)
+    const annotationRequest = {
+        recipient_id: recipientId,
+        annotations: annotations
+    };
+
+    // Legacy format for backwards compatibility with local storage
     const signedData = {
         recipient_id: recipientId,
         signatures: state.signatures,
@@ -1295,18 +1614,29 @@ async function finishSigning() {
             elements.btnFinish.textContent = 'Syncing...';
         }
 
-        const response = await fetch(`${WORKER_API}/session/${sessionId}/signed`, {
-            method: 'POST',
+        // Use new annotations endpoint - stores ~50KB vs ~13MB per signer
+        const response = await fetch(`${WORKER_API}/session/${sessionId}/annotations`, {
+            method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Recipient-Id': recipientId,
                 'X-Signing-Key': signingKey
             },
-            body: JSON.stringify(signedData)
+            body: JSON.stringify(annotationRequest)
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to submit: ${response.status}`);
+            // Try to parse error response for specific handling
+            const errorData = await response.json().catch(() => ({}));
+
+            // Handle "already signed" error specifically
+            if (response.status === 400 && errorData.message?.toLowerCase().includes('already signed')) {
+                console.log('[ALREADY-SIGNED] Server rejected: recipient already signed');
+                showAlreadySignedPage(state.session, { signed_at: null });
+                return;
+            }
+
+            throw new Error(`Failed to submit: ${response.status} - ${errorData.message || ''}`);
         }
 
         const result = await response.json();
@@ -1315,6 +1645,22 @@ async function finishSigning() {
         if (window.DocSign?.LocalSessionManager) {
             await window.DocSign.LocalSessionManager.removeFromQueue(sessionId, recipientId);
             await window.DocSign.LocalSessionManager.completeSession(sessionId);
+
+            // BUG FIX: Update recipient's signed status in local cache to prevent re-signing
+            try {
+                const cachedSession = await window.DocSign.LocalSessionManager.getSession(sessionId);
+                if (cachedSession && cachedSession.recipients) {
+                    const recipientToUpdate = cachedSession.recipients.find(r => r.id === recipientId);
+                    if (recipientToUpdate) {
+                        recipientToUpdate.signed = true;
+                        recipientToUpdate.signed_at = completedAt;
+                        await window.DocSign.LocalSessionManager.saveSession(cachedSession);
+                        console.log('[LOCAL-FIRST] Updated recipient signed status in cache');
+                    }
+                }
+            } catch (cacheErr) {
+                console.warn('[LOCAL-FIRST] Failed to update recipient signed status:', cacheErr);
+            }
         }
 
         // Check if all signers have completed
@@ -1407,8 +1753,33 @@ function showCompletionModal(allSigned, downloadUrl = null, isOffline = false) {
         message = 'Your signature has been recorded. Other parties will be notified.';
     }
 
+    // Build download section
+    let downloadSection = '';
+    if (downloadUrl) {
+        downloadSection = `
+            <a href="${downloadUrl}" download class="btn btn-primary" style="margin-bottom: 1rem; display: inline-block; min-width: 200px;">
+                Download Signed PDF
+            </a>
+        `;
+    }
+
+    // Build account creation section (only when all signed and online)
+    let accountSection = '';
+    if (allSigned && !isOffline) {
+        accountSection = `
+            <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-primary, #e5e7eb);">
+                <p style="font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Want to access this document later without downloading?
+                </p>
+                <button id="btn-create-account" class="btn btn-secondary" style="min-width: 200px;">
+                    Create Free Account
+                </button>
+            </div>
+        `;
+    }
+
     modal.innerHTML = `
-        <div class="modal" style="text-align: center; padding: 2rem;">
+        <div class="modal" style="text-align: center; padding: 2rem; max-width: 500px;">
             <div style="font-size: 4rem; margin-bottom: 1rem;">
                 ${icon}
             </div>
@@ -1424,24 +1795,34 @@ function showCompletionModal(allSigned, downloadUrl = null, isOffline = false) {
                     Waiting for internet connection...
                 </p>
             ` : ''}
-            ${downloadUrl ? `
-                <a href="${downloadUrl}" download class="btn btn-primary" style="margin-bottom: 1rem; display: inline-block;">
-                    Download Signed PDF
-                </a>
-            ` : ''}
-            <button id="close-completion" class="btn btn-secondary" style="display: block; margin: 0 auto;">
-                Close
+            ${downloadSection}
+            <button id="close-completion" class="btn ${downloadUrl ? 'btn-secondary' : 'btn-primary'}" style="display: block; margin: 0.5rem auto; min-width: 200px;">
+                ${downloadUrl ? 'Close' : 'Done'}
             </button>
+            ${accountSection}
         </div>
     `;
 
     document.body.appendChild(modal);
 
+    // Close button handler
     document.getElementById('close-completion').addEventListener('click', () => {
         modal.remove();
-        // Optionally redirect to a thank you page
-        // window.location.href = '/thank-you.html';
     });
+
+    // Account creation handler
+    const createAccountBtn = document.getElementById('btn-create-account');
+    if (createAccountBtn) {
+        createAccountBtn.addEventListener('click', () => {
+            // Store session info for post-registration association
+            sessionStorage.setItem('pending_session_id', window.sessionParams?.sessionId || '');
+            sessionStorage.setItem('pending_recipient_email', state.session?.recipients?.find(
+                r => r.id === window.sessionParams?.recipientId
+            )?.email || '');
+            // Redirect to signup page
+            window.location.href = '/?signup=true&redirect=dashboard';
+        });
+    }
 }
 
 /**
@@ -1939,6 +2320,12 @@ async function initialize() {
             return;
         }
 
+        // If recipient already signed, already-signed page is already shown
+        if (session && session._alreadySigned) {
+            console.log('[ALREADY-SIGNED] Already signed, skipping normal initialization');
+            return;
+        }
+
         // Update total count
         if (elements.totalSpan) {
             elements.totalSpan.textContent = state.fields.length;
@@ -1965,6 +2352,32 @@ function openDeclineModal() {
     // Clear previous reason
     if (elements.declineReason) {
         elements.declineReason.value = '';
+    }
+
+    // Populate sender contact info from session state
+    const senderNameEl = document.getElementById('decline-sender-name-text');
+    const senderEmailLink = document.getElementById('decline-sender-email-link');
+    const senderContactSection = document.getElementById('decline-sender-contact');
+
+    if (state.session) {
+        const metadata = state.session.metadata || {};
+        const senderName = metadata.created_by || state.session.sender_name || 'The sender';
+        const senderEmail = metadata.sender_email || state.session.sender_email || '';
+
+        if (senderNameEl) {
+            senderNameEl.textContent = senderName;
+        }
+
+        if (senderEmailLink && senderEmail) {
+            senderEmailLink.href = `mailto:${senderEmail}`;
+            senderEmailLink.textContent = senderEmail;
+            if (senderContactSection) {
+                senderContactSection.style.display = 'block';
+            }
+        } else if (senderContactSection && !senderEmail) {
+            // Hide contact section if no email available
+            senderContactSection.style.display = 'none';
+        }
     }
 }
 

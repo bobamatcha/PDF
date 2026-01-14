@@ -8,9 +8,14 @@ mod billing;
 mod email;
 
 use chrono::Utc;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use hmac::{Hmac, Mac};
+use lopdf::{Dictionary, Object, ObjectId, Stream};
+use png::Decoder as PngDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::io::Write;
 use worker::*;
 
 // Type alias for HMAC-SHA256
@@ -171,6 +176,9 @@ struct CreateSessionRequest {
     /// Reminder configuration
     #[serde(default)]
     reminder_config: ReminderConfig,
+    /// Legacy mode: if true, allow GET without token (for backwards compatibility/testing)
+    #[serde(default)]
+    legacy: bool,
 }
 
 fn default_expiry_hours() -> u32 {
@@ -262,12 +270,14 @@ enum SessionStatus {
     Pending,
     /// Recipient accepted and is signing
     Accepted,
-    /// Recipient declined to sign
+    /// Recipient declined to sign - blocks other signers until sender revises/discards
     Declined,
     /// All signatures completed
     Completed,
     /// Session has expired
     Expired,
+    /// Session was voided/discarded by sender - all signing links invalidated
+    Voided,
 }
 
 /// Bug #0 fix: Custom deserializer for f64 that handles null/NaN/undefined
@@ -344,9 +354,14 @@ struct SigningSession {
     recipients: Vec<RecipientInfo>,
     fields: Vec<FieldInfo>,
     expires_at: String,
-    /// Each signer's signed version (parallel mode stores all; sequential overwrites)
+    /// LEGACY: Each signer's full PDF copy (deprecated - use signature_annotations instead)
+    /// Kept for backwards compatibility with existing sessions
     #[serde(default)]
     signed_versions: Vec<SignedVersion>,
+    /// NEW: Lightweight signature annotations (~50KB each vs ~13MB full PDF copies)
+    /// Original PDF + annotations are merged on-demand when downloading
+    #[serde(default)]
+    signature_annotations: Vec<SignatureAnnotation>,
     /// Session status for the workflow (UX-002)
     #[serde(default)]
     status: SessionStatus,
@@ -363,6 +378,18 @@ struct SigningSession {
     /// New sessions should NOT set this flag (defaults to false)
     #[serde(default)]
     legacy: bool,
+    /// Number of revisions made to this document
+    #[serde(default)]
+    revision_count: u32,
+    /// When document was voided (if applicable)
+    #[serde(default)]
+    voided_at: Option<String>,
+    /// Reason for voiding
+    #[serde(default)]
+    void_reason: Option<String>,
+    /// Token version - incremented on revise/void to invalidate old tokens
+    #[serde(default)]
+    token_version: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -370,6 +397,75 @@ struct SignedVersion {
     recipient_id: String,
     encrypted_document: String,
     signed_at: String,
+}
+
+// ============================================================================
+// New Annotation-based Storage (v2)
+// Instead of storing full PDF copies per signer (~13MB each), we store only
+// signature annotations (~50KB each). This allows unlimited signers within
+// the 25MB KV limit. The original PDF is merged with annotations on-demand.
+// ============================================================================
+
+/// A single signature annotation (signature, initials, date, text, or checkbox)
+#[derive(Serialize, Deserialize, Clone)]
+struct SignatureAnnotation {
+    /// Unique ID for this annotation
+    id: String,
+    /// Which recipient placed this annotation
+    recipient_id: String,
+    /// Which field this annotation fills
+    field_id: String,
+    /// Type of annotation
+    field_type: AnnotationFieldType,
+    /// The actual annotation data (signature image, text, etc.)
+    data: AnnotationData,
+    /// Position on the PDF page
+    position: AnnotationPosition,
+    /// When this annotation was created
+    signed_at: String,
+}
+
+/// Type of annotation field
+#[derive(Serialize, Deserialize, Clone)]
+enum AnnotationFieldType {
+    Signature,
+    Initials,
+    Date,
+    Text,
+    Checkbox,
+}
+
+/// The actual data for an annotation
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+enum AnnotationData {
+    /// Drawn/uploaded signature image
+    DrawnSignature { image_base64: String },
+    /// Typed signature with font
+    TypedSignature { text: String, font: String },
+    /// Initials (drawn or typed)
+    Initials { image_base64: String },
+    /// Date value
+    Date { value: String },
+    /// Free text
+    Text { value: String },
+    /// Checkbox state
+    Checkbox { checked: bool },
+}
+
+/// Position of annotation on PDF page (all values as percentages for resolution-independence)
+#[derive(Serialize, Deserialize, Clone)]
+struct AnnotationPosition {
+    /// Page number (0-indexed)
+    page: u32,
+    /// X position as percentage of page width (0-100)
+    x_percent: f64,
+    /// Y position as percentage of page height (0-100)
+    y_percent: f64,
+    /// Width as percentage of page width
+    width_percent: f64,
+    /// Height as percentage of page height
+    height_percent: f64,
 }
 
 /// Response for session creation
@@ -408,11 +504,49 @@ struct SessionPublicInfo {
     final_document: Option<String>,
 }
 
-/// Request to submit signed document
+/// Request to submit signed document (LEGACY: stores full PDF copy per signer)
 #[derive(Deserialize)]
 struct SubmitSignedRequest {
     recipient_id: String,
     encrypted_document: String,
+}
+
+/// Request to submit signature annotations (NEW: stores only annotation data ~50KB)
+/// Use this instead of SubmitSignedRequest to support unlimited signers
+#[derive(Deserialize)]
+struct SubmitAnnotationsRequest {
+    recipient_id: String,
+    /// Annotations placed by this recipient
+    annotations: Vec<AnnotationSubmission>,
+}
+
+/// A single annotation submission from the frontend
+#[derive(Deserialize)]
+struct AnnotationSubmission {
+    /// Which field this annotation fills
+    field_id: String,
+    /// Type of annotation (defaults to Signature if not specified)
+    #[serde(default)]
+    field_type: Option<AnnotationFieldType>,
+    /// The actual annotation data
+    data: AnnotationData,
+    /// Position on the PDF page (optional - can be looked up from field_id)
+    #[serde(default)]
+    position: Option<AnnotationPosition>,
+}
+
+/// Response from annotation submission
+#[derive(Serialize)]
+struct SubmitAnnotationsResponse {
+    success: bool,
+    message: String,
+    /// True if all signers have now completed
+    all_signed: bool,
+    /// Number of remaining signers
+    remaining_signers: u32,
+    /// Download URL for the signed document (only when all_signed=true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    download_url: Option<String>,
 }
 
 /// Request to decline a document (UX-002)
@@ -427,6 +561,179 @@ struct DeclineRequest {
 struct DeclineResponse {
     success: bool,
     message: String,
+}
+
+/// Request to void/discard a document
+#[derive(Deserialize)]
+struct VoidRequest {
+    /// Optional reason for voiding
+    reason: Option<String>,
+}
+
+/// Response from void endpoint
+#[derive(Serialize)]
+struct VoidResponse {
+    success: bool,
+    message: String,
+}
+
+/// Request to revise a document (only if no signers have signed yet)
+#[derive(Deserialize)]
+struct ReviseRequest {
+    /// Updated field positions
+    fields: Vec<FieldInfo>,
+    /// Optional: new/modified recipients (full revision - can add/remove signers)
+    #[serde(default)]
+    recipients: Option<Vec<ReviseRecipientInput>>,
+    /// Optional: replacement document as base64
+    #[serde(default)]
+    document: Option<String>,
+    /// Optional: note to signers about the revision
+    #[serde(default)]
+    message: Option<String>,
+}
+
+/// Recipient info for revision
+#[derive(Deserialize, Clone)]
+struct ReviseRecipientInput {
+    /// Existing recipient ID (for retained signers) or new unique ID
+    id: String,
+    name: String,
+    email: String,
+    #[serde(default = "default_signer_role")]
+    role: String,
+    #[serde(default)]
+    signing_order: Option<u32>,
+}
+
+fn default_signer_role() -> String {
+    "signer".to_string()
+}
+
+/// Token info returned after revision
+#[derive(Serialize)]
+struct TokenInfo {
+    recipient_id: String,
+    recipient_name: String,
+    recipient_email: String,
+    signing_url: String,
+}
+
+/// Response from revise endpoint
+#[derive(Serialize)]
+struct ReviseResponse {
+    success: bool,
+    message: String,
+    /// New signing links for all recipients
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tokens: Option<Vec<TokenInfo>>,
+}
+
+/// Request to restart a document (clears all signatures and starts fresh)
+/// Use this when some signers have already signed but need to revise
+#[derive(Deserialize)]
+struct RestartRequest {
+    /// Updated field positions
+    fields: Vec<FieldInfo>,
+    /// Optional: new/modified recipients (can add/remove signers)
+    #[serde(default)]
+    recipients: Option<Vec<ReviseRecipientInput>>,
+    /// Optional: replacement document as base64
+    #[serde(default)]
+    document: Option<String>,
+    /// Optional: note to signers about the restart
+    #[serde(default)]
+    message: Option<String>,
+}
+
+/// Response from restart endpoint
+#[derive(Serialize)]
+struct RestartResponse {
+    success: bool,
+    message: String,
+    /// New signing links for all recipients
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tokens: Option<Vec<TokenInfo>>,
+}
+
+/// Request to associate a signed session with a newly created account
+/// Used when a signer creates an account after signing to view the document in their dashboard
+#[derive(Deserialize)]
+struct AssociateSessionRequest {
+    session_id: String,
+}
+
+// ============================================================
+// Template Types (Phase 3)
+// ============================================================
+
+/// A field template defines reusable field placements for document signing
+#[derive(Serialize, Deserialize, Clone)]
+struct FieldTemplate {
+    id: String,
+    name: String,
+    fields: Vec<TemplateField>,
+    created_at: String,
+    updated_at: String,
+}
+
+/// A field within a template
+#[derive(Serialize, Deserialize, Clone)]
+struct TemplateField {
+    field_type: String,
+    /// 0 = first signer, 1 = second signer, etc.
+    recipient_index: u32,
+    page: u32,
+    x_percent: f64,
+    y_percent: f64,
+    width_percent: f64,
+    height_percent: f64,
+    required: bool,
+}
+
+/// Index of templates for a user
+#[derive(Serialize, Deserialize, Default)]
+struct TemplateIndex {
+    templates: Vec<TemplateIndexEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct TemplateIndexEntry {
+    id: String,
+    name: String,
+    field_count: usize,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Request to create/update a template
+#[derive(Deserialize)]
+struct CreateTemplateRequest {
+    name: String,
+    fields: Vec<TemplateField>,
+}
+
+/// Response from template creation
+#[derive(Serialize)]
+struct CreateTemplateResponse {
+    success: bool,
+    template_id: String,
+    message: String,
+}
+
+/// Response with list of templates
+#[derive(Serialize)]
+struct ListTemplatesResponse {
+    success: bool,
+    templates: Vec<TemplateIndexEntry>,
+}
+
+/// Response with a single template
+#[derive(Serialize)]
+struct GetTemplateResponse {
+    success: bool,
+    template: Option<FieldTemplate>,
+    message: Option<String>,
 }
 
 /// Request to record consent acceptance (for audit trail)
@@ -462,6 +769,9 @@ struct InviteRequest {
     /// Feature 1: Optional signing context (e.g., "Lease for 30 James Ave, Orlando")
     #[serde(default)]
     signing_context: Option<String>,
+    /// Token version for invalidation (defaults to 0 for new sessions)
+    #[serde(default)]
+    token_version: u32,
 }
 
 #[derive(Deserialize)]
@@ -714,6 +1024,8 @@ pub enum TokenError {
     InvalidSignature,
     /// Token session_id doesn't match the requested session
     SessionMismatch,
+    /// Token version doesn't match session's current version (token was invalidated)
+    VersionMismatch,
 }
 
 impl std::fmt::Display for TokenError {
@@ -723,6 +1035,12 @@ impl std::fmt::Display for TokenError {
             TokenError::Expired => write!(f, "Token has expired"),
             TokenError::InvalidSignature => write!(f, "Invalid token signature"),
             TokenError::SessionMismatch => write!(f, "Token does not match session"),
+            TokenError::VersionMismatch => {
+                write!(
+                    f,
+                    "Token has been invalidated (document was revised or voided)"
+                )
+            }
         }
     }
 }
@@ -772,15 +1090,25 @@ fn get_signing_secret(env: &Env) -> Vec<u8> {
 ///
 /// # Returns
 /// A base64url-encoded token string
-pub fn generate_recipient_token(session_id: &str, recipient_id: &str, secret: &[u8]) -> String {
+/// Generate a recipient token with token_version for invalidation support.
+/// Token format: session_id:recipient_id:token_version:expiry:signature
+pub fn generate_recipient_token(
+    session_id: &str,
+    recipient_id: &str,
+    token_version: u32,
+    secret: &[u8],
+) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
 
     // Calculate expiry timestamp (30 days from now)
     let expiry = chrono::Utc::now().timestamp() as u64 + TOKEN_EXPIRY_SECONDS;
 
-    // Create the payload to sign
-    let payload = format!("{}:{}:{}", session_id, recipient_id, expiry);
+    // Create the payload to sign (includes token_version for invalidation)
+    let payload = format!(
+        "{}:{}:{}:{}",
+        session_id, recipient_id, token_version, expiry
+    );
 
     // Generate HMAC signature
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
@@ -797,7 +1125,23 @@ pub fn generate_recipient_token(session_id: &str, recipient_id: &str, secret: &[
     URL_SAFE_NO_PAD.encode(token.as_bytes())
 }
 
-/// Verify a recipient token and extract the recipient_id if valid.
+/// Legacy token generation without token_version (for backwards compatibility)
+pub fn generate_recipient_token_legacy(
+    session_id: &str,
+    recipient_id: &str,
+    secret: &[u8],
+) -> String {
+    generate_recipient_token(session_id, recipient_id, 0, secret)
+}
+
+/// Token verification result containing recipient_id and token_version
+pub struct TokenVerificationResult {
+    pub recipient_id: String,
+    pub token_version: u32,
+}
+
+/// Verify a recipient token and extract the recipient_id and token_version if valid.
+/// Supports both legacy (4-part) and new (5-part) token formats.
 ///
 /// # Arguments
 /// * `token` - The base64url-encoded token to verify
@@ -805,13 +1149,13 @@ pub fn generate_recipient_token(session_id: &str, recipient_id: &str, secret: &[
 /// * `secret` - The HMAC signing secret
 ///
 /// # Returns
-/// * `Ok(recipient_id)` - The recipient ID from the token if valid
+/// * `Ok(TokenVerificationResult)` - The recipient ID and token version if valid
 /// * `Err(TokenError)` - The reason verification failed
 pub fn verify_recipient_token(
     token: &str,
     session_id: &str,
     secret: &[u8],
-) -> std::result::Result<String, TokenError> {
+) -> std::result::Result<TokenVerificationResult, TokenError> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
 
@@ -822,16 +1166,32 @@ pub fn verify_recipient_token(
 
     let token_str = String::from_utf8(token_bytes).map_err(|_| TokenError::InvalidFormat)?;
 
-    // Split into parts: session_id:recipient_id:expiry:signature
+    // Split into parts
+    // Legacy format (4 parts): session_id:recipient_id:expiry:signature
+    // New format (5 parts): session_id:recipient_id:token_version:expiry:signature
     let parts: Vec<&str> = token_str.split(':').collect();
-    if parts.len() != 4 {
-        return Err(TokenError::InvalidFormat);
-    }
 
-    let token_session_id = parts[0];
-    let token_recipient_id = parts[1];
-    let expiry_str = parts[2];
-    let signature_base64 = parts[3];
+    let (
+        token_session_id,
+        token_recipient_id,
+        token_version,
+        expiry_str,
+        signature_base64,
+        payload,
+    ) = match parts.len() {
+        4 => {
+            // Legacy format - token_version defaults to 0
+            let payload = format!("{}:{}:{}", parts[0], parts[1], parts[2]);
+            (parts[0], parts[1], 0u32, parts[2], parts[3], payload)
+        }
+        5 => {
+            // New format with token_version
+            let version: u32 = parts[2].parse().map_err(|_| TokenError::InvalidFormat)?;
+            let payload = format!("{}:{}:{}:{}", parts[0], parts[1], parts[2], parts[3]);
+            (parts[0], parts[1], version, parts[3], parts[4], payload)
+        }
+        _ => return Err(TokenError::InvalidFormat),
+    };
 
     // Verify session ID matches
     if token_session_id != session_id {
@@ -845,8 +1205,7 @@ pub fn verify_recipient_token(
         return Err(TokenError::Expired);
     }
 
-    // Recreate the payload and verify HMAC
-    let payload = format!("{}:{}:{}", token_session_id, token_recipient_id, expiry_str);
+    // Verify HMAC signature
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key size");
     mac.update(payload.as_bytes());
 
@@ -859,7 +1218,10 @@ pub fn verify_recipient_token(
     mac.verify_slice(&signature)
         .map_err(|_| TokenError::InvalidSignature)?;
 
-    Ok(token_recipient_id.to_string())
+    Ok(TokenVerificationResult {
+        recipient_id: token_recipient_id.to_string(),
+        token_version,
+    })
 }
 
 // ============================================================
@@ -938,6 +1300,56 @@ impl SenderSessionIndex {
 }
 
 // ============================================================
+// Feature: Recipient Session Index (DocuSign-style Inbox)
+// ============================================================
+
+/// Entry in the recipient session index
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+struct RecipientIndexEntry {
+    session_id: String,
+    recipient_id: String,
+    created_at: String,
+}
+
+/// Index of sessions where a user is a recipient (for "My Documents" inbox)
+/// Key format: recipient_index:{sha256_hash_of_email}
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+struct RecipientSessionIndex {
+    /// List of (session_id, recipient_id) tuples
+    entries: Vec<RecipientIndexEntry>,
+}
+
+impl RecipientSessionIndex {
+    /// Add a new entry to the index (avoids duplicates)
+    fn add_entry(&mut self, session_id: String, recipient_id: String, created_at: String) {
+        // Avoid duplicates
+        if !self
+            .entries
+            .iter()
+            .any(|e| e.session_id == session_id && e.recipient_id == recipient_id)
+        {
+            self.entries.push(RecipientIndexEntry {
+                session_id,
+                recipient_id,
+                created_at,
+            });
+        }
+    }
+
+    /// Remove expired sessions from the index (older than prune_days)
+    fn prune_expired(&mut self, prune_days: i64) {
+        let now = chrono::Utc::now();
+        let cutoff = now - chrono::Duration::days(prune_days);
+
+        self.entries.retain(|e| {
+            chrono::DateTime::parse_from_rfc3339(&e.created_at)
+                .map(|dt| dt > cutoff)
+                .unwrap_or(true) // Keep if we can't parse (be conservative)
+        });
+    }
+}
+
+// ============================================================
 // Feature 2: Document Dashboard - Response Types
 // ============================================================
 
@@ -969,18 +1381,55 @@ struct RecipientSummary {
     signed_at: Option<String>,
 }
 
-/// Response for /my-sessions endpoint - documents grouped by status
+/// Response for /my-sessions endpoint - DocuSign-style Sent + Inbox layout
 #[derive(Serialize)]
 struct MySessionsResponse {
     success: bool,
+    /// Documents I SENT (created by me)
+    sent: SentDocuments,
+    /// Documents sent TO ME (my inbox)
+    inbox: InboxDocuments,
+}
+
+/// Documents the user sent to others
+#[derive(Serialize)]
+struct SentDocuments {
     /// Documents where invitations have been sent, awaiting signatures
     in_progress: Vec<SessionSummary>,
     /// Documents where all signers have completed
     completed: Vec<SessionSummary>,
-    /// Documents that were declined by any signer
+    /// Documents that were declined by any signer (needs sender action)
     declined: Vec<SessionSummary>,
     /// Documents that expired before completion
     expired: Vec<SessionSummary>,
+    /// Documents that were voided/discarded by sender
+    voided: Vec<SessionSummary>,
+}
+
+/// Documents sent to the user (their inbox)
+#[derive(Serialize)]
+struct InboxDocuments {
+    /// Documents I need to sign (not yet signed)
+    to_sign: Vec<InboxSessionSummary>,
+    /// Documents I've completed signing
+    completed: Vec<InboxSessionSummary>,
+    /// Documents I declined
+    declined: Vec<InboxSessionSummary>,
+}
+
+/// Summary of a document in the inbox (from recipient's perspective)
+#[derive(Serialize)]
+struct InboxSessionSummary {
+    session_id: String,
+    filename: String,
+    sender_name: String,
+    sender_email: String,
+    created_at: String,
+    expires_at: String,
+    /// "pending", "signed", or "declined"
+    my_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signed_at: Option<String>,
 }
 
 // ============================================================
@@ -1002,8 +1451,9 @@ fn generate_download_link(session_id: &str, expiry_days: u32) -> String {
         .unwrap_or_else(chrono::Utc::now)
         .timestamp();
 
+    // Points to API download endpoint (not frontend)
     format!(
-        "https://getsignatures.org/download/{}?expires={}",
+        "https://api.getsignatures.org/session/{}/download?expires={}",
         session_id, expiry_timestamp
     )
 }
@@ -1246,6 +1696,85 @@ fn format_decline_notification_email(
     )
 }
 
+/// Format void notification email sent when a document is discarded
+fn format_void_notification_email(
+    document_name: &str,
+    sender_name: &str,
+    reason: Option<&str>,
+    voided_at: &str,
+    recipient_name: &str,
+) -> String {
+    let formatted_time = format_timestamp(voided_at);
+    let reason_section = if let Some(r) = reason {
+        format!(
+            r#"<div style="background: #f3f4f6; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Reason</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-style: italic;">"{}"</p>
+        </div>"#,
+            r
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Document Cancelled</h1>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            Hello {recipient_name},
+        </p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            The sender has cancelled this document signing request. Any previous signing links are no longer valid.
+        </p>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{document_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Sender</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{sender_name}</p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Cancelled At</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{voided_time}</p>
+        </div>
+
+        {reason_section}
+
+        <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 4px; margin-top: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <strong>Note:</strong> If you have any questions about this cancellation, please contact the sender directly.
+            </p>
+        </div>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        recipient_name = recipient_name,
+        document_name = document_name,
+        sender_name = sender_name,
+        voided_time = formatted_time,
+        reason_section = reason_section
+    )
+}
+
 /// Bug C: Format completion email sent to each signer when all signatures are collected
 fn format_recipient_completion_email(
     recipient_name: &str,
@@ -1402,6 +1931,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
 
         // ============================================
+        // TSA Proxy for LTV timestamps (public)
+        // NOTE: Handler includes CORS headers directly - don't wrap with cors_response()
+        // because it replaces all headers including Content-Type
+        // ============================================
+        (Method::Post, "/tsa-proxy") => handle_tsa_proxy(req).await,
+
+        // ============================================
         // Authentication endpoints (public)
         // ============================================
         (Method::Post, "/auth/register") => {
@@ -1460,6 +1996,38 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         (Method::Post, "/auth/profile") => {
             // Profile update requires valid auth token
             cors_response(auth::handle_update_profile(req, env).await)
+        }
+        (Method::Post, "/auth/associate-session") => {
+            // Associate a signed session with a newly created account
+            handle_associate_session(req, env).await
+        }
+
+        // ============================================
+        // Phase 3: Template Management Endpoints
+        // ============================================
+
+        // Create a new template (requires auth)
+        (Method::Post, "/templates") => cors_response(handle_create_template(req, env).await),
+
+        // List user's templates (requires auth)
+        (Method::Get, "/templates") => cors_response(handle_list_templates(req, env).await),
+
+        // Get a single template (requires auth)
+        (Method::Get, p) if p.starts_with("/templates/") && !p.contains("/templates//") => {
+            let template_id = p.strip_prefix("/templates/").unwrap_or("");
+            cors_response(handle_get_template(req, env, template_id.to_string()).await)
+        }
+
+        // Update a template (requires auth)
+        (Method::Put, p) if p.starts_with("/templates/") => {
+            let template_id = p.strip_prefix("/templates/").unwrap_or("");
+            cors_response(handle_update_template(req, env, template_id.to_string()).await)
+        }
+
+        // Delete a template (requires auth)
+        (Method::Delete, p) if p.starts_with("/templates/") => {
+            let template_id = p.strip_prefix("/templates/").unwrap_or("");
+            cors_response(handle_delete_template(req, env, template_id.to_string()).await)
         }
 
         // Bug #4: Feedback/Request submission (requires auth)
@@ -1551,6 +2119,25 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             }
             handle_my_sessions(&req, env).await
         }
+        // Download endpoint: Merge annotations into PDF on-demand
+        // IMPORTANT: Must come BEFORE general GET /session/{id} to avoid being caught by it
+        (Method::Get, p) if p.starts_with("/session/") && p.ends_with("/download") => {
+            console_log!("Download route matched: {}", p);
+            // Apply SessionRead rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionRead).await
+            {
+                return response;
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            console_log!("Download parts: {:?}, len={}", parts, parts.len());
+            if parts.len() == 4 {
+                handle_download(parts[2], env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // General session GET - must come AFTER more specific routes like /download
         (Method::Get, p) if p.starts_with("/session/") => {
             // Apply SessionRead rate limit
             if let Some(response) =
@@ -1579,6 +2166,21 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 cors_response(Response::error("Not found", 404))
             }
         }
+        // NEW: Annotation-based signing (lightweight ~50KB vs full PDF ~13MB)
+        (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/annotations") => {
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_submit_annotations(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
         (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/decline") => {
             // Apply SessionWrite rate limit
             if let Some(response) =
@@ -1589,6 +2191,90 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             let parts: Vec<&str> = p.split('/').collect();
             if parts.len() == 4 {
                 handle_decline(parts[2], req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // Void endpoint: sender discards document, invalidates all signing links
+        (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/void") => {
+            // Require authentication (only sender can void)
+            let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(response)) => return cors_response(Ok(response)),
+                Err(e) => {
+                    return cors_response(Ok(Response::from_json(&serde_json::json!({
+                        "success": false,
+                        "message": "Authentication required",
+                        "error": format!("{:?}", e)
+                    }))?
+                    .with_status(401)));
+                }
+            };
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_void(parts[2], user.email, req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // Revise endpoint: sender can revise document if no one has signed yet
+        (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/revise") => {
+            // Require authentication (only sender can revise)
+            let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(response)) => return cors_response(Ok(response)),
+                Err(e) => {
+                    return cors_response(Ok(Response::from_json(&serde_json::json!({
+                        "success": false,
+                        "message": "Authentication required",
+                        "error": format!("{:?}", e)
+                    }))?
+                    .with_status(401)));
+                }
+            };
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_revise(parts[2], user.email, req, env).await
+            } else {
+                cors_response(Response::error("Not found", 404))
+            }
+        }
+        // Restart endpoint: sender can restart document, voiding all existing signatures
+        (Method::Put, p) if p.starts_with("/session/") && p.ends_with("/restart") => {
+            // Require authentication (only sender can restart)
+            let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(response)) => return cors_response(Ok(response)),
+                Err(e) => {
+                    return cors_response(Ok(Response::from_json(&serde_json::json!({
+                        "success": false,
+                        "message": "Authentication required",
+                        "error": format!("{:?}", e)
+                    }))?
+                    .with_status(401)));
+                }
+            };
+            // Apply SessionWrite rate limit
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            let parts: Vec<&str> = p.split('/').collect();
+            if parts.len() == 4 {
+                handle_restart(parts[2], user.email, req, env).await
             } else {
                 cors_response(Response::error("Not found", 404))
             }
@@ -1639,6 +2325,47 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
         _ => cors_response(Response::error("Not found", 404)),
     }
+}
+
+/// Handle TSA proxy requests - proxies RFC 3161 timestamp requests to avoid CORS issues
+/// This endpoint allows the frontend to request LTV timestamps without browser CORS restrictions
+async fn handle_tsa_proxy(mut req: Request) -> Result<Response> {
+    let url = req.url()?;
+
+    // Get TSA server URL from query param or use default (freetsa.org)
+    let tsa_url = url
+        .query_pairs()
+        .find(|(k, _)| k == "tsa")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_else(|| "https://freetsa.org/tsr".to_string());
+
+    // Get request body (timestamp request bytes)
+    let body = req.bytes().await?;
+
+    // Build request to TSA server
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/timestamp-query")?;
+
+    let tsa_req = Request::new_with_init(
+        &tsa_url,
+        RequestInit::new()
+            .with_method(Method::Post)
+            .with_body(Some(body.into()))
+            .with_headers(headers),
+    )?;
+
+    // Forward to TSA server
+    let mut tsa_response = Fetch::Request(tsa_req).send().await?;
+    let response_bytes = tsa_response.bytes().await?;
+
+    // Build response with BOTH Content-Type AND CORS headers in ONE Headers object
+    // (we don't use cors_response() wrapper because it REPLACES all headers)
+    let resp_headers = Headers::new();
+    resp_headers.set("Content-Type", "application/timestamp-reply")?;
+    resp_headers.set("Access-Control-Allow-Origin", "*")?;
+    resp_headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")?;
+
+    Response::from_bytes(response_bytes).map(|r| r.with_headers(resp_headers))
 }
 
 /// Handle health check requests - returns service status and dependency health
@@ -2183,6 +2910,399 @@ async fn handle_admin_update_request(
     })?)
 }
 
+// ============================================================
+// Associate Session with Account (Post-Signup Linking)
+// ============================================================
+
+/// Handle POST /auth/associate-session
+/// Associates a signed session with a newly created account so it appears in their inbox.
+/// Called after a signer creates an account to view their signed documents.
+async fn handle_associate_session(mut req: Request, env: Env) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return cors_response(Ok(response)),
+        Err(e) => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401)));
+        }
+    };
+
+    // Parse request body
+    let body: AssociateSessionRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Invalid request body",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(400)));
+        }
+    };
+
+    let kv = env.kv("SESSIONS")?;
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv
+        .get(&format!("session:{}", body.session_id))
+        .json()
+        .await?;
+
+    let session = match session {
+        Some(s) => s,
+        None => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Session not found"
+            }))?
+            .with_status(404)));
+        }
+    };
+
+    // Find recipient matching user's email (case-insensitive)
+    let recipient = session
+        .recipients
+        .iter()
+        .find(|r| r.email.eq_ignore_ascii_case(&user.email));
+
+    let recipient = match recipient {
+        Some(r) => r,
+        None => {
+            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "You are not a recipient on this session"
+            }))?
+            .with_status(403)));
+        }
+    };
+
+    // Add to recipient index so it appears in their inbox
+    let user_hash = hash_sender_email(&user.email);
+    let mut index = get_recipient_index(&kv, &user_hash).await;
+    index.add_entry(
+        body.session_id.clone(),
+        recipient.id.clone(),
+        session.metadata.created_at.clone(),
+    );
+
+    if let Err(e) = save_recipient_index(&kv, &user_hash, &index).await {
+        console_log!("Warning: Failed to save recipient index: {:?}", e);
+        return cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Failed to associate session"
+        }))?
+        .with_status(500)));
+    }
+
+    cors_response(Response::from_json(&serde_json::json!({
+        "success": true,
+        "message": "Session associated with your account"
+    })))
+}
+
+// ============================================================
+// Phase 3: Template Management Handlers
+// ============================================================
+
+/// Get template index for a user
+async fn get_template_index(kv: &kv::KvStore, user_hash: &str) -> TemplateIndex {
+    kv.get(&format!("template_index:{}", user_hash))
+        .json::<TemplateIndex>()
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// Save template index for a user
+async fn save_template_index(
+    kv: &kv::KvStore,
+    user_hash: &str,
+    index: &TemplateIndex,
+) -> Result<()> {
+    kv.put(
+        &format!("template_index:{}", user_hash),
+        serde_json::to_string(index)?,
+    )?
+    .execute()
+    .await?;
+    Ok(())
+}
+
+/// Handle POST /templates - Create a new template
+async fn handle_create_template(mut req: Request, env: Env) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return Ok(response),
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401));
+        }
+    };
+
+    // Parse request body
+    let body: CreateTemplateRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Invalid request body",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(400));
+        }
+    };
+
+    // Validate template name
+    if body.name.trim().is_empty() {
+        return Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Template name is required"
+        }))?
+        .with_status(400));
+    }
+
+    let kv = env.kv("SESSIONS")?;
+    let user_hash = hash_sender_email(&user.email);
+    let template_id = generate_session_id();
+    let now = Utc::now().to_rfc3339();
+
+    // Create the template
+    let template = FieldTemplate {
+        id: template_id.clone(),
+        name: body.name.clone(),
+        fields: body.fields,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+
+    // Save template
+    kv.put(
+        &format!("template:{}:{}", user_hash, template_id),
+        serde_json::to_string(&template)?,
+    )?
+    .execute()
+    .await?;
+
+    // Update index
+    let mut index = get_template_index(&kv, &user_hash).await;
+    index.templates.push(TemplateIndexEntry {
+        id: template_id.clone(),
+        name: body.name,
+        field_count: template.fields.len(),
+        created_at: now.clone(),
+        updated_at: now,
+    });
+
+    save_template_index(&kv, &user_hash, &index).await?;
+
+    Ok(Response::from_json(&CreateTemplateResponse {
+        success: true,
+        template_id,
+        message: "Template created successfully".to_string(),
+    })?)
+}
+
+/// Handle GET /templates - List user's templates
+async fn handle_list_templates(req: Request, env: Env) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return Ok(response),
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401));
+        }
+    };
+
+    let kv = env.kv("SESSIONS")?;
+    let user_hash = hash_sender_email(&user.email);
+    let index = get_template_index(&kv, &user_hash).await;
+
+    Ok(Response::from_json(&ListTemplatesResponse {
+        success: true,
+        templates: index.templates,
+    })?)
+}
+
+/// Handle GET /templates/{id} - Get a single template
+async fn handle_get_template(req: Request, env: Env, template_id: String) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return Ok(response),
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401));
+        }
+    };
+
+    let kv = env.kv("SESSIONS")?;
+    let user_hash = hash_sender_email(&user.email);
+
+    let template: Option<FieldTemplate> = kv
+        .get(&format!("template:{}:{}", user_hash, template_id))
+        .json()
+        .await?;
+
+    match template {
+        Some(t) => Ok(Response::from_json(&GetTemplateResponse {
+            success: true,
+            template: Some(t),
+            message: None,
+        })?),
+        None => Ok(Response::from_json(&GetTemplateResponse {
+            success: false,
+            template: None,
+            message: Some("Template not found".to_string()),
+        })?
+        .with_status(404)),
+    }
+}
+
+/// Handle PUT /templates/{id} - Update a template
+async fn handle_update_template(
+    mut req: Request,
+    env: Env,
+    template_id: String,
+) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return Ok(response),
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401));
+        }
+    };
+
+    // Parse request body
+    let body: CreateTemplateRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Invalid request body",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(400));
+        }
+    };
+
+    let kv = env.kv("SESSIONS")?;
+    let user_hash = hash_sender_email(&user.email);
+    let template_key = format!("template:{}:{}", user_hash, template_id);
+
+    // Fetch existing template
+    let existing: Option<FieldTemplate> = kv.get(&template_key).json().await?;
+
+    let existing = match existing {
+        Some(t) => t,
+        None => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Template not found"
+            }))?
+            .with_status(404));
+        }
+    };
+
+    let now = Utc::now().to_rfc3339();
+
+    // Update template
+    let updated = FieldTemplate {
+        id: template_id.clone(),
+        name: body.name.clone(),
+        fields: body.fields,
+        created_at: existing.created_at,
+        updated_at: now.clone(),
+    };
+
+    kv.put(&template_key, serde_json::to_string(&updated)?)?
+        .execute()
+        .await?;
+
+    // Update index
+    let mut index = get_template_index(&kv, &user_hash).await;
+    if let Some(entry) = index.templates.iter_mut().find(|e| e.id == template_id) {
+        entry.name = body.name;
+        entry.field_count = updated.fields.len();
+        entry.updated_at = now;
+    }
+    save_template_index(&kv, &user_hash, &index).await?;
+
+    Ok(Response::from_json(&serde_json::json!({
+        "success": true,
+        "message": "Template updated successfully"
+    }))?)
+}
+
+/// Handle DELETE /templates/{id} - Delete a template
+async fn handle_delete_template(req: Request, env: Env, template_id: String) -> Result<Response> {
+    // Require authentication
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(response)) => return Ok(response),
+        Err(e) => {
+            return Ok(Response::from_json(&serde_json::json!({
+                "success": false,
+                "message": "Authentication required",
+                "error": format!("{:?}", e)
+            }))?
+            .with_status(401));
+        }
+    };
+
+    let kv = env.kv("SESSIONS")?;
+    let user_hash = hash_sender_email(&user.email);
+    let template_key = format!("template:{}:{}", user_hash, template_id);
+
+    // Check if template exists
+    let existing: Option<FieldTemplate> = kv.get(&template_key).json().await?;
+    if existing.is_none() {
+        return Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Template not found"
+        }))?
+        .with_status(404));
+    }
+
+    // Delete template
+    kv.delete(&template_key).await?;
+
+    // Update index
+    let mut index = get_template_index(&kv, &user_hash).await;
+    index.templates.retain(|e| e.id != template_id);
+    save_template_index(&kv, &user_hash, &index).await?;
+
+    Ok(Response::from_json(&serde_json::json!({
+        "success": true,
+        "message": "Template deleted successfully"
+    }))?)
+}
+
 /// List users (admin only, supports ?filter=unverified)
 async fn handle_admin_list_users(req: Request, env: Env) -> Result<Response> {
     use auth::types::{AdminUserSummary, AdminUsersListResponse, User};
@@ -2491,8 +3611,13 @@ async fn send_invitations(env: &Env, body: &InviteRequest) -> Result<Response> {
     let secret = get_signing_secret(env);
 
     for invitation in &body.invitations {
-        // Generate a signed token for this recipient
-        let token = generate_recipient_token(&body.session_id, &invitation.recipient_id, &secret);
+        // Generate a signed token for this recipient (includes token_version for invalidation)
+        let token = generate_recipient_token(
+            &body.session_id,
+            &invitation.recipient_id,
+            body.token_version,
+            &secret,
+        );
 
         // Append token to the signing link
         let signing_link_with_token = if invitation.signing_link.contains('?') {
@@ -2807,7 +3932,9 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     };
 
     // Check sender session limits (storage exhaustion prevention)
-    let sender_email = body.metadata.sender_email.as_deref().unwrap_or("");
+    // BUG FIX: Always use authenticated user's email for indexing - don't trust frontend
+    // This ensures sessions always appear in the sender's "My Documents" dashboard
+    let sender_email = &user.email;
     let sender_hash = hash_sender_email(sender_email);
     let mut sender_index = get_sender_index(&kv, &sender_hash).await;
 
@@ -2836,19 +3963,30 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339();
 
+    // BUG FIX: Ensure metadata.sender_email is populated for display purposes
+    let mut metadata = body.metadata;
+    if metadata.sender_email.is_none() {
+        metadata.sender_email = Some(user.email.clone());
+    }
+
     let session = SigningSession {
         id: session_id.clone(),
         encrypted_document: body.encrypted_document,
-        metadata: body.metadata,
+        metadata,
         recipients: body.recipients,
         fields: body.fields,
         expires_at,
         signed_versions: vec![],
+        signature_annotations: vec![], // New lightweight annotation storage
         status: SessionStatus::Pending,
         signing_mode: body.signing_mode,
         reminder_config: Some(body.reminder_config),
         final_document: None,
-        legacy: false, // New sessions require token authentication
+        legacy: body.legacy, // Allow callers to opt into legacy mode (for testing)
+        revision_count: 0,
+        voided_at: None,
+        void_reason: None,
+        token_version: 0,
     };
 
     // Store session with TTL
@@ -2911,10 +4049,24 @@ async fn handle_create_session(mut req: Request, env: Env) -> Result<Response> {
     }
 
     // Add session to sender's index
-    sender_index.add_session(session_id.clone(), created_at);
+    sender_index.add_session(session_id.clone(), created_at.clone());
     if let Err(e) = save_sender_index(&kv, &sender_hash, &sender_index).await {
         // Log error but don't fail the request - session is already created
         console_log!("Warning: Failed to update sender index: {}", e);
+    }
+
+    // DocuSign-style Inbox: Index each recipient so they can see this in their inbox
+    for recipient in &session.recipients {
+        let recipient_hash = hash_sender_email(&recipient.email);
+        let mut recipient_index = get_recipient_index(&kv, &recipient_hash).await;
+        recipient_index.add_entry(session_id.clone(), recipient.id.clone(), created_at.clone());
+        if let Err(e) = save_recipient_index(&kv, &recipient_hash, &recipient_index).await {
+            console_log!(
+                "Warning: Failed to update recipient index for {}: {}",
+                recipient.email,
+                e
+            );
+        }
     }
 
     // Bug #6: Record document send (handles base count + overage)
@@ -3008,32 +4160,35 @@ async fn handle_my_sessions(req: &Request, env: Env) -> Result<Response> {
         }
     };
 
-    // Get sender index using user's email
-    let sender_hash = hash_sender_email(&user.email);
-    let mut sender_index = get_sender_index(&kv, &sender_hash).await;
+    let user_hash = hash_sender_email(&user.email);
 
-    // Prune expired sessions from index
+    // ============================================================
+    // SENT Documents (existing logic)
+    // ============================================================
+    let mut sender_index = get_sender_index(&kv, &user_hash).await;
     sender_index.prune_expired(SESSION_INDEX_PRUNE_DAYS);
 
-    // Fetch each session and group by status
-    let mut in_progress = Vec::new();
-    let mut completed = Vec::new();
-    let mut declined = Vec::new();
-    let mut expired = Vec::new();
+    let mut sent_in_progress = Vec::new();
+    let mut sent_completed = Vec::new();
+    let mut sent_declined = Vec::new();
+    let mut sent_expired = Vec::new();
+    let mut sent_voided = Vec::new();
+
+    // Track voided sessions to delete (older than 30 days)
+    let mut voided_sessions_to_delete = Vec::new();
+    let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
 
     for session_id in &sender_index.session_ids {
         let session: Option<SigningSession> =
             match kv.get(&format!("session:{}", session_id)).json().await {
                 Ok(s) => s,
-                Err(_) => continue, // Skip sessions that can't be parsed
+                Err(_) => continue,
             };
 
         if let Some(session) = session {
-            // Calculate recipient progress
             let recipients_total = session.recipients.len() as u32;
             let recipients_signed = session.recipients.iter().filter(|r| r.signed).count() as u32;
 
-            // Build recipient summaries
             let recipient_summaries: Vec<RecipientSummary> = session
                 .recipients
                 .iter()
@@ -3058,28 +4213,135 @@ async fn handle_my_sessions(req: &Request, env: Env) -> Result<Response> {
                 recipients: recipient_summaries,
             };
 
-            // Group by status
             match session.status {
-                SessionStatus::Completed => completed.push(summary),
-                SessionStatus::Declined => declined.push(summary),
-                SessionStatus::Expired => expired.push(summary),
-                SessionStatus::Pending | SessionStatus::Accepted => in_progress.push(summary),
+                SessionStatus::Completed => sent_completed.push(summary),
+                SessionStatus::Declined => sent_declined.push(summary),
+                SessionStatus::Expired => sent_expired.push(summary),
+                SessionStatus::Voided => {
+                    // Check if voided session is older than 30 days for auto-deletion
+                    let should_delete = session.voided_at.as_ref().map_or(false, |voided_at| {
+                        chrono::DateTime::parse_from_rfc3339(voided_at)
+                            .map(|dt| dt < thirty_days_ago)
+                            .unwrap_or(false)
+                    });
+
+                    if should_delete {
+                        voided_sessions_to_delete.push(session.id.clone());
+                    } else {
+                        sent_voided.push(summary);
+                    }
+                }
+                SessionStatus::Pending | SessionStatus::Accepted => sent_in_progress.push(summary),
             }
         }
     }
 
-    // Sort by created_at descending (newest first)
-    in_progress.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    completed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    declined.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    expired.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Sort sent documents by created_at descending
+    sent_in_progress.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sent_completed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sent_declined.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sent_expired.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sent_voided.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    // Auto-delete voided sessions older than 30 days (lazy cleanup)
+    if !voided_sessions_to_delete.is_empty() {
+        console_log!(
+            "Auto-deleting {} voided sessions older than 30 days",
+            voided_sessions_to_delete.len()
+        );
+        for session_id in &voided_sessions_to_delete {
+            // Delete from KV
+            if let Err(e) = kv.delete(&format!("session:{}", session_id)).await {
+                console_log!("Failed to delete voided session {}: {:?}", session_id, e);
+            }
+            // Remove from sender index
+            sender_index.remove_session(session_id);
+        }
+        // Save updated sender index
+        save_sender_index(&kv, &user_hash, &sender_index).await;
+    }
+
+    // ============================================================
+    // INBOX Documents (new DocuSign-style feature)
+    // ============================================================
+    let mut recipient_index = get_recipient_index(&kv, &user_hash).await;
+    recipient_index.prune_expired(SESSION_INDEX_PRUNE_DAYS);
+
+    let mut inbox_to_sign = Vec::new();
+    let mut inbox_completed = Vec::new();
+    let mut inbox_declined = Vec::new();
+
+    for entry in &recipient_index.entries {
+        let session: Option<SigningSession> = match kv
+            .get(&format!("session:{}", entry.session_id))
+            .json()
+            .await
+        {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if let Some(session) = session {
+            // Skip voided sessions - they should not appear in inbox
+            if session.status == SessionStatus::Voided {
+                continue;
+            }
+
+            // Find this user's recipient record in the session
+            if let Some(recipient) = session
+                .recipients
+                .iter()
+                .find(|r| r.id == entry.recipient_id)
+            {
+                let my_status = if recipient.declined {
+                    "declined"
+                } else if recipient.signed {
+                    "signed"
+                } else {
+                    "pending"
+                };
+
+                let summary = InboxSessionSummary {
+                    session_id: entry.session_id.clone(),
+                    filename: session.metadata.filename.clone(),
+                    sender_name: session.metadata.created_by.clone(),
+                    sender_email: session.metadata.sender_email.clone().unwrap_or_default(),
+                    created_at: session.metadata.created_at.clone(),
+                    expires_at: session.expires_at.clone(),
+                    my_status: my_status.to_string(),
+                    signed_at: recipient.signed_at.clone(),
+                };
+
+                if recipient.declined {
+                    inbox_declined.push(summary);
+                } else if recipient.signed {
+                    inbox_completed.push(summary);
+                } else {
+                    inbox_to_sign.push(summary);
+                }
+            }
+        }
+    }
+
+    // Sort inbox documents by created_at descending
+    inbox_to_sign.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    inbox_completed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    inbox_declined.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     cors_response(Response::from_json(&MySessionsResponse {
         success: true,
-        in_progress,
-        completed,
-        declined,
-        expired,
+        sent: SentDocuments {
+            in_progress: sent_in_progress,
+            completed: sent_completed,
+            declined: sent_declined,
+            expired: sent_expired,
+            voided: sent_voided,
+        },
+        inbox: InboxDocuments {
+            to_sign: inbox_to_sign,
+            completed: inbox_completed,
+            declined: inbox_declined,
+        },
     }))
 }
 
@@ -3127,7 +4389,18 @@ async fn handle_get_session(session_id: &str, req: &Request, env: Env) -> Result
                 // Verify the token
                 let secret = get_signing_secret(&env);
                 match verify_recipient_token(&token, session_id, &secret) {
-                    Ok(recipient_id) => Some(recipient_id),
+                    Ok(result) => {
+                        // Check token version matches session's current version
+                        if result.token_version != s.token_version {
+                            return cors_response(Ok(Response::from_json(&serde_json::json!({
+                                "success": false,
+                                "error": "token_invalidated",
+                                "message": "This signing link is no longer valid. The document may have been revised or cancelled. Please contact the sender for a new link."
+                            }))?
+                            .with_status(410)));
+                        }
+                        Some(result.recipient_id)
+                    }
                     Err(TokenError::Expired) => {
                         return cors_response(Ok(Response::from_json(&serde_json::json!({
                             "success": false,
@@ -3151,6 +4424,14 @@ async fn handle_get_session(session_id: &str, req: &Request, env: Env) -> Result
                             "message": "Invalid signing link format."
                         }))?
                         .with_status(400)));
+                    }
+                    Err(TokenError::VersionMismatch) => {
+                        return cors_response(Ok(Response::from_json(&serde_json::json!({
+                            "success": false,
+                            "error": "token_invalidated",
+                            "message": "This signing link is no longer valid. The document may have been revised or cancelled."
+                        }))?
+                        .with_status(410)));
                     }
                 }
             } else if s.legacy {
@@ -3353,6 +4634,781 @@ async fn handle_decline(session_id: &str, mut req: Request, env: Env) -> Result<
         })?
         .with_status(404))),
     }
+}
+
+/// PUT /session/{id}/void
+/// Voids/discards a document, invalidating all signing links.
+/// Only the sender can void a document. Cannot void completed documents.
+async fn handle_void(
+    session_id: &str,
+    sender_email: String,
+    mut req: Request,
+    env: Env,
+) -> Result<Response> {
+    // Parse the void request
+    let body: VoidRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Verify sender owns this session
+            let session_sender = s.metadata.sender_email.as_deref().unwrap_or("");
+            if session_sender.to_lowercase() != sender_email.to_lowercase() {
+                return cors_response(Ok(Response::from_json(&VoidResponse {
+                    success: false,
+                    message: "You do not have permission to void this document".to_string(),
+                })?
+                .with_status(403)));
+            }
+
+            // Check if session can be voided (not already completed or voided)
+            if s.status == SessionStatus::Completed {
+                return cors_response(Ok(Response::from_json(&VoidResponse {
+                    success: false,
+                    message: "Cannot void a completed document".to_string(),
+                })?
+                .with_status(400)));
+            }
+
+            if s.status == SessionStatus::Voided {
+                return cors_response(Ok(Response::from_json(&VoidResponse {
+                    success: false,
+                    message: "Document has already been voided".to_string(),
+                })?
+                .with_status(400)));
+            }
+
+            // Update session status to Voided
+            s.status = SessionStatus::Voided;
+            s.voided_at = Some(chrono::Utc::now().to_rfc3339());
+            s.void_reason = body.reason.clone();
+
+            // Increment token_version to invalidate all existing signing links
+            s.token_version = s.token_version.saturating_add(1);
+
+            // Save updated session
+            kv.put(
+                &format!("session:{}", session_id),
+                serde_json::to_string(&s)?,
+            )?
+            .execute()
+            .await?;
+
+            // Send void notification emails to all recipients
+            let void_date = s.voided_at.as_deref().unwrap_or("Unknown");
+            let sender_name = &s.metadata.created_by;
+            let document_name = &s.metadata.filename;
+
+            for recipient in &s.recipients {
+                let html_body = format_void_notification_email(
+                    document_name,
+                    sender_name,
+                    body.reason.as_deref(),
+                    void_date,
+                    &recipient.name,
+                );
+
+                let subject = format!("Document Cancelled: {}", document_name);
+
+                if let Err(e) =
+                    send_sender_notification(&env, &recipient.email, &subject, &html_body).await
+                {
+                    console_log!(
+                        "Failed to send void notification to {}: {:?}",
+                        recipient.email,
+                        e
+                    );
+                }
+            }
+
+            // Also send notification to sender
+            let sender_html = format_void_notification_email(
+                document_name,
+                sender_name,
+                body.reason.as_deref(),
+                void_date,
+                "You",
+            );
+            let sender_subject = format!("Document Discarded: {}", document_name);
+            if let Err(e) =
+                send_sender_notification(&env, &sender_email, &sender_subject, &sender_html).await
+            {
+                console_log!("Failed to send void confirmation to sender: {:?}", e);
+            }
+
+            console_log!(
+                "Session {} voided by sender {}: {:?}",
+                session_id,
+                sender_email,
+                body.reason
+            );
+
+            cors_response(Ok(Response::from_json(&VoidResponse {
+                success: true,
+                message: "Document voided successfully. All recipients have been notified."
+                    .to_string(),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&VoidResponse {
+            success: false,
+            message: "Session not found".to_string(),
+        })?
+        .with_status(404))),
+    }
+}
+
+/// Revises a document - only allowed if no signers have signed yet.
+/// Updates fields, optionally updates recipients and document.
+/// Increments token_version to invalidate old signing links.
+async fn handle_revise(
+    session_id: &str,
+    sender_email: String,
+    mut req: Request,
+    env: Env,
+) -> Result<Response> {
+    // Parse the revise request
+    let body: ReviseRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Verify sender owns this session
+            let session_sender = s.metadata.sender_email.as_deref().unwrap_or("");
+            if session_sender.to_lowercase() != sender_email.to_lowercase() {
+                return cors_response(Ok(Response::from_json(&ReviseResponse {
+                    success: false,
+                    message: "You do not have permission to revise this document".to_string(),
+                    tokens: None,
+                })?
+                .with_status(403)));
+            }
+
+            // Check if session can be revised (not completed, voided, or expired)
+            match s.status {
+                SessionStatus::Completed => {
+                    return cors_response(Ok(Response::from_json(&ReviseResponse {
+                        success: false,
+                        message: "Cannot revise a completed document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                SessionStatus::Voided => {
+                    return cors_response(Ok(Response::from_json(&ReviseResponse {
+                        success: false,
+                        message: "Cannot revise a voided document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                SessionStatus::Expired => {
+                    return cors_response(Ok(Response::from_json(&ReviseResponse {
+                        success: false,
+                        message: "Cannot revise an expired document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                _ => {} // Allow Pending, Accepted, Declined
+            }
+
+            // Check if anyone has signed - if so, cannot revise (use restart instead)
+            let anyone_signed = s.recipients.iter().any(|r| r.signed);
+            if anyone_signed {
+                return cors_response(Ok(Response::from_json(&ReviseResponse {
+                    success: false,
+                    message: "Cannot revise - some recipients have already signed. Use the restart endpoint to void existing signatures and start fresh.".to_string(),
+                    tokens: None,
+                })?
+                .with_status(400)));
+            }
+
+            // Update fields
+            s.fields = body.fields;
+
+            // Update recipients if provided (full revision)
+            if let Some(new_recipients) = body.recipients {
+                let mut updated_recipients = Vec::new();
+                for r in new_recipients {
+                    updated_recipients.push(RecipientInfo {
+                        id: r.id,
+                        name: r.name,
+                        email: r.email,
+                        role: r.role,
+                        signing_order: r.signing_order,
+                        // Reset all signing state for revised recipients
+                        consented: false,
+                        consent_at: None,
+                        consent_user_agent: None,
+                        signed: false,
+                        signed_at: None,
+                        declined: false,
+                        declined_at: None,
+                        decline_reason: None,
+                        reminders_sent: 0,
+                        last_reminder_at: None,
+                    });
+                }
+                s.recipients = updated_recipients;
+            } else {
+                // Reset consent/decline state for existing recipients (they need to review revised doc)
+                for recipient in &mut s.recipients {
+                    recipient.consented = false;
+                    recipient.consent_at = None;
+                    recipient.consent_user_agent = None;
+                    recipient.declined = false;
+                    recipient.declined_at = None;
+                    recipient.decline_reason = None;
+                }
+            }
+
+            // Update document if provided
+            if let Some(new_document) = body.document {
+                s.encrypted_document = new_document;
+            }
+
+            // Increment token_version to invalidate all existing signing links
+            s.token_version = s.token_version.saturating_add(1);
+
+            // Increment revision count
+            s.revision_count = s.revision_count.saturating_add(1);
+
+            // Reset status to Pending (in case it was Declined)
+            s.status = SessionStatus::Pending;
+
+            // Save updated session
+            kv.put(
+                &format!("session:{}", session_id),
+                serde_json::to_string(&s)?,
+            )?
+            .execute()
+            .await?;
+
+            // Generate new tokens and send revision emails
+            let secret = get_signing_secret(&env);
+            let mut tokens = Vec::new();
+            let document_name = &s.metadata.filename;
+            let sender_name = &s.metadata.created_by;
+            let revision_message = body.message.as_deref().unwrap_or("");
+
+            for recipient in &s.recipients {
+                // Only send to signers (not viewers)
+                if recipient.role != "signer" {
+                    continue;
+                }
+
+                // Generate new token with updated version
+                let token = generate_recipient_token(
+                    session_id,
+                    &recipient.id,
+                    s.token_version,
+                    &secret,
+                );
+
+                // Build signing URL
+                let signing_url = format!(
+                    "https://getsignatures.org/sign.html?session={}&recipient={}&token={}",
+                    session_id, recipient.id, token
+                );
+
+                tokens.push(TokenInfo {
+                    recipient_id: recipient.id.clone(),
+                    recipient_name: recipient.name.clone(),
+                    recipient_email: recipient.email.clone(),
+                    signing_url: signing_url.clone(),
+                });
+
+                // Send revision notification email
+                let email_html = format_revision_notification_email(
+                    document_name,
+                    sender_name,
+                    &recipient.name,
+                    revision_message,
+                    &signing_url,
+                    s.revision_count,
+                );
+
+                let email_subject = format!("Document Revised: {}", document_name);
+
+                let email_request = email::EmailSendRequest {
+                    to: vec![recipient.email.clone()],
+                    subject: email_subject,
+                    html: email_html,
+                    text: None,
+                    reply_to: None,
+                    tags: vec![
+                        ("type".to_string(), "revision".to_string()),
+                        ("session_id".to_string(), session_id.to_string()),
+                    ],
+                };
+
+                if let Err(e) = email::send_email(&env, email_request).await {
+                    console_log!(
+                        "Failed to send revision notification to {}: {:?}",
+                        recipient.email,
+                        e
+                    );
+                }
+            }
+
+            console_log!(
+                "Session {} revised by sender {}. Revision #{}, {} recipients notified",
+                session_id,
+                sender_email,
+                s.revision_count,
+                tokens.len()
+            );
+
+            cors_response(Ok(Response::from_json(&ReviseResponse {
+                success: true,
+                message: format!(
+                    "Document revised successfully (revision #{}). All recipients have been notified with new signing links.",
+                    s.revision_count
+                ),
+                tokens: Some(tokens),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&ReviseResponse {
+            success: false,
+            message: "Session not found".to_string(),
+            tokens: None,
+        })?
+        .with_status(404))),
+    }
+}
+
+/// Format revision notification email
+fn format_revision_notification_email(
+    document_name: &str,
+    sender_name: &str,
+    recipient_name: &str,
+    revision_message: &str,
+    signing_url: &str,
+    revision_count: u32,
+) -> String {
+    let message_section = if !revision_message.is_empty() {
+        format!(
+            r#"
+        <div style="background: #dbeafe; padding: 15px; border-radius: 6px; margin-bottom: 25px; border-left: 4px solid #3b82f6;">
+            <p style="margin: 0; font-size: 14px; color: #1e40af;">
+                <strong>Message from sender:</strong> {}
+            </p>
+        </div>"#,
+            revision_message
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Document Has Been Revised</h1>
+        <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.9;">Revision #{}</p>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Hello {},</p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            <strong>{}</strong> has revised the document that requires your signature. Please review the updated document using the new link below.
+        </p>
+
+        <div style="background: #fef3c7; padding: 12px 15px; border-radius: 6px; margin-bottom: 20px; border-left: 4px solid #f59e0b;">
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <strong>Important:</strong> Previous signing links are no longer valid. Please use the button below to access the revised document.
+            </p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{}</p>
+        </div>{}
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{}" style="display: inline-block; background: #f59e0b; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Review Revised Document</a>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            If you have any questions about this revision, please contact the sender directly.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        revision_count,
+        recipient_name,
+        sender_name,
+        document_name,
+        message_section,
+        signing_url
+    )
+}
+
+/// Restarts a document - voids all existing signatures and starts fresh.
+/// Use this when some signers have already signed but need to revise the document.
+async fn handle_restart(
+    session_id: &str,
+    sender_email: String,
+    mut req: Request,
+    env: Env,
+) -> Result<Response> {
+    // Parse the restart request
+    let body: RestartRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    // Get KV store
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    // Fetch the session
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Verify sender owns this session
+            let session_sender = s.metadata.sender_email.as_deref().unwrap_or("");
+            if session_sender.to_lowercase() != sender_email.to_lowercase() {
+                return cors_response(Ok(Response::from_json(&RestartResponse {
+                    success: false,
+                    message: "You do not have permission to restart this document".to_string(),
+                    tokens: None,
+                })?
+                .with_status(403)));
+            }
+
+            // Check if session can be restarted (not completed, voided, or expired)
+            match s.status {
+                SessionStatus::Completed => {
+                    return cors_response(Ok(Response::from_json(&RestartResponse {
+                        success: false,
+                        message: "Cannot restart a completed document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                SessionStatus::Voided => {
+                    return cors_response(Ok(Response::from_json(&RestartResponse {
+                        success: false,
+                        message: "Cannot restart a voided document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                SessionStatus::Expired => {
+                    return cors_response(Ok(Response::from_json(&RestartResponse {
+                        success: false,
+                        message: "Cannot restart an expired document".to_string(),
+                        tokens: None,
+                    })?
+                    .with_status(400)));
+                }
+                _ => {} // Allow Pending, Accepted, Declined
+            }
+
+            // Count how many had signed before restart (for email messaging)
+            let previously_signed_count = s.recipients.iter().filter(|r| r.signed).count();
+
+            // Update fields
+            s.fields = body.fields;
+
+            // Clear signature annotations (void all existing signatures)
+            s.signature_annotations.clear();
+
+            // Clear final document if present
+            s.final_document = None;
+
+            // Update recipients if provided, otherwise reset existing ones
+            if let Some(new_recipients) = body.recipients {
+                let mut updated_recipients = Vec::new();
+                for r in new_recipients {
+                    updated_recipients.push(RecipientInfo {
+                        id: r.id,
+                        name: r.name,
+                        email: r.email,
+                        role: r.role,
+                        signing_order: r.signing_order,
+                        // Reset all signing state
+                        consented: false,
+                        consent_at: None,
+                        consent_user_agent: None,
+                        signed: false,
+                        signed_at: None,
+                        declined: false,
+                        declined_at: None,
+                        decline_reason: None,
+                        reminders_sent: 0,
+                        last_reminder_at: None,
+                    });
+                }
+                s.recipients = updated_recipients;
+            } else {
+                // Reset ALL signing state for existing recipients
+                for recipient in &mut s.recipients {
+                    recipient.consented = false;
+                    recipient.consent_at = None;
+                    recipient.consent_user_agent = None;
+                    recipient.signed = false;
+                    recipient.signed_at = None;
+                    recipient.declined = false;
+                    recipient.declined_at = None;
+                    recipient.decline_reason = None;
+                }
+            }
+
+            // Update document if provided
+            if let Some(new_document) = body.document {
+                s.encrypted_document = new_document;
+            }
+
+            // Increment token_version to invalidate all existing signing links
+            s.token_version = s.token_version.saturating_add(1);
+
+            // Increment revision count
+            s.revision_count = s.revision_count.saturating_add(1);
+
+            // Reset status to Pending
+            s.status = SessionStatus::Pending;
+
+            // Save updated session
+            kv.put(
+                &format!("session:{}", session_id),
+                serde_json::to_string(&s)?,
+            )?
+            .execute()
+            .await?;
+
+            // Generate new tokens and send restart emails
+            let secret = get_signing_secret(&env);
+            let mut tokens = Vec::new();
+            let document_name = &s.metadata.filename;
+            let sender_name = &s.metadata.created_by;
+            let restart_message = body.message.as_deref().unwrap_or("");
+
+            for recipient in &s.recipients {
+                // Only send to signers (not viewers)
+                if recipient.role != "signer" {
+                    continue;
+                }
+
+                // Generate new token with updated version
+                let token = generate_recipient_token(
+                    session_id,
+                    &recipient.id,
+                    s.token_version,
+                    &secret,
+                );
+
+                // Build signing URL
+                let signing_url = format!(
+                    "https://getsignatures.org/sign.html?session={}&recipient={}&token={}",
+                    session_id, recipient.id, token
+                );
+
+                tokens.push(TokenInfo {
+                    recipient_id: recipient.id.clone(),
+                    recipient_name: recipient.name.clone(),
+                    recipient_email: recipient.email.clone(),
+                    signing_url: signing_url.clone(),
+                });
+
+                // Send restart notification email
+                let email_html = format_restart_notification_email(
+                    document_name,
+                    sender_name,
+                    &recipient.name,
+                    restart_message,
+                    &signing_url,
+                    s.revision_count,
+                    previously_signed_count > 0,
+                );
+
+                let email_subject = format!("Document Restarted: {}", document_name);
+
+                let email_request = email::EmailSendRequest {
+                    to: vec![recipient.email.clone()],
+                    subject: email_subject,
+                    html: email_html,
+                    text: None,
+                    reply_to: None,
+                    tags: vec![
+                        ("type".to_string(), "restart".to_string()),
+                        ("session_id".to_string(), session_id.to_string()),
+                    ],
+                };
+
+                if let Err(e) = email::send_email(&env, email_request).await {
+                    console_log!(
+                        "Failed to send restart notification to {}: {:?}",
+                        recipient.email,
+                        e
+                    );
+                }
+            }
+
+            console_log!(
+                "Session {} restarted by sender {}. Revision #{}, {} previous signatures voided, {} recipients notified",
+                session_id,
+                sender_email,
+                s.revision_count,
+                previously_signed_count,
+                tokens.len()
+            );
+
+            cors_response(Ok(Response::from_json(&RestartResponse {
+                success: true,
+                message: format!(
+                    "Document restarted successfully (revision #{}). {} previous signature(s) have been voided. All recipients have been notified with new signing links.",
+                    s.revision_count,
+                    previously_signed_count
+                ),
+                tokens: Some(tokens),
+            })?))
+        }
+        None => cors_response(Ok(Response::from_json(&RestartResponse {
+            success: false,
+            message: "Session not found".to_string(),
+            tokens: None,
+        })?
+        .with_status(404))),
+    }
+}
+
+/// Format restart notification email (signatures voided)
+fn format_restart_notification_email(
+    document_name: &str,
+    sender_name: &str,
+    recipient_name: &str,
+    restart_message: &str,
+    signing_url: &str,
+    revision_count: u32,
+    had_signatures: bool,
+) -> String {
+    let message_section = if !restart_message.is_empty() {
+        format!(
+            r#"
+        <div style="background: #dbeafe; padding: 15px; border-radius: 6px; margin-bottom: 25px; border-left: 4px solid #3b82f6;">
+            <p style="margin: 0; font-size: 14px; color: #1e40af;">
+                <strong>Message from sender:</strong> {}
+            </p>
+        </div>"#,
+            restart_message
+        )
+    } else {
+        String::new()
+    };
+
+    let signatures_voided_note = if had_signatures {
+        r#"
+        <div style="background: #fef2f2; padding: 12px 15px; border-radius: 6px; margin-bottom: 20px; border-left: 4px solid #ef4444;">
+            <p style="margin: 0; font-size: 14px; color: #991b1b;">
+                <strong>Note:</strong> Previous signatures on this document have been voided due to the revision.
+            </p>
+        </div>"#
+    } else {
+        ""
+    };
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="margin: 0; font-size: 24px;">Document Has Been Restarted</h1>
+        <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.9;">Revision #{} - Previous signatures voided</p>
+    </div>
+
+    <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; margin-bottom: 20px;">Hello {},</p>
+
+        <p style="font-size: 16px; margin-bottom: 20px;">
+            <strong>{}</strong> has made changes to a document that requires your signature. The document has been restarted and requires all signatures to be collected again.
+        </p>{}
+
+        <div style="background: #fef3c7; padding: 12px 15px; border-radius: 6px; margin-bottom: 20px; border-left: 4px solid #f59e0b;">
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <strong>Important:</strong> Previous signing links are no longer valid. Please use the button below to review and sign the updated document.
+            </p>
+        </div>
+
+        <div style="background: #f9fafb; padding: 15px; border-radius: 6px; margin-bottom: 25px;">
+            <p style="margin: 0; font-size: 14px; color: #6b7280;">Document Name</p>
+            <p style="margin: 5px 0 0 0; font-size: 16px; font-weight: 600;">{}</p>
+        </div>{}
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{}" style="display: inline-block; background: #dc2626; color: white; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px;">Review & Sign Document</a>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            If you have any questions about these changes, please contact the sender directly.
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px; font-size: 12px; color: #9ca3af;">
+        <p>Sent via GetSignatures - Secure Document Signing</p>
+    </div>
+</body>
+</html>"#,
+        revision_count,
+        recipient_name,
+        sender_name,
+        signatures_voided_note,
+        document_name,
+        message_section,
+        signing_url
+    )
 }
 
 /// PUT /session/{id}/consent
@@ -3608,11 +5664,16 @@ async fn handle_resend(session_id: &str, env: Env) -> Result<Response> {
                 fields: s.fields,
                 expires_at: expires_at.clone(),
                 signed_versions: vec![],
+                signature_annotations: vec![], // New lightweight annotation storage
                 status: SessionStatus::Pending,
                 signing_mode: s.signing_mode,
                 reminder_config: s.reminder_config,
                 final_document: None, // Reset for new session
                 legacy: false,        // Resent sessions require token authentication
+                revision_count: 0,
+                voided_at: None,
+                void_reason: None,
+                token_version: 0,
             };
 
             // Store new session
@@ -3819,6 +5880,920 @@ async fn handle_submit_signed(session_id: &str, mut req: Request, env: Env) -> R
     }
 }
 
+/// Handle submission of signature annotations (NEW lightweight storage)
+/// Instead of storing full PDF copies (~13MB each), stores only annotation data (~50KB each)
+/// This allows unlimited signers within the 25MB KV limit
+async fn handle_submit_annotations(
+    session_id: &str,
+    mut req: Request,
+    env: Env,
+) -> Result<Response> {
+    // Annotation payloads are small (~50KB), but check reasonable limit
+    const MAX_ANNOTATION_SIZE: usize = 500 * 1024; // 500KB max for annotations
+    if let Some(response) = check_content_length(&req, MAX_ANNOTATION_SIZE) {
+        return cors_response(Ok(response));
+    }
+
+    let body: SubmitAnnotationsRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return cors_response(error_response(&format!("Invalid request: {}", e)));
+        }
+    };
+
+    let kv = match env.kv("SESSIONS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return cors_response(error_response("SESSIONS KV not configured"));
+        }
+    };
+
+    let session: Option<SigningSession> = kv.get(&format!("session:{}", session_id)).json().await?;
+
+    match session {
+        Some(mut s) => {
+            // Debug logging for re-signing prevention
+            console_log!(
+                "SIGN-DEBUG: session_id={} recipient_id={} signed={}",
+                session_id,
+                body.recipient_id,
+                s.recipients
+                    .iter()
+                    .find(|r| r.id == body.recipient_id)
+                    .map(|r| r.signed)
+                    .unwrap_or(false)
+            );
+
+            // Check if recipient exists and hasn't already signed
+            if let Some(recipient) = s.recipients.iter().find(|r| r.id == body.recipient_id) {
+                if recipient.signed {
+                    return cors_response(Ok(Response::from_json(&serde_json::json!({
+                        "success": false,
+                        "message": "You have already signed this document"
+                    }))?
+                    .with_status(400)));
+                }
+            } else {
+                return cors_response(Ok(Response::from_json(&serde_json::json!({
+                    "success": false,
+                    "message": "Recipient not found in session"
+                }))?
+                .with_status(404)));
+            }
+
+            // Mark recipient as signed
+            let signed_at = chrono::Utc::now().to_rfc3339();
+            for r in s.recipients.iter_mut() {
+                if r.id == body.recipient_id {
+                    r.signed = true;
+                    r.signed_at = Some(signed_at.clone());
+                }
+            }
+
+            // Convert submitted annotations to storage format and add to session
+            for ann in body.annotations {
+                // Look up field to get position if not provided
+                let field = s.fields.iter().find(|f| f.id == ann.field_id);
+
+                // Get position from annotation or look up from field
+                let position = match ann.position {
+                    Some(pos) => pos,
+                    None => {
+                        // Look up from session fields
+                        if let Some(f) = field {
+                            AnnotationPosition {
+                                page: f.page,
+                                x_percent: f.x_percent,
+                                y_percent: f.y_percent,
+                                width_percent: f.width_percent,
+                                height_percent: f.height_percent,
+                            }
+                        } else {
+                            // Field not found - use default position (shouldn't happen)
+                            console_log!("Warning: Field {} not found in session", ann.field_id);
+                            AnnotationPosition {
+                                page: 0,
+                                x_percent: 0.0,
+                                y_percent: 0.0,
+                                width_percent: 20.0,
+                                height_percent: 5.0,
+                            }
+                        }
+                    }
+                };
+
+                // Get field_type from annotation or look up from field definition
+                let field_type = ann.field_type.unwrap_or_else(|| {
+                    if let Some(f) = field {
+                        // Convert field_type string to enum
+                        match f.field_type.as_str() {
+                            "signature" => AnnotationFieldType::Signature,
+                            "initials" => AnnotationFieldType::Initials,
+                            "date" => AnnotationFieldType::Date,
+                            "text" => AnnotationFieldType::Text,
+                            "checkbox" => AnnotationFieldType::Checkbox,
+                            _ => AnnotationFieldType::Signature,
+                        }
+                    } else {
+                        AnnotationFieldType::Signature
+                    }
+                });
+
+                let annotation_id = format!(
+                    "ann_{}_{}",
+                    body.recipient_id,
+                    js_sys::Math::random().to_bits() as u32
+                );
+
+                s.signature_annotations.push(SignatureAnnotation {
+                    id: annotation_id,
+                    recipient_id: body.recipient_id.clone(),
+                    field_id: ann.field_id,
+                    field_type,
+                    data: ann.data,
+                    position,
+                    signed_at: signed_at.clone(),
+                });
+            }
+
+            // Check if all signers have completed
+            let all_signed = all_recipients_signed(&s.recipients);
+            let remaining_signers = s
+                .recipients
+                .iter()
+                .filter(|r| !r.signed && r.role == "signer")
+                .count() as u32;
+
+            // Generate download link (used for emails and response when all signed)
+            let download_link = generate_download_link(session_id, DOWNLOAD_LINK_EXPIRY_DAYS);
+
+            // Update session status if complete
+            if all_signed {
+                s.status = SessionStatus::Completed;
+                // Note: final_document will be generated on-demand during download
+                // This avoids storing merged PDF in KV (saves space)
+            }
+
+            // Send notification emails (same logic as legacy handler)
+            if let Some(sender_email) = s.metadata.sender_email.as_ref() {
+                if let Some(recipient) = s.recipients.iter().find(|r| r.id == body.recipient_id) {
+                    if all_signed {
+                        // Send "all signed" completion email to sender
+                        let subject = format!("All Recipients Signed: {}", s.metadata.filename);
+                        let html_body = format_all_signed_notification_email(
+                            &s.recipients,
+                            &s.metadata.filename,
+                            &download_link,
+                        );
+                        let _ = send_sender_notification(&env, sender_email, &subject, &html_body)
+                            .await;
+
+                        // Send completion email to all signers
+                        for signer in s
+                            .recipients
+                            .iter()
+                            .filter(|r| r.signed && r.role == "signer")
+                        {
+                            let signer_subject =
+                                format!("Document Signed: {}", s.metadata.filename);
+                            let signer_html = format_recipient_completion_email(
+                                &signer.name,
+                                &s.metadata.filename,
+                                &download_link,
+                                &s.recipients,
+                            );
+                            let _ = send_sender_notification(
+                                &env,
+                                &signer.email,
+                                &signer_subject,
+                                &signer_html,
+                            )
+                            .await;
+                        }
+                    } else {
+                        // Send individual signed notification
+                        let subject = format!("{} Signed: {}", recipient.name, s.metadata.filename);
+                        let html_body = format_completion_notification_email(
+                            &recipient.name,
+                            &s.metadata.filename,
+                            recipient
+                                .signed_at
+                                .as_ref()
+                                .unwrap_or(&"Unknown".to_string()),
+                            &download_link,
+                        );
+                        let _ = send_sender_notification(&env, sender_email, &subject, &html_body)
+                            .await;
+                    }
+                }
+            }
+
+            // Save updated session
+            let session_json = serde_json::to_string(&s)
+                .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
+
+            kv.put(&format!("session:{}", session_id), session_json)?
+                .execute()
+                .await?;
+
+            console_log!(
+                "SIGN-DEBUG: KV write complete for session {} - recipient {} now marked signed",
+                session_id,
+                body.recipient_id
+            );
+
+            // Include download_url in response only when all signers have completed
+            let download_url = if all_signed {
+                Some(download_link)
+            } else {
+                None
+            };
+
+            cors_response(Response::from_json(&SubmitAnnotationsResponse {
+                success: true,
+                message: "Annotations submitted successfully".to_string(),
+                all_signed,
+                remaining_signers,
+                download_url,
+            }))
+        }
+        None => cors_response(Ok(Response::from_json(&serde_json::json!({
+            "success": false,
+            "message": "Session not found"
+        }))?
+        .with_status(404))),
+    }
+}
+
+// ============================================================
+// Download Endpoint - Merge Annotations into PDF
+// ============================================================
+
+/// Handle GET /session/{id}/download - merge annotations and return PDF
+async fn handle_download(session_id: &str, env: Env) -> Result<Response> {
+    console_log!("handle_download called for session_id: {}", session_id);
+    let kv = env.kv("SESSIONS")?;
+    let key = format!("session:{}", session_id);
+    console_log!("Looking up key: {}", key);
+
+    match kv.get(&key).text().await? {
+        Some(session_json) => {
+            let mut session: SigningSession = serde_json::from_str(&session_json)
+                .map_err(|e| Error::from(format!("Parse session error: {}", e)))?;
+
+            // If we have a cached final document, return it
+            if let Some(ref final_doc) = session.final_document {
+                return serve_pdf(&session.metadata.filename, final_doc);
+            }
+
+            // Decode the original PDF
+            let pdf_bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &session.encrypted_document,
+            )
+            .map_err(|e| Error::from(format!("Base64 decode error: {}", e)))?;
+
+            // If no annotations, just return the original PDF
+            if session.signature_annotations.is_empty() {
+                // For legacy sessions, check if there are signed_versions
+                if !session.signed_versions.is_empty() {
+                    // Return the most recent signed version
+                    if let Some(latest) = session.signed_versions.last() {
+                        return serve_pdf(&session.metadata.filename, &latest.encrypted_document);
+                    }
+                }
+                return serve_pdf_bytes(&session.metadata.filename, pdf_bytes);
+            }
+
+            // Get page dimensions for coordinate conversion
+            console_log!("Getting page dimensions for {} bytes PDF", pdf_bytes.len());
+            let page_dims = match get_pdf_page_dimensions(&pdf_bytes) {
+                Ok(dims) => {
+                    console_log!("Got page dimensions: {} pages", dims.len());
+                    dims
+                }
+                Err(e) => {
+                    console_log!("Error getting page dimensions: {:?}", e);
+                    return cors_response(Response::error(
+                        &format!("PDF page dims error: {:?}", e),
+                        500,
+                    ));
+                }
+            };
+
+            // Apply annotations to the PDF
+            console_log!(
+                "Applying {} annotations",
+                session.signature_annotations.len()
+            );
+            let merged_pdf = match apply_annotations_to_pdf(
+                pdf_bytes,
+                &session.signature_annotations,
+                &page_dims,
+            ) {
+                Ok(pdf) => {
+                    console_log!("Annotations applied, merged PDF is {} bytes", pdf.len());
+                    pdf
+                }
+                Err(e) => {
+                    console_log!("Error applying annotations: {:?}", e);
+                    return cors_response(Response::error(
+                        &format!("PDF merge error: {:?}", e),
+                        500,
+                    ));
+                }
+            };
+
+            // Encode result as base64 for caching
+            let merged_base64 =
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &merged_pdf);
+
+            // Cache the result if session is complete (saves time on repeat downloads)
+            if session.status == SessionStatus::Completed {
+                session.final_document = Some(merged_base64.clone());
+                let updated_json = serde_json::to_string(&session)
+                    .map_err(|e| Error::from(format!("Serialize error: {}", e)))?;
+                kv.put(&key, updated_json)?.execute().await?;
+            }
+
+            serve_pdf_bytes(&session.metadata.filename, merged_pdf)
+        }
+        None => {
+            console_log!("Session NOT found in KV for download: {}", key);
+            cors_response(Response::error("Session not found (download)", 404))
+        }
+    }
+}
+
+/// Serve a PDF file from base64 data
+fn serve_pdf(filename: &str, base64_data: &str) -> Result<Response> {
+    let pdf_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)
+        .map_err(|e| Error::from(format!("Base64 decode error: {}", e)))?;
+    serve_pdf_bytes(filename, pdf_bytes)
+}
+
+/// Serve a PDF file from raw bytes
+fn serve_pdf_bytes(filename: &str, pdf_bytes: Vec<u8>) -> Result<Response> {
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/pdf")?;
+    headers.set(
+        "Content-Disposition",
+        &format!("attachment; filename=\"{}\"", filename),
+    )?;
+    headers.set("Access-Control-Allow-Origin", "*")?;
+    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS")?;
+
+    Ok(Response::from_bytes(pdf_bytes)?.with_headers(headers))
+}
+
+// ============================================================
+// PDF Merge Logic - Apply Annotations to Original PDF
+// ============================================================
+
+/// Get page dimensions from a PDF (returns HashMap of page_num -> [x, y, width, height])
+fn get_pdf_page_dimensions(pdf_bytes: &[u8]) -> Result<std::collections::HashMap<u32, [f64; 4]>> {
+    let doc = lopdf::Document::load_mem(pdf_bytes)
+        .map_err(|e| Error::from(format!("PDF parse error: {}", e)))?;
+
+    let mut dims = std::collections::HashMap::new();
+    let page_count = doc.get_pages().len();
+
+    for page_num in 1..=page_count {
+        if let Ok(page_id) = doc.page_iter().nth(page_num - 1).ok_or("Page not found") {
+            if let Ok(page_dict) = doc.get_object(page_id).and_then(|o| o.as_dict()) {
+                // Try MediaBox first, then CropBox
+                let media_box = page_dict
+                    .get(b"MediaBox")
+                    .or_else(|_| page_dict.get(b"CropBox"))
+                    .and_then(|obj| obj.as_array())
+                    .map(|arr| {
+                        let get_f64 = |idx: usize| -> f64 {
+                            arr.get(idx)
+                                .and_then(|o| match o {
+                                    Object::Integer(i) => Some(*i as f64),
+                                    Object::Real(f) => Some(*f as f64),
+                                    _ => None,
+                                })
+                                .unwrap_or(0.0)
+                        };
+                        [get_f64(0), get_f64(1), get_f64(2), get_f64(3)]
+                    })
+                    .unwrap_or([0.0, 0.0, 612.0, 792.0]); // Default to US Letter
+
+                dims.insert(page_num as u32, media_box);
+            }
+        }
+    }
+
+    // Fallback: if we couldn't get any dims, use defaults
+    if dims.is_empty() {
+        for i in 1..=page_count {
+            dims.insert(i as u32, [0.0, 0.0, 612.0, 792.0]);
+        }
+    }
+
+    Ok(dims)
+}
+
+/// Apply all annotations to a PDF and return the merged bytes
+fn apply_annotations_to_pdf(
+    pdf_bytes: Vec<u8>,
+    annotations: &[SignatureAnnotation],
+    page_dims: &std::collections::HashMap<u32, [f64; 4]>,
+) -> Result<Vec<u8>> {
+    console_log!(
+        "apply_annotations_to_pdf: {} annotations, {} bytes",
+        annotations.len(),
+        pdf_bytes.len()
+    );
+    let mut doc = lopdf::Document::load_mem(&pdf_bytes).map_err(|e| {
+        console_log!("PDF load error: {}", e);
+        Error::from(format!("PDF parse error: {}", e))
+    })?;
+    console_log!("PDF loaded, pages: {}", doc.get_pages().len());
+
+    // Group annotations by page for efficiency
+    let mut by_page: std::collections::HashMap<u32, Vec<&SignatureAnnotation>> =
+        std::collections::HashMap::new();
+    for ann in annotations {
+        // Position.page is already 1-indexed (matches PDF page numbers)
+        by_page.entry(ann.position.page).or_default().push(ann);
+    }
+
+    // Apply annotations to each page
+    for (page_num, anns) in by_page {
+        let dims = page_dims
+            .get(&page_num)
+            .copied()
+            .unwrap_or([0.0, 0.0, 612.0, 792.0]);
+        let page_width = dims[2] - dims[0];
+        let page_height = dims[3] - dims[1];
+
+        for ann in anns {
+            // Convert percentage coordinates to PDF points
+            let x = (ann.position.x_percent / 100.0) * page_width + dims[0];
+            let y_from_top = (ann.position.y_percent / 100.0) * page_height;
+            let width = (ann.position.width_percent / 100.0) * page_width;
+            let height = (ann.position.height_percent / 100.0) * page_height;
+            // PDF Y origin is bottom-left, so flip Y
+            let y = dims[1] + page_height - y_from_top - height;
+
+            let result = match &ann.data {
+                AnnotationData::DrawnSignature { image_base64 }
+                | AnnotationData::Initials { image_base64 } => {
+                    console_log!("Adding image annotation for field {}", ann.field_id);
+                    add_image_annotation(&mut doc, page_num, x, y, width, height, image_base64)
+                }
+                AnnotationData::TypedSignature { text, font: _ } => {
+                    console_log!("Adding typed signature for field {}", ann.field_id);
+                    add_text_annotation(
+                        &mut doc,
+                        page_num,
+                        x,
+                        y,
+                        width,
+                        height,
+                        text,
+                        [0.9, 0.95, 1.0],
+                    )
+                }
+                AnnotationData::Date { value } => {
+                    console_log!(
+                        "Adding date annotation for field {}: {}",
+                        ann.field_id,
+                        value
+                    );
+                    add_text_annotation(
+                        &mut doc,
+                        page_num,
+                        x,
+                        y,
+                        width,
+                        height,
+                        value,
+                        [1.0, 0.95, 0.9],
+                    )
+                }
+                AnnotationData::Text { value } => {
+                    console_log!(
+                        "Adding text annotation for field {}: {}",
+                        ann.field_id,
+                        value
+                    );
+                    add_text_annotation(
+                        &mut doc,
+                        page_num,
+                        x,
+                        y,
+                        width,
+                        height,
+                        value,
+                        [1.0, 1.0, 0.9],
+                    )
+                }
+                AnnotationData::Checkbox { checked } => {
+                    console_log!(
+                        "Adding checkbox annotation for field {}: {}",
+                        ann.field_id,
+                        checked
+                    );
+                    add_checkbox_annotation(&mut doc, page_num, x, y, width.min(height), *checked)
+                }
+            };
+            if let Err(e) = result {
+                console_log!("Error adding annotation {}: {:?}", ann.field_id, e);
+                return Err(e);
+            }
+        }
+    }
+
+    // Save the modified PDF
+    let mut output = Vec::new();
+    doc.save_to(&mut output)
+        .map_err(|e| Error::from(format!("PDF save error: {}", e)))?;
+
+    Ok(output)
+}
+
+/// Add an image annotation (signature/initials) to the PDF
+fn add_image_annotation(
+    doc: &mut lopdf::Document,
+    page_num: u32,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    image_base64: &str,
+) -> Result<()> {
+    // Strip data URL prefix if present
+    let base64_data = strip_data_url_prefix(image_base64);
+
+    // Decode base64 to PNG bytes
+    let png_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64_data)
+        .map_err(|e| Error::from(format!("Image base64 decode error: {}", e)))?;
+
+    // Decode PNG to RGB pixels
+    let (img_width, img_height, rgb_data) = decode_png_to_rgb(&png_bytes)?;
+
+    // Compress pixel data
+    let compressed = compress_rgb_data(&rgb_data)?;
+
+    // Create image XObject
+    let mut img_dict = Dictionary::new();
+    img_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    img_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+    img_dict.set("Width", Object::Integer(img_width as i64));
+    img_dict.set("Height", Object::Integer(img_height as i64));
+    img_dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+    img_dict.set("BitsPerComponent", Object::Integer(8));
+    img_dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+    let image_id = doc.add_object(Object::Stream(Stream::new(img_dict, compressed)));
+
+    // Create form XObject that draws the image
+    let content = format!(
+        "q\n{} 0 0 {} 0 0 cm\n/Im0 Do\nQ",
+        width as i64, height as i64
+    );
+    let content_bytes = content.into_bytes();
+
+    let mut xobject_dict = Dictionary::new();
+    xobject_dict.set("Im0", Object::Reference(image_id));
+
+    let mut resources = Dictionary::new();
+    resources.set("XObject", Object::Dictionary(xobject_dict));
+
+    let mut form_dict = Dictionary::new();
+    form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    form_dict.set("FormType", Object::Integer(1));
+    form_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(width as f32),
+            Object::Real(height as f32),
+        ]),
+    );
+    form_dict.set("Resources", Object::Dictionary(resources));
+    let form_id = doc.add_object(Object::Stream(Stream::new(form_dict, content_bytes)));
+
+    // Create stamp annotation
+    let mut ap_dict = Dictionary::new();
+    ap_dict.set("N", Object::Reference(form_id));
+
+    let mut annot_dict = Dictionary::new();
+    annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
+    annot_dict.set("Subtype", Object::Name(b"Stamp".to_vec()));
+    annot_dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real((x + width) as f32),
+            Object::Real((y + height) as f32),
+        ]),
+    );
+    annot_dict.set("F", Object::Integer(4)); // Print flag
+    annot_dict.set("AP", Object::Dictionary(ap_dict));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot_dict));
+
+    // Add to page annotations
+    add_annotation_to_page(doc, page_num, annot_id)?;
+
+    Ok(())
+}
+
+/// Add a text annotation to the PDF
+fn add_text_annotation(
+    doc: &mut lopdf::Document,
+    page_num: u32,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    text: &str,
+    bg_color: [f64; 3],
+) -> Result<()> {
+    let escaped_text = escape_pdf_string(text);
+    let font_size = (height * 0.6).clamp(8.0, 14.0);
+    let text_y = (height - font_size) / 2.0;
+
+    let content = format!(
+        "q\n{r} {g} {b} rg\n0 0 {w} {h} re f\n0 0 0 RG\n0.5 w\n0 0 {w} {h} re S\n0 0 0 rg\nBT\n/F1 {fs} Tf\n4 {ty} Td\n({text}) Tj\nET\nQ",
+        r = bg_color[0],
+        g = bg_color[1],
+        b = bg_color[2],
+        w = width,
+        h = height,
+        fs = font_size,
+        ty = text_y,
+        text = escaped_text,
+    );
+    let content_bytes = content.into_bytes();
+
+    // Create font resource
+    let mut font_f1 = Dictionary::new();
+    font_f1.set("Type", Object::Name(b"Font".to_vec()));
+    font_f1.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font_f1.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+
+    let mut fonts = Dictionary::new();
+    fonts.set("F1", Object::Dictionary(font_f1));
+
+    let mut resources = Dictionary::new();
+    resources.set("Font", Object::Dictionary(fonts));
+
+    let mut form_dict = Dictionary::new();
+    form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    form_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(width as f32),
+            Object::Real(height as f32),
+        ]),
+    );
+    form_dict.set("Resources", Object::Dictionary(resources));
+    let form_id = doc.add_object(Object::Stream(Stream::new(form_dict, content_bytes)));
+
+    // Create stamp annotation
+    let mut ap_dict = Dictionary::new();
+    ap_dict.set("N", Object::Reference(form_id));
+
+    let mut annot_dict = Dictionary::new();
+    annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
+    annot_dict.set("Subtype", Object::Name(b"Stamp".to_vec()));
+    annot_dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real((x + width) as f32),
+            Object::Real((y + height) as f32),
+        ]),
+    );
+    annot_dict.set("F", Object::Integer(4));
+    annot_dict.set("AP", Object::Dictionary(ap_dict));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot_dict));
+    add_annotation_to_page(doc, page_num, annot_id)?;
+
+    Ok(())
+}
+
+/// Add a checkbox annotation to the PDF
+fn add_checkbox_annotation(
+    doc: &mut lopdf::Document,
+    page_num: u32,
+    x: f64,
+    y: f64,
+    size: f64,
+    checked: bool,
+) -> Result<()> {
+    let checkmark = if checked {
+        format!(
+            "q\n0 G\n2 w\n{x1} {y1} m\n{x2} {y2} l\n{x3} {y3} l\nS\nQ",
+            x1 = size * 0.2,
+            y1 = size * 0.5,
+            x2 = size * 0.4,
+            y2 = size * 0.3,
+            x3 = size * 0.8,
+            y3 = size * 0.8,
+        )
+    } else {
+        String::new()
+    };
+
+    let content = format!(
+        "q\n1 1 1 rg\n0 0 {s} {s} re f\n0 0 0 RG\n1 w\n0 0 {s} {s} re S\n{check}\nQ",
+        s = size,
+        check = checkmark,
+    );
+    let content_bytes = content.into_bytes();
+
+    let mut form_dict = Dictionary::new();
+    form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    form_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(0),
+            Object::Real(size as f32),
+            Object::Real(size as f32),
+        ]),
+    );
+    let form_id = doc.add_object(Object::Stream(Stream::new(form_dict, content_bytes)));
+
+    let mut ap_dict = Dictionary::new();
+    ap_dict.set("N", Object::Reference(form_id));
+
+    let mut annot_dict = Dictionary::new();
+    annot_dict.set("Type", Object::Name(b"Annot".to_vec()));
+    annot_dict.set("Subtype", Object::Name(b"Stamp".to_vec()));
+    annot_dict.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real((x + size) as f32),
+            Object::Real((y + size) as f32),
+        ]),
+    );
+    annot_dict.set("F", Object::Integer(4));
+    annot_dict.set("AP", Object::Dictionary(ap_dict));
+
+    let annot_id = doc.add_object(Object::Dictionary(annot_dict));
+    add_annotation_to_page(doc, page_num, annot_id)?;
+
+    Ok(())
+}
+
+/// Add an annotation reference to a page's Annots array
+fn add_annotation_to_page(
+    doc: &mut lopdf::Document,
+    page_num: u32,
+    annot_id: ObjectId,
+) -> Result<()> {
+    // Get pages
+    let pages: Vec<ObjectId> = doc.page_iter().collect();
+    if page_num < 1 || page_num as usize > pages.len() {
+        return Err(Error::from(format!("Invalid page number: {}", page_num)));
+    }
+
+    let page_id = pages[(page_num - 1) as usize];
+
+    // Get existing annotations
+    let mut annots = if let Ok(page_obj) = doc.get_object(page_id) {
+        if let Ok(page_dict) = page_obj.as_dict() {
+            if let Ok(annots_obj) = page_dict.get(b"Annots") {
+                match annots_obj {
+                    Object::Array(arr) => arr.clone(),
+                    Object::Reference(ref_id) => {
+                        if let Ok(arr_obj) = doc.get_object(*ref_id) {
+                            arr_obj.as_array().cloned().unwrap_or_default()
+                        } else {
+                            vec![]
+                        }
+                    }
+                    _ => vec![],
+                }
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    // Add new annotation
+    annots.push(Object::Reference(annot_id));
+
+    // Update page
+    if let Ok(page_obj) = doc.get_object_mut(page_id) {
+        if let Ok(page_dict) = page_obj.as_dict_mut() {
+            page_dict.set("Annots", Object::Array(annots));
+        }
+    }
+
+    Ok(())
+}
+
+/// Decode PNG image to RGB pixels
+fn decode_png_to_rgb(png_data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+    let cursor = std::io::Cursor::new(png_data);
+    let decoder = PngDecoder::new(cursor);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| Error::from(format!("PNG decode error: {}", e)))?;
+
+    let info = reader.info();
+    let width = info.width;
+    let height = info.height;
+    let color_type = info.color_type;
+
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    reader
+        .next_frame(&mut buf)
+        .map_err(|e| Error::from(format!("PNG frame error: {}", e)))?;
+
+    let rgb_data = match color_type {
+        png::ColorType::Rgb => buf,
+        png::ColorType::Rgba => {
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for chunk in buf.chunks(4) {
+                rgb.push(chunk[0]);
+                rgb.push(chunk[1]);
+                rgb.push(chunk[2]);
+            }
+            rgb
+        }
+        png::ColorType::Grayscale => {
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for &gray in &buf {
+                rgb.push(gray);
+                rgb.push(gray);
+                rgb.push(gray);
+            }
+            rgb
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+            for chunk in buf.chunks(2) {
+                let gray = chunk[0];
+                rgb.push(gray);
+                rgb.push(gray);
+                rgb.push(gray);
+            }
+            rgb
+        }
+        png::ColorType::Indexed => {
+            return Err(Error::from("Indexed PNG not supported - use RGB or RGBA"));
+        }
+    };
+
+    Ok((width, height, rgb_data))
+}
+
+/// Compress RGB data using zlib (FlateDecode compatible)
+fn compress_rgb_data(data: &[u8]) -> Result<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder
+        .write_all(data)
+        .map_err(|e| Error::from(format!("Compression write error: {}", e)))?;
+    encoder
+        .finish()
+        .map_err(|e| Error::from(format!("Compression finish error: {}", e)))
+}
+
+/// Strip data URL prefix (e.g., "data:image/png;base64,") from a string
+fn strip_data_url_prefix(data: &str) -> &str {
+    if let Some(pos) = data.find(',') {
+        &data[pos + 1..]
+    } else {
+        data
+    }
+}
+
+/// Escape special PDF characters in strings
+fn escape_pdf_string(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '(' => "\\(".to_string(),
+            ')' => "\\)".to_string(),
+            '\\' => "\\\\".to_string(),
+            _ if c.is_ascii() => c.to_string(),
+            _ => "?".to_string(),
+        })
+        .collect()
+}
+
 fn generate_session_id() -> String {
     // WASM-safe timestamp (std::time::SystemTime panics in Workers)
     let timestamp = get_timestamp_millis();
@@ -3859,6 +6834,28 @@ async fn save_sender_index(
     index: &SenderSessionIndex,
 ) -> Result<()> {
     let key = format!("sender_index:{}", sender_hash);
+    kv.put(&key, serde_json::to_string(index)?)?
+        .execute()
+        .await?;
+    Ok(())
+}
+
+/// Get the recipient session index from KV storage
+async fn get_recipient_index(kv: &kv::KvStore, email_hash: &str) -> RecipientSessionIndex {
+    let key = format!("recipient_index:{}", email_hash);
+    match kv.get(&key).json::<RecipientSessionIndex>().await {
+        Ok(Some(index)) => index,
+        _ => RecipientSessionIndex::default(),
+    }
+}
+
+/// Save the recipient session index to KV storage
+async fn save_recipient_index(
+    kv: &kv::KvStore,
+    email_hash: &str,
+    index: &RecipientSessionIndex,
+) -> Result<()> {
+    let key = format!("recipient_index:{}", email_hash);
     kv.put(&key, serde_json::to_string(index)?)?
         .execute()
         .await?;
@@ -3997,11 +6994,16 @@ mod tests {
             fields: vec![],
             expires_at: "2025-01-22T10:00:00Z".to_string(),
             signed_versions: vec![],
+            signature_annotations: vec![],
             status: SessionStatus::Pending,
             signing_mode: SigningMode::Parallel,
             reminder_config: None,
             final_document: None,
             legacy: false,
+            revision_count: 0,
+            voided_at: None,
+            void_reason: None,
+            token_version: 0,
         }
     }
 
@@ -4014,8 +7016,9 @@ mod tests {
         let secret = b"test-secret-key";
         let session_id = "sess_abc123";
         let recipient_id = "recipient_456";
+        let token_version = 0u32;
 
-        let token = generate_recipient_token(session_id, recipient_id, secret);
+        let token = generate_recipient_token(session_id, recipient_id, token_version, secret);
 
         assert!(!token.is_empty());
         assert!(token
@@ -4024,7 +7027,25 @@ mod tests {
 
         let result = verify_recipient_token(&token, session_id, secret);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), recipient_id);
+        let verified = result.unwrap();
+        assert_eq!(verified.recipient_id, recipient_id);
+        assert_eq!(verified.token_version, token_version);
+    }
+
+    #[test]
+    fn test_generate_and_verify_token_with_version() {
+        let secret = b"test-secret-key";
+        let session_id = "sess_abc123";
+        let recipient_id = "recipient_456";
+        let token_version = 5u32;
+
+        let token = generate_recipient_token(session_id, recipient_id, token_version, secret);
+
+        let result = verify_recipient_token(&token, session_id, secret);
+        assert!(result.is_ok());
+        let verified = result.unwrap();
+        assert_eq!(verified.recipient_id, recipient_id);
+        assert_eq!(verified.token_version, token_version);
     }
 
     #[test]
@@ -4033,7 +7054,7 @@ mod tests {
         let session_id = "sess_abc123";
         let recipient_id = "recipient_456";
 
-        let token = generate_recipient_token(session_id, recipient_id, secret);
+        let token = generate_recipient_token(session_id, recipient_id, 0, secret);
         let result = verify_recipient_token(&token, "sess_different", secret);
         assert_eq!(result, Err(TokenError::SessionMismatch));
     }
@@ -4045,7 +7066,7 @@ mod tests {
         let session_id = "sess_abc123";
         let recipient_id = "recipient_456";
 
-        let token = generate_recipient_token(session_id, recipient_id, secret);
+        let token = generate_recipient_token(session_id, recipient_id, 0, secret);
         let result = verify_recipient_token(&token, session_id, wrong_secret);
         assert_eq!(result, Err(TokenError::InvalidSignature));
     }
@@ -4100,6 +7121,10 @@ mod tests {
             TokenError::SessionMismatch.to_string(),
             "Token does not match session"
         );
+        assert_eq!(
+            TokenError::VersionMismatch.to_string(),
+            "Token has been invalidated (document was revised or voided)"
+        );
     }
 
     #[test]
@@ -4107,17 +7132,21 @@ mod tests {
         let secret = b"test-secret-key";
         let session_id = "sess_abc123";
 
-        let token1 = generate_recipient_token(session_id, "recipient_1", secret);
-        let token2 = generate_recipient_token(session_id, "recipient_2", secret);
+        let token1 = generate_recipient_token(session_id, "recipient_1", 0, secret);
+        let token2 = generate_recipient_token(session_id, "recipient_2", 0, secret);
 
         assert_ne!(token1, token2);
 
         assert_eq!(
-            verify_recipient_token(&token1, session_id, secret).unwrap(),
+            verify_recipient_token(&token1, session_id, secret)
+                .unwrap()
+                .recipient_id,
             "recipient_1"
         );
         assert_eq!(
-            verify_recipient_token(&token2, session_id, secret).unwrap(),
+            verify_recipient_token(&token2, session_id, secret)
+                .unwrap()
+                .recipient_id,
             "recipient_2"
         );
     }
@@ -4891,7 +7920,7 @@ mod tests {
         let recipient_name = "John Doe";
         let document_name = "contract.pdf";
         let signed_at = "2025-01-15T11:00:00Z";
-        let download_link = "https://getsignatures.org/download/sess_123";
+        let download_link = "https://api.getsignatures.org/session/sess_123/download";
 
         let email_body = format_completion_notification_email(
             recipient_name,
@@ -4968,7 +7997,7 @@ mod tests {
         let recipients = vec![alice, bob];
 
         let document_name = "contract.pdf";
-        let download_link = "https://getsignatures.org/download/sess_123";
+        let download_link = "https://api.getsignatures.org/session/sess_123/download";
 
         // This will fail because the function doesn't exist yet
         let email_body =

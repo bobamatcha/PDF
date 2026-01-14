@@ -51,8 +51,8 @@ struct ResendErrorResponse {
     name: Option<String>,
     #[serde(default)]
     message: Option<String>,
-    #[serde(default)]
-    statusCode: Option<u16>,
+    #[serde(default, rename = "statusCode")]
+    status_code: Option<u16>,
 }
 
 /// Resend API endpoint

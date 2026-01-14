@@ -28,5 +28,10 @@ getrandom = { version = "0.2", features = ["js"] }
 urlencoding = "2"
 hex = "0.4"
 
+# PDF manipulation for merge-on-demand (apply annotations server-side)
+lopdf = { workspace = true }
+png = "0.17"
+flate2 = "1.0"
+
 [dev-dependencies]
 proptest = { workspace = true }

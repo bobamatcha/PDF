@@ -787,7 +787,7 @@ pub async fn handle_logout(req: Request, env: Env) -> Result<Response> {
 
     // Try to invalidate the session (best effort)
     if let Ok(claims) = validate_access_token(&token, &jwt_secret) {
-        let sessions_kv = env.kv("AUTH_SESSIONS")?;
+        let _sessions_kv = env.kv("AUTH_SESSIONS")?;
         // We don't have direct session ID from access token, but we log it
         console_log!("User logged out: {}", claims.email);
     }

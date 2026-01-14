@@ -1277,25 +1277,36 @@
 
     <!-- Decline Modal -->
     <div id="decline-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="decline-modal-title" aria-describedby="decline-modal-desc">
-        <div class="modal">
+        <div class="modal" style="max-width: 450px;">
             <div class="modal-header">
                 <h3 id="decline-modal-title">Decline to Sign</h3>
                 <button class="modal-close" id="close-decline-modal" aria-label="Close decline dialog">&times;</button>
             </div>
             <div class="modal-body">
                 <p id="decline-modal-desc" style="margin-bottom: 1rem; color: var(--text-secondary);">
-                    Are you sure you want to decline this document? The sender will be notified.
+                    The sender will be notified of your decision. Other signers will be blocked until the sender revises or discards this document.
                 </p>
-                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 500;">
-                    Reason (optional):
+
+                <!-- Reason field - more prominent -->
+                <label for="decline-reason" style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--text-primary);">
+                    Reason for declining (helps the sender understand):
                 </label>
                 <textarea
                     id="decline-reason"
-                    rows="4"
-                    placeholder="Provide a reason for declining (optional)"
-                    aria-label="Reason for declining document (optional)"
-                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical;"
+                    rows="3"
+                    placeholder="e.g., Incorrect information in section 3, Need to discuss terms first..."
+                    aria-label="Reason for declining document"
+                    style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; font-family: inherit; resize: vertical; margin-bottom: 1rem;"
                 ></textarea>
+
+                <!-- Encourage direct contact -->
+                <div id="decline-sender-contact" style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem;">
+                    <p style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">Consider contacting the sender directly</p>
+                    <p style="font-size: 0.875rem; color: var(--text-secondary);">
+                        <strong id="decline-sender-name-text">The sender</strong><br>
+                        <a id="decline-sender-email-link" href="#" style="color: var(--accent-primary);"></a>
+                    </p>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="cancel-decline" class="btn btn-secondary">Cancel</button>

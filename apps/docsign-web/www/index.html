@@ -1047,6 +1047,47 @@
 
         .hidden { display: none !important; }
 
+        /* Modern button loading states (2026 UX best practices) */
+        .btn-loading {
+            position: relative;
+            pointer-events: none;
+            opacity: 0.85;
+        }
+
+        .btn-loading .btn-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: btn-spin 0.75s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        .btn-success-state {
+            background-color: #10b981 !important;
+            border-color: #059669 !important;
+        }
+
+        .btn-success-state .btn-spinner {
+            animation: none;
+            border: none;
+            width: auto;
+            height: auto;
+        }
+
+        .btn-success-state .btn-spinner::after {
+            content: '\2713';
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        @keyframes btn-spin {
+            to { transform: rotate(360deg); }
+        }
+
         /* Screen reader only - visually hidden but accessible */
         .sr-only {
             position: absolute;
@@ -1137,6 +1178,7 @@
 
         .template-item {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: center;
             padding: 0.75rem;
@@ -1151,6 +1193,7 @@
 
         .template-info {
             flex: 1;
+            min-width: 150px;
         }
 
         .template-name {
@@ -1195,6 +1238,64 @@
 
         .template-actions .btn-delete:hover {
             background: #fef2f2;
+        }
+
+        .template-actions .btn-preview {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.75rem;
+            background: white;
+            color: #6b7280;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .template-actions .btn-preview:hover {
+            background: #f9fafb;
+            border-color: #9ca3af;
+        }
+
+        .template-preview-content {
+            width: 100%;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border-primary);
+        }
+
+        .template-preview-content.hidden {
+            display: none;
+        }
+
+        .template-preview-summary {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .template-preview-summary .preview-section {
+            margin-bottom: 0.5rem;
+        }
+
+        .template-preview-summary .preview-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .field-type-badge {
+            display: inline-block;
+            background: var(--bg-tertiary);
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+            margin-right: 0.25rem;
+            font-size: 0.7rem;
+        }
+
+        .preview-empty, .preview-error {
+            color: #9ca3af;
+            font-style: italic;
+            padding: 0.5rem 0;
+        }
+
+        .preview-error {
+            color: #ef4444;
         }
 
         .empty-state {
@@ -2062,6 +2163,16 @@
             </button>
         </div>
 
+        <!-- Sent/Inbox Tabs -->
+        <div id="dashboard-tabs" style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border-primary);">
+            <button id="tab-sent" class="dashboard-tab active" onclick="switchDashboardTab('sent')" style="padding: 0.75rem 1.5rem; font-size: 0.875rem; font-weight: 600; background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; color: var(--text-primary);">
+                Sent <span id="sent-tab-count" style="font-weight: 400; color: var(--text-secondary);"></span>
+            </button>
+            <button id="tab-inbox" class="dashboard-tab" onclick="switchDashboardTab('inbox')" style="padding: 0.75rem 1.5rem; font-size: 0.875rem; font-weight: 600; background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; color: var(--text-secondary);">
+                Inbox <span id="inbox-tab-count" style="font-weight: 400; color: var(--text-secondary);"></span>
+            </button>
+        </div>
+
         <div id="dashboard-loading" style="text-align: center; padding: 3rem;">
             <div class="spinner" style="margin: 0 auto 1rem;"></div>
             <p style="color: var(--text-secondary);">Loading your documents...</p>
@@ -2078,7 +2189,20 @@
             <button class="btn btn-primary" onclick="toggleDashboard()">Create Document</button>
         </div>
 
-        <div id="dashboard-content" class="hidden">
+        <!-- SENT Content -->
+        <div id="dashboard-content-sent" class="hidden">
+            <!-- Needs Action Section (declined docs - shown first with alert styling) -->
+            <div id="dashboard-needs-action" class="hidden" style="margin-bottom: 2rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; padding: 1rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: #dc2626; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.25rem;">!</span> Needs Action
+                    <span id="needs-action-count" style="font-weight: 400; color: #7f1d1d; font-size: 0.875rem;"></span>
+                </h3>
+                <p style="font-size: 0.875rem; color: #7f1d1d; margin-bottom: 1rem;">
+                    These documents were declined and need to be revised or discarded.
+                </p>
+                <div id="needs-action-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
             <!-- In Progress Section -->
             <div id="dashboard-in-progress" class="hidden" style="margin-bottom: 2rem;">
                 <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #f59e0b;">
@@ -2097,15 +2221,6 @@
                 <div id="completed-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
             </div>
 
-            <!-- Declined Section -->
-            <div id="dashboard-declined" class="hidden" style="margin-bottom: 2rem;">
-                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #ef4444;">
-                    <span style="color: #ef4444;">●</span> Declined
-                    <span id="declined-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
-                </h3>
-                <div id="declined-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
-            </div>
-
             <!-- Expired Section -->
             <div id="dashboard-expired" class="hidden" style="margin-bottom: 2rem;">
                 <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #6b7280;">
@@ -2114,8 +2229,72 @@
                 </h3>
                 <div id="expired-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
             </div>
+
+            <!-- Voided Section -->
+            <div id="dashboard-voided" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #9ca3af;">
+                    <span style="color: #9ca3af;">●</span> Voided
+                    <span id="voided-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="voided-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+        </div>
+
+        <!-- INBOX Content -->
+        <div id="dashboard-content-inbox" class="hidden">
+            <!-- To Sign Section -->
+            <div id="dashboard-to-sign" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #3b82f6;">
+                    <span style="color: #3b82f6;">●</span> Awaiting Your Signature
+                    <span id="to-sign-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="to-sign-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <!-- Inbox Completed Section -->
+            <div id="dashboard-inbox-completed" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #10b981;">
+                    <span style="color: #10b981;">●</span> You Signed
+                    <span id="inbox-completed-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="inbox-completed-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
+
+            <!-- Inbox Declined Section -->
+            <div id="dashboard-inbox-declined" class="hidden" style="margin-bottom: 2rem;">
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #ef4444;">
+                    <span style="color: #ef4444;">●</span> You Declined
+                    <span id="inbox-declined-count" style="font-weight: 400; color: var(--text-secondary); font-size: 0.875rem;"></span>
+                </h3>
+                <div id="inbox-declined-list" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+            </div>
         </div>
     </section>
+
+    <!-- Document Preview Modal -->
+    <div id="doc-preview-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="doc-preview-title">
+        <div class="modal" style="max-width: 900px; width: 95vw; height: 90vh; display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-primary);">
+                <h3 id="doc-preview-title" style="font-size: 1.125rem; font-weight: 600; margin: 0;">Document Preview</h3>
+                <button onclick="closeDocPreview()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">&times;</button>
+            </div>
+            <div id="doc-preview-content" style="flex: 1; overflow: auto; padding: 1rem; display: flex; justify-content: center; align-items: flex-start; background: var(--bg-tertiary);">
+                <div id="doc-preview-loading" style="text-align: center; padding: 3rem;">
+                    <div class="spinner" style="margin: 0 auto 1rem;"></div>
+                    <p style="color: var(--text-secondary);">Loading document...</p>
+                </div>
+                <canvas id="doc-preview-canvas" style="max-width: 100%; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></canvas>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.5rem; border-top: 1px solid var(--border-primary);">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <button id="doc-preview-prev" class="btn btn-secondary" onclick="previewPrevPage()" style="padding: 0.5rem 1rem;">← Prev</button>
+                    <span id="doc-preview-page-info" style="font-size: 0.875rem; color: var(--text-secondary);">Page 1 of 1</span>
+                    <button id="doc-preview-next" class="btn btn-secondary" onclick="previewNextPage()" style="padding: 0.5rem 1rem;">Next →</button>
+                </div>
+                <button id="doc-preview-download" class="btn btn-primary" onclick="downloadPreviewDoc()">Download PDF</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Footer Actions -->
     <footer class="footer-actions" role="contentinfo">
@@ -2235,8 +2414,9 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="btn-send-emails" class="btn btn-primary" onclick="sendSigningEmails()">
-                    Send Signing Requests
+                <button id="btn-send-emails" class="btn btn-primary" onclick="sendSigningEmails()" aria-live="polite">
+                    <span class="btn-spinner" style="display: none;"></span>
+                    <span class="btn-text">Send Signing Requests</span>
                 </button>
                 <button class="btn btn-secondary" onclick="closeSigningLinksModal()">Cancel</button>
             </div>
@@ -3312,9 +3492,11 @@
         }
 
         // File Upload
-        // Constants for validation (Bug #1 - matches docsign-core/validation.rs)
-        const MAX_PDF_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
-        const MAX_PDF_SIZE_MB = 100;
+        // Constants for validation - must match backend MAX_PDF_SIZE in lib.rs (10MB)
+        const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB - matches backend
+        const MAX_PDF_SIZE_MB = 10;
+        // Warning threshold for multi-signer scenarios (signatures add overhead)
+        const PDF_SIZE_WARNING_BYTES = 7 * 1024 * 1024; // 7 MB
 
         async function loadPDF(file) {
             try {
@@ -3333,6 +3515,12 @@
                         alert(`PDF is too large (${sizeMB}MB). Maximum size is ${MAX_PDF_SIZE_MB}MB.`);
                     }
                     return;
+                }
+
+                // Warning for large PDFs that might have issues with many signers
+                if (file.size > PDF_SIZE_WARNING_BYTES) {
+                    const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                    showToast(`Note: This ${sizeMB}MB PDF is near the size limit. If you have many signers, consider compressing it.`, 5000);
                 }
 
                 elements.loadingOverlay.classList.remove('hidden');
@@ -5493,9 +5681,7 @@
             document.getElementById('settings-modal').classList.remove('hidden');
         }
 
-        function closeSettingsModal() {
-            document.getElementById('settings-modal').classList.add('hidden');
-        }
+        // closeSettingsModal already defined above - removed duplicate
 
         // Plan & Usage functions (Bug #6.3)
         function updatePlanUsage(user) {
@@ -6451,7 +6637,7 @@
 
         function escapeHtml(text) {
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = text || '';
             return div.innerHTML;
         }
 
@@ -6686,40 +6872,45 @@
             }
 
             try {
-                // Convert placed fields to percentage-based positions
+                // Convert placed fields to API format (percentage-based with snake_case)
                 const templateFields = state.placedFields.map(field => {
                     const pageDims = state.pageDimensions[field.page];
                     const canvasWidth = pageDims?.canvasWidth || 800;
                     const canvasHeight = pageDims?.canvasHeight || 1000;
 
+                    // Find recipient index (0-based)
+                    const recipientIndex = state.recipients.findIndex(r => r.id === field.recipientId);
+
                     return {
-                        type: field.type,
+                        field_type: field.type,
+                        recipient_index: recipientIndex >= 0 ? recipientIndex : 0,
                         page: field.page,
-                        xPercent: (field.x / canvasWidth) * 100,
-                        yPercent: (field.y / canvasHeight) * 100,
-                        widthPercent: (field.width / canvasWidth) * 100,
-                        heightPercent: (field.height / canvasHeight) * 100,
-                        value: field.value || '',
-                        checked: field.checked || false,
+                        x_percent: (field.x / canvasWidth) * 100,
+                        y_percent: (field.y / canvasHeight) * 100,
+                        width_percent: (field.width / canvasWidth) * 100,
+                        height_percent: (field.height / canvasHeight) * 100,
                         required: field.required || false
                     };
                 });
 
-                const template = {
-                    name,
-                    fields: templateFields,
-                    fieldCount: templateFields.length,
-                    createdAt: new Date().toISOString()
-                };
+                // Check if user is authenticated
+                if (!window.DocSign || !window.DocSign.authenticatedFetch) {
+                    showToast('Please sign in to save templates');
+                    return;
+                }
 
-                // Store in IndexedDB using the same storage API
-                const templateId = `template_${Date.now()}`;
-                await state.storage.store_draft(templateId, JSON.stringify(template));
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/templates`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, fields: templateFields })
+                });
 
-                // Keep track of template IDs in localStorage
-                const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
-                templates.push({ id: templateId, name, createdAt: template.createdAt });
-                localStorage.setItem('fieldTemplates', JSON.stringify(templates));
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.message || 'Failed to save template');
+                }
+
+                const result = await response.json();
 
                 closeSaveTemplateModal();
                 showToast(`Template "${name}" saved`);
@@ -6740,51 +6931,75 @@
 
         async function renderTemplateList() {
             const templateList = document.getElementById('template-list');
-            const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
 
-            if (templates.length === 0) {
-                templateList.innerHTML = '<div class="empty-state">No templates saved yet</div>';
+            // Check if user is authenticated
+            if (!window.DocSign?.authenticatedFetch) {
+                templateList.innerHTML = '<div class="empty-state">Sign in to use templates</div>';
                 return;
             }
 
-            const templateItems = await Promise.all(templates.map(async (tmpl) => {
-                try {
-                    const templateJson = await state.storage.get_draft(tmpl.id);
-                    if (!templateJson) return null;
+            try {
+                templateList.innerHTML = '<div class="loading-state">Loading templates...</div>';
 
-                    const template = JSON.parse(templateJson);
-                    const createdDate = new Date(template.createdAt).toLocaleDateString();
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/templates`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch templates');
+                }
 
+                const data = await response.json();
+                const templates = data.templates || [];
+
+                if (templates.length === 0) {
+                    templateList.innerHTML = '<div class="empty-state">No templates saved yet</div>';
+                    return;
+                }
+
+                const templateItems = templates.map(template => {
+                    const createdDate = new Date(template.created_at).toLocaleDateString();
                     return `
-                        <li class="template-item" data-template-id="${tmpl.id}">
+                        <li class="template-item" data-template-id="${template.id}">
                             <div class="template-info">
                                 <div class="template-name">${template.name}</div>
-                                <div class="template-meta">${template.fieldCount} fields &bull; ${createdDate}</div>
+                                <div class="template-meta">${template.field_count} fields &bull; ${createdDate}</div>
                             </div>
                             <div class="template-actions">
-                                <button class="btn-load" onclick="loadTemplate('${tmpl.id}')">Load</button>
-                                <button class="btn-delete" onclick="deleteTemplate('${tmpl.id}')">Delete</button>
+                                <button class="btn-preview" onclick="previewTemplate('${template.id}')">Preview</button>
+                                <button class="btn-load" onclick="loadTemplate('${template.id}')">Load</button>
+                                <button class="btn-delete" onclick="deleteTemplate('${template.id}')">Delete</button>
                             </div>
+                            <div class="template-preview-content hidden" id="template-preview-${template.id}"></div>
                         </li>
                     `;
-                } catch (err) {
-                    console.error('Error rendering template:', err);
-                    return null;
-                }
-            }));
+                });
 
-            templateList.innerHTML = templateItems.filter(item => item !== null).join('');
+                templateList.innerHTML = templateItems.join('');
+            } catch (err) {
+                console.error('Error loading templates:', err);
+                templateList.innerHTML = '<div class="empty-state error">Failed to load templates</div>';
+            }
         }
 
         async function loadTemplate(templateId) {
             try {
-                const templateJson = await state.storage.get_draft(templateId);
-                if (!templateJson) {
-                    showToast('Template not found');
+                // Check if user is authenticated
+                if (!window.DocSign?.authenticatedFetch) {
+                    showToast('Sign in to use templates');
                     return;
                 }
 
-                const template = JSON.parse(templateJson);
+                // Fetch template from API
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/templates/${templateId}`);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        showToast('Template not found');
+                    } else {
+                        showToast('Failed to load template');
+                    }
+                    return;
+                }
+
+                const data = await response.json();
+                const template = data.template;
 
                 if (!template.fields || template.fields.length === 0) {
                     showToast('Template has no fields');
@@ -6799,6 +7014,7 @@
                 }
 
                 // Convert percentage-based positions back to absolute positions
+                // API uses snake_case field names
                 const newFields = template.fields.map(tmplField => {
                     const pageDims = state.pageDimensions[tmplField.page];
                     if (!pageDims) {
@@ -6811,15 +7027,15 @@
 
                     return {
                         id: Date.now() + Math.random(),
-                        type: tmplField.type,
+                        type: tmplField.field_type,
                         recipientId,
                         page: tmplField.page,
-                        x: (tmplField.xPercent / 100) * canvasWidth,
-                        y: (tmplField.yPercent / 100) * canvasHeight,
-                        width: (tmplField.widthPercent / 100) * canvasWidth,
-                        height: (tmplField.heightPercent / 100) * canvasHeight,
-                        value: tmplField.value || '',
-                        checked: tmplField.checked || false,
+                        x: (tmplField.x_percent / 100) * canvasWidth,
+                        y: (tmplField.y_percent / 100) * canvasHeight,
+                        width: (tmplField.width_percent / 100) * canvasWidth,
+                        height: (tmplField.height_percent / 100) * canvasHeight,
+                        value: '',
+                        checked: false,
                         required: tmplField.required !== undefined ? tmplField.required : true
                     };
                 }).filter(f => f !== null);
@@ -6842,10 +7058,25 @@
             }
 
             try {
-                // Remove from localStorage
-                const templates = JSON.parse(localStorage.getItem('fieldTemplates') || '[]');
-                const updated = templates.filter(t => t.id !== templateId);
-                localStorage.setItem('fieldTemplates', JSON.stringify(updated));
+                // Check if user is authenticated
+                if (!window.DocSign?.authenticatedFetch) {
+                    showToast('Sign in to manage templates');
+                    return;
+                }
+
+                // Delete via API
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/templates/${templateId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        showToast('Template not found');
+                    } else {
+                        showToast('Failed to delete template');
+                    }
+                    return;
+                }
 
                 showToast('Template deleted');
                 await renderTemplateList();
@@ -6855,12 +7086,99 @@
             }
         }
 
+        async function previewTemplate(templateId) {
+            const previewEl = document.getElementById(`template-preview-${templateId}`);
+            if (!previewEl) return;
+
+            // Toggle visibility - if already showing, hide it
+            if (!previewEl.classList.contains('hidden')) {
+                previewEl.classList.add('hidden');
+                return;
+            }
+
+            // Check if user is authenticated
+            if (!window.DocSign?.authenticatedFetch) {
+                showToast('Sign in to preview templates');
+                return;
+            }
+
+            try {
+                previewEl.innerHTML = '<div class="loading-state">Loading preview...</div>';
+                previewEl.classList.remove('hidden');
+
+                // Fetch template details from API
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/templates/${templateId}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch template');
+                }
+
+                const data = await response.json();
+                const template = data.template;
+
+                if (!template.fields || template.fields.length === 0) {
+                    previewEl.innerHTML = '<div class="preview-empty">No fields in this template</div>';
+                    return;
+                }
+
+                // Group fields by type and page
+                const fieldsByType = {};
+                const fieldsByPage = {};
+                template.fields.forEach(field => {
+                    // Count by type
+                    const type = field.field_type || 'unknown';
+                    fieldsByType[type] = (fieldsByType[type] || 0) + 1;
+
+                    // Count by page
+                    const page = field.page || 1;
+                    fieldsByPage[page] = (fieldsByPage[page] || 0) + 1;
+                });
+
+                // Build summary HTML
+                const typeLabels = {
+                    signature: 'Signature',
+                    initials: 'Initials',
+                    date: 'Date',
+                    text: 'Text',
+                    checkbox: 'Checkbox',
+                    name: 'Name',
+                    email: 'Email'
+                };
+
+                const typeSummary = Object.entries(fieldsByType)
+                    .map(([type, count]) => `<span class="field-type-badge">${typeLabels[type] || type}: ${count}</span>`)
+                    .join(' ');
+
+                const pageSummary = Object.entries(fieldsByPage)
+                    .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+                    .map(([page, count]) => `Page ${page}: ${count} field${count > 1 ? 's' : ''}`)
+                    .join(', ');
+
+                previewEl.innerHTML = `
+                    <div class="template-preview-summary">
+                        <div class="preview-section">
+                            <strong>Field Types:</strong> ${typeSummary}
+                        </div>
+                        <div class="preview-section">
+                            <strong>Distribution:</strong> ${pageSummary}
+                        </div>
+                        <div class="preview-section">
+                            <strong>Total:</strong> ${template.fields.length} fields across ${Object.keys(fieldsByPage).length} page${Object.keys(fieldsByPage).length > 1 ? 's' : ''}
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                console.error('Failed to preview template:', err);
+                previewEl.innerHTML = '<div class="preview-error">Failed to load preview</div>';
+            }
+        }
+
         // Expose template functions to window for onclick handlers
         window.closeSaveTemplateModal = closeSaveTemplateModal;
         window.saveTemplate = saveTemplate;
         window.closeLoadTemplateModal = closeLoadTemplateModal;
         window.loadTemplate = loadTemplate;
         window.deleteTemplate = deleteTemplate;
+        window.previewTemplate = previewTemplate;
 
         // Signing Links Generation
         async function generateSigningLinks() {
@@ -6964,6 +7282,17 @@
                         return;
                     }
                     throw new Error(errorData.message || 'Rate limit exceeded. Please try again later.');
+                }
+
+                // Handle 413 (Payload Too Large) - PDF exceeds backend limit
+                if (response.status === 413) {
+                    const errorData = await response.json().catch(() => ({}));
+                    const sizeMB = state.pdfData ? (state.pdfData.length * 0.75 / (1024 * 1024)).toFixed(1) : 'unknown';
+                    console.error('PDF too large:', { sizeMB, maxSize: MAX_PDF_SIZE_MB });
+
+                    // Show a helpful error with compression suggestions
+                    const errorMsg = `This PDF (${sizeMB}MB) exceeds the ${MAX_PDF_SIZE_MB}MB limit.\n\nTry compressing it with:\n• SmallPDF.com\n• Adobe Acrobat (Reduce File Size)\n• iLovePDF.com`;
+                    throw new Error(errorMsg);
                 }
 
                 // Bug #0: Better error handling - parse JSON for error details
@@ -7070,8 +7399,24 @@
             }
 
             const sendBtn = document.getElementById('btn-send-emails');
+            const spinner = sendBtn.querySelector('.btn-spinner');
+            const btnText = sendBtn.querySelector('.btn-text');
+
+            // Helper to reset button state
+            const resetButton = () => {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('btn-loading', 'btn-success-state');
+                spinner.style.display = 'none';
+                btnText.textContent = 'Send Signing Requests';
+                sendBtn.setAttribute('aria-busy', 'false');
+            };
+
+            // START LOADING STATE - spinner left of text (2026 UX best practice)
             sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
+            sendBtn.classList.add('btn-loading');
+            spinner.style.display = 'inline-block';
+            btnText.textContent = 'Sending...';
+            sendBtn.setAttribute('aria-busy', 'true');
 
             try {
                 // Prepare invitations data
@@ -7107,11 +7452,13 @@
 
                 const result = await response.json();
 
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'Send Emails';
-
                 if (result.success) {
-                    showToast(`Emails sent to ${invitations.length} signer(s)`);
+                    // SUCCESS STATE - show checkmark animation (per Nielsen Norman Group)
+                    sendBtn.classList.remove('btn-loading');
+                    sendBtn.classList.add('btn-success-state');
+                    btnText.textContent = 'Sent!';
+                    sendBtn.setAttribute('aria-busy', 'false');
+
                     addAuditEntry(`Signing invitations sent to ${invitations.length} recipient(s)`);
 
                     // Show rate limit info if available
@@ -7119,18 +7466,29 @@
                         showRateLimitInfo(result.remaining_today, result.remaining_month);
                     }
 
-                    // Close modal after successful send
-                    setTimeout(() => {
+                    // Brief success display, then navigate to dashboard
+                    setTimeout(async () => {
+                        resetButton();
                         closeSigningLinksModal();
-                    }, 2000);
+
+                        // Reset document state to prevent re-sends
+                        state.currentSessionId = null;
+                        state.signingLinks = [];
+
+                        // Navigate to dashboard (Sent tab) to show the sent document
+                        dashboardVisible = false;
+                        await toggleDashboard();
+                        switchDashboardTab('sent');
+
+                        showToast('Document sent! View it in My Documents.');
+                    }, 1500);
                 } else {
                     throw new Error(result.message || 'Failed to send invitations');
                 }
 
             } catch (err) {
                 console.error('Failed to send emails:', err);
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'Send Emails';
+                resetButton();
 
                 const errorDiv = document.getElementById('signing-links-error');
                 if (errorDiv) {
@@ -7199,17 +7557,31 @@
             }
         }
 
+        // Dashboard state
+        let dashboardData = null;
+        let currentDashboardTab = 'sent';
+        const thumbnailCache = new Map();
+
+        // Document preview state
+        let previewDoc = null;
+        let previewCurrentPage = 1;
+        let previewTotalPages = 1;
+        let previewSessionId = null;
+        let previewPdfBytes = null;
+
         async function loadDashboard() {
             const loadingEl = document.getElementById('dashboard-loading');
             const errorEl = document.getElementById('dashboard-error');
             const emptyEl = document.getElementById('dashboard-empty');
-            const contentEl = document.getElementById('dashboard-content');
+            const sentContent = document.getElementById('dashboard-content-sent');
+            const inboxContent = document.getElementById('dashboard-content-inbox');
 
             // Show loading, hide others
             loadingEl.classList.remove('hidden');
             errorEl.classList.add('hidden');
             emptyEl.classList.add('hidden');
-            contentEl.classList.add('hidden');
+            sentContent.classList.add('hidden');
+            inboxContent.classList.add('hidden');
 
             try {
                 const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/my-sessions`, {
@@ -7222,26 +7594,31 @@
                     throw new Error(errorData.message || `Server error: ${response.status}`);
                 }
 
-                const data = await response.json();
+                dashboardData = await response.json();
                 loadingEl.classList.add('hidden');
 
-                // Check if no documents
-                const totalDocs = (data.in_progress?.length || 0) +
-                                 (data.completed?.length || 0) +
-                                 (data.declined?.length || 0) +
-                                 (data.expired?.length || 0);
+                // Count documents in each section
+                const sentCount = (dashboardData.sent?.in_progress?.length || 0) +
+                                 (dashboardData.sent?.completed?.length || 0) +
+                                 (dashboardData.sent?.declined?.length || 0) +
+                                 (dashboardData.sent?.expired?.length || 0) +
+                                 (dashboardData.sent?.voided?.length || 0);
+                const inboxCount = (dashboardData.inbox?.to_sign?.length || 0) +
+                                  (dashboardData.inbox?.completed?.length || 0) +
+                                  (dashboardData.inbox?.declined?.length || 0);
+                const totalDocs = sentCount + inboxCount;
+
+                // Update tab counts
+                document.getElementById('sent-tab-count').textContent = sentCount > 0 ? `(${sentCount})` : '';
+                document.getElementById('inbox-tab-count').textContent = inboxCount > 0 ? `(${inboxCount})` : '';
 
                 if (totalDocs === 0) {
                     emptyEl.classList.remove('hidden');
                     return;
                 }
 
-                // Render documents
-                contentEl.classList.remove('hidden');
-                renderDocumentSection('in-progress', data.in_progress || [], 'pending');
-                renderDocumentSection('completed', data.completed || [], 'completed');
-                renderDocumentSection('declined', data.declined || [], 'declined');
-                renderDocumentSection('expired', data.expired || [], 'expired');
+                // Render based on current tab
+                renderDashboardTab(currentDashboardTab);
 
             } catch (err) {
                 console.error('Failed to load dashboard:', err);
@@ -7251,7 +7628,49 @@
             }
         }
 
-        function renderDocumentSection(sectionId, documents, statusType) {
+        function switchDashboardTab(tab) {
+            currentDashboardTab = tab;
+
+            // Update tab styles
+            document.getElementById('tab-sent').classList.toggle('active', tab === 'sent');
+            document.getElementById('tab-inbox').classList.toggle('active', tab === 'inbox');
+            document.getElementById('tab-sent').style.borderBottomColor = tab === 'sent' ? '#3b82f6' : 'transparent';
+            document.getElementById('tab-inbox').style.borderBottomColor = tab === 'inbox' ? '#3b82f6' : 'transparent';
+            document.getElementById('tab-sent').style.color = tab === 'sent' ? 'var(--text-primary)' : 'var(--text-secondary)';
+            document.getElementById('tab-inbox').style.color = tab === 'inbox' ? 'var(--text-primary)' : 'var(--text-secondary)';
+
+            renderDashboardTab(tab);
+        }
+
+        function renderDashboardTab(tab) {
+            const sentContent = document.getElementById('dashboard-content-sent');
+            const inboxContent = document.getElementById('dashboard-content-inbox');
+
+            if (tab === 'sent') {
+                sentContent.classList.remove('hidden');
+                inboxContent.classList.add('hidden');
+
+                if (dashboardData?.sent) {
+                    // Render "Needs Action" section first for declined docs (most urgent)
+                    renderDocumentSection('needs-action', dashboardData.sent.declined || [], 'declined', 'sent');
+                    renderDocumentSection('in-progress', dashboardData.sent.in_progress || [], 'pending', 'sent');
+                    renderDocumentSection('completed', dashboardData.sent.completed || [], 'completed', 'sent');
+                    renderDocumentSection('expired', dashboardData.sent.expired || [], 'expired', 'sent');
+                    renderDocumentSection('voided', dashboardData.sent.voided || [], 'voided', 'sent');
+                }
+            } else {
+                sentContent.classList.add('hidden');
+                inboxContent.classList.remove('hidden');
+
+                if (dashboardData?.inbox) {
+                    renderDocumentSection('to-sign', dashboardData.inbox.to_sign || [], 'to_sign', 'inbox');
+                    renderDocumentSection('inbox-completed', dashboardData.inbox.completed || [], 'completed', 'inbox');
+                    renderDocumentSection('inbox-declined', dashboardData.inbox.declined || [], 'declined', 'inbox');
+                }
+            }
+        }
+
+        function renderDocumentSection(sectionId, documents, statusType, source) {
             const sectionEl = document.getElementById(`dashboard-${sectionId}`);
             const listEl = document.getElementById(`${sectionId}-list`);
             const countEl = document.getElementById(`${sectionId}-count`);
@@ -7264,10 +7683,17 @@
             sectionEl.classList.remove('hidden');
             countEl.textContent = `(${documents.length})`;
 
-            listEl.innerHTML = documents.map(doc => renderDocumentCard(doc, statusType)).join('');
+            listEl.innerHTML = documents.map(doc => renderDocumentCard(doc, statusType, source)).join('');
+
+            // Load thumbnails after rendering (use source prefix for unique IDs)
+            documents.forEach(doc => {
+                if (doc.session_id) {
+                    loadThumbnail(doc.session_id, source);
+                }
+            });
         }
 
-        function renderDocumentCard(doc, statusType) {
+        function renderDocumentCard(doc, statusType, source) {
             const displayName = doc.document_alias || doc.filename;
             const contextDisplay = doc.signing_context ? `<div style="font-size: 0.75rem; color: var(--text-tertiary); margin-top: 0.25rem;">${escapeHtml(doc.signing_context)}</div>` : '';
 
@@ -7276,52 +7702,540 @@
                 : 0;
 
             const createdDate = new Date(doc.created_at).toLocaleDateString();
-            const expiresDate = new Date(doc.expires_at).toLocaleDateString();
+            const expiresDate = doc.expires_at ? new Date(doc.expires_at).toLocaleDateString() : '';
 
-            // Recipient status pills
-            const recipientPills = doc.recipients.map(r => {
-                const statusColor = r.signed ? '#10b981' : (statusType === 'declined' ? '#ef4444' : '#f59e0b');
-                const statusIcon = r.signed ? '✓' : (statusType === 'declined' ? '✗' : '○');
-                return `<span style="display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; background: ${statusColor}20; color: ${statusColor}; border-radius: 999px; font-size: 0.7rem; font-weight: 500;">${statusIcon} ${escapeHtml(r.name)}</span>`;
-            }).join(' ');
+            // Recipient status pills (for sent docs)
+            let recipientPills = '';
+            if (source === 'sent' && doc.recipients) {
+                recipientPills = doc.recipients.map(r => {
+                    const statusColor = r.signed ? '#10b981' : (statusType === 'declined' ? '#ef4444' : '#f59e0b');
+                    const statusIcon = r.signed ? '✓' : (statusType === 'declined' ? '✗' : '○');
+                    return `<span style="display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; background: ${statusColor}20; color: ${statusColor}; border-radius: 999px; font-size: 0.7rem; font-weight: 500;">${statusIcon} ${escapeHtml(r.name)}</span>`;
+                }).join(' ');
+            }
+
+            // For inbox items, show sender info
+            let senderInfo = '';
+            if (source === 'inbox' && doc.sender_email) {
+                senderInfo = `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">From: ${escapeHtml(doc.sender_email)}</div>`;
+            }
+
+            // My status for inbox items
+            let myStatus = '';
+            if (source === 'inbox' && doc.my_status) {
+                const statusColors = { pending: '#f59e0b', signed: '#10b981', declined: '#ef4444' };
+                const statusIcons = { pending: '○', signed: '✓', declined: '✗' };
+                const color = statusColors[doc.my_status] || '#6b7280';
+                const icon = statusIcons[doc.my_status] || '○';
+                myStatus = `<span style="display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; background: ${color}20; color: ${color}; border-radius: 999px; font-size: 0.7rem; font-weight: 500;">${icon} ${doc.my_status}</span>`;
+            }
+
+            // Action button based on status
+            let actionButton = '';
+            if (statusType === 'to_sign' && doc.signing_url) {
+                actionButton = `<a href="${doc.signing_url}" class="btn btn-primary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem;">Sign Now</a>`;
+            } else if (statusType === 'voided') {
+                // Voided documents show badge only, no actions
+                actionButton = `<span style="display: inline-flex; align-items: center; padding: 0.25rem 0.75rem; background: #9ca3af20; color: #6b7280; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">VOIDED</span>`;
+            } else if (statusType === 'declined' && source === 'sent') {
+                // Declined sent docs (Needs Action) get Preview + Revise/Restart + Discard buttons
+                const anyoneSigned = doc.recipients_signed > 0;
+                if (anyoneSigned) {
+                    // Some have signed before decline - show Restart option
+                    actionButton = `
+                        <button onclick="openDocPreview('${doc.session_id}')" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; margin-right: 0.5rem;">Preview</button>
+                        <button onclick="openRestartConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #f59e0b; color: white; border: none; border-radius: 6px; margin-right: 0.5rem;">Restart</button>
+                        <button onclick="openDiscardConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #ef4444; color: white; border: none; border-radius: 6px;">Discard</button>`;
+                } else {
+                    // No one signed - can revise
+                    actionButton = `
+                        <button onclick="openDocPreview('${doc.session_id}')" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; margin-right: 0.5rem;">Preview</button>
+                        <button onclick="openReviseConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #3b82f6; color: white; border: none; border-radius: 6px; margin-right: 0.5rem;">Revise</button>
+                        <button onclick="openDiscardConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #ef4444; color: white; border: none; border-radius: 6px;">Discard</button>`;
+                }
+            } else if (statusType === 'pending' && source === 'sent') {
+                // In-progress sent docs get Preview + Revise/Restart + Discard buttons
+                const anyoneSigned = doc.recipients_signed > 0;
+                if (anyoneSigned) {
+                    // Some have signed - show Revise & Restart option
+                    actionButton = `
+                        <button onclick="openDocPreview('${doc.session_id}')" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; margin-right: 0.5rem;">Preview</button>
+                        <button disabled title="Some signers have already signed" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; opacity: 0.5; cursor: not-allowed; margin-right: 0.5rem;">Revise</button>
+                        <button onclick="openRestartConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #f59e0b; color: white; border: none; border-radius: 6px; margin-right: 0.5rem;">Restart</button>
+                        <button onclick="openDiscardConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #ef4444; color: white; border: none; border-radius: 6px;">Discard</button>`;
+                } else {
+                    // No one has signed - full revision available
+                    actionButton = `
+                        <button onclick="openDocPreview('${doc.session_id}')" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; margin-right: 0.5rem;">Preview</button>
+                        <button onclick="openReviseConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #3b82f6; color: white; border: none; border-radius: 6px; margin-right: 0.5rem;">Revise</button>
+                        <button onclick="openDiscardConfirm('${doc.session_id}')" class="btn" style="padding: 0.375rem 0.75rem; font-size: 0.75rem; background: #ef4444; color: white; border: none; border-radius: 6px;">Discard</button>`;
+                }
+            } else if (statusType === 'completed' || source === 'sent') {
+                actionButton = `<button onclick="openDocPreview('${doc.session_id}')" class="btn btn-secondary" style="padding: 0.375rem 0.75rem; font-size: 0.75rem;">Preview</button>`;
+            }
 
             return `
-                <div style="padding: 1rem; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; transition: box-shadow 0.2s;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(displayName)}</div>
-                            ${contextDisplay}
-                            ${doc.document_alias ? `<div style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(doc.filename)}</div>` : ''}
+                <div style="display: flex; gap: 1rem; padding: 1rem; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 8px; transition: box-shadow 0.2s; cursor: pointer;" onclick="openDocPreview('${doc.session_id}')">
+                    <!-- Thumbnail (ID includes source to avoid duplicates between Sent/Inbox) -->
+                    <div id="thumb-${source}-${doc.session_id}" style="width: 80px; min-width: 80px; height: 100px; background: var(--bg-tertiary); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                        <div class="spinner" style="width: 24px; height: 24px; border-width: 2px;"></div>
+                    </div>
+
+                    <!-- Document Info -->
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(displayName)}</div>
+                                ${contextDisplay}
+                                ${doc.document_alias ? `<div style="font-size: 0.75rem; color: var(--text-tertiary);">${escapeHtml(doc.filename)}</div>` : ''}
+                                ${senderInfo}
+                            </div>
+                            <div style="text-align: right; font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; margin-left: 1rem;">
+                                <div>Created: ${createdDate}</div>
+                                ${expiresDate && statusType !== 'completed' ? `<div>Expires: ${expiresDate}</div>` : ''}
+                            </div>
                         </div>
-                        <div style="text-align: right; font-size: 0.75rem; color: var(--text-secondary);">
-                            <div>Created: ${createdDate}</div>
-                            ${statusType !== 'completed' ? `<div>Expires: ${expiresDate}</div>` : ''}
+                        ${recipientPills ? `<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;">${recipientPills}</div>` : ''}
+                        ${myStatus ? `<div style="margin-bottom: 0.5rem;">${myStatus}</div>` : ''}
+                        ${statusType === 'pending' && source === 'sent' ? `
+                            <div style="background: var(--bg-tertiary); border-radius: 4px; height: 6px; overflow: hidden; margin-bottom: 0.25rem;">
+                                <div style="background: #f59e0b; height: 100%; width: ${progressPercent}%; transition: width 0.3s;"></div>
+                            </div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">
+                                ${doc.recipients_signed} of ${doc.recipients_total} signed (${progressPercent}%)
+                            </div>
+                        ` : ''}
+                        <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;" onclick="event.stopPropagation()">
+                            ${actionButton}
                         </div>
                     </div>
-                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
-                        ${recipientPills}
-                    </div>
-                    ${statusType === 'pending' ? `
-                        <div style="background: var(--bg-tertiary); border-radius: 4px; height: 6px; overflow: hidden;">
-                            <div style="background: #f59e0b; height: 100%; width: ${progressPercent}%; transition: width 0.3s;"></div>
-                        </div>
-                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
-                            ${doc.recipients_signed} of ${doc.recipients_total} signed (${progressPercent}%)
-                        </div>
-                    ` : ''}
                 </div>
             `;
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text || '';
-            return div.innerHTML;
+        // Thumbnail loading with PDF.js
+        // source parameter ensures unique element IDs between Sent/Inbox tabs
+        async function loadThumbnail(sessionId, source = 'sent') {
+            const thumbEl = document.getElementById(`thumb-${source}-${sessionId}`);
+            if (!thumbEl) return;
+
+            // Check cache first (cache key is just sessionId since PDF is same)
+            if (thumbnailCache.has(sessionId)) {
+                thumbEl.innerHTML = `<img src="${thumbnailCache.get(sessionId)}" style="width: 100%; height: 100%; object-fit: cover;" alt="Document thumbnail">`;
+                return;
+            }
+
+            try {
+                // Fetch PDF from download endpoint (requires authentication)
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session/${sessionId}/download`);
+                if (!response.ok) {
+                    thumbEl.innerHTML = `<span style="font-size: 2rem;">📄</span>`;
+                    return;
+                }
+
+                const pdfBytes = await response.arrayBuffer();
+                const pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+                const page = await pdfDoc.getPage(1);
+
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = 80 / viewport.width;
+                const scaledViewport = page.getViewport({ scale });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = scaledViewport.width;
+                canvas.height = scaledViewport.height;
+
+                await page.render({
+                    canvasContext: canvas.getContext('2d'),
+                    viewport: scaledViewport
+                }).promise;
+
+                const thumbnailUrl = canvas.toDataURL('image/jpeg', 0.7);
+                thumbnailCache.set(sessionId, thumbnailUrl);
+
+                thumbEl.innerHTML = `<img src="${thumbnailUrl}" style="width: 100%; height: 100%; object-fit: cover;" alt="Document thumbnail">`;
+                pdfDoc.destroy();
+
+            } catch (err) {
+                console.error('Failed to load thumbnail:', err);
+                thumbEl.innerHTML = `<span style="font-size: 2rem;">📄</span>`;
+            }
+        }
+
+        // Document Preview Modal functions
+        async function openDocPreview(sessionId) {
+            const modal = document.getElementById('doc-preview-modal');
+            const loadingEl = document.getElementById('doc-preview-loading');
+            const canvas = document.getElementById('doc-preview-canvas');
+
+            modal.classList.remove('hidden');
+            loadingEl.style.display = 'block';
+            canvas.style.display = 'none';
+            previewSessionId = sessionId;
+            previewCurrentPage = 1;
+
+            try {
+                // Fetch PDF from download endpoint (requires authentication)
+                const response = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session/${sessionId}/download`);
+                if (!response.ok) throw new Error('Failed to fetch document');
+
+                previewPdfBytes = await response.arrayBuffer();
+                previewDoc = await pdfjsLib.getDocument({ data: previewPdfBytes }).promise;
+                previewTotalPages = previewDoc.numPages;
+
+                loadingEl.style.display = 'none';
+                canvas.style.display = 'block';
+
+                await renderPreviewPage(1);
+
+            } catch (err) {
+                console.error('Failed to load preview:', err);
+                loadingEl.innerHTML = `<p style="color: #ef4444;">Failed to load document preview</p>`;
+            }
+        }
+
+        async function renderPreviewPage(pageNum) {
+            if (!previewDoc) return;
+
+            const canvas = document.getElementById('doc-preview-canvas');
+            const page = await previewDoc.getPage(pageNum);
+
+            const containerWidth = document.getElementById('doc-preview-content').clientWidth - 32;
+            const viewport = page.getViewport({ scale: 1 });
+            const scale = Math.min(containerWidth / viewport.width, 1.5);
+            const scaledViewport = page.getViewport({ scale });
+
+            canvas.width = scaledViewport.width;
+            canvas.height = scaledViewport.height;
+
+            await page.render({
+                canvasContext: canvas.getContext('2d'),
+                viewport: scaledViewport
+            }).promise;
+
+            document.getElementById('doc-preview-page-info').textContent = `Page ${pageNum} of ${previewTotalPages}`;
+            document.getElementById('doc-preview-prev').disabled = pageNum <= 1;
+            document.getElementById('doc-preview-next').disabled = pageNum >= previewTotalPages;
+        }
+
+        function previewPrevPage() {
+            if (previewCurrentPage > 1) {
+                previewCurrentPage--;
+                renderPreviewPage(previewCurrentPage);
+            }
+        }
+
+        function previewNextPage() {
+            if (previewCurrentPage < previewTotalPages) {
+                previewCurrentPage++;
+                renderPreviewPage(previewCurrentPage);
+            }
+        }
+
+        function closeDocPreview() {
+            document.getElementById('doc-preview-modal').classList.add('hidden');
+            if (previewDoc) {
+                previewDoc.destroy();
+                previewDoc = null;
+            }
+            previewPdfBytes = null;
+            previewSessionId = null;
+        }
+
+        function downloadPreviewDoc() {
+            if (!previewPdfBytes || !previewSessionId) return;
+
+            const blob = new Blob([previewPdfBytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `document-${previewSessionId}.pdf`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Discard/Void Document Functions
+        function openDiscardConfirm(sessionId) {
+            // Create modal overlay
+            const modalOverlay = document.createElement('div');
+            modalOverlay.id = 'discard-modal-overlay';
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+            modalOverlay.innerHTML = `
+                <div class="modal" style="max-width: 400px; background: var(--bg-primary); border-radius: 12px; padding: 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                    <h2 style="color: #dc2626; margin: 0 0 1rem 0; font-size: 1.25rem;">Discard Document?</h2>
+                    <p style="margin-bottom: 1rem; color: var(--text-secondary); line-height: 1.5;">
+                        This will permanently cancel this signing request. All recipients will be notified
+                        and their signing links will no longer work.
+                    </p>
+                    <p style="font-weight: 600; margin-bottom: 1rem; color: var(--text-primary);">This cannot be undone.</p>
+
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary);">Reason (optional)</label>
+                    <textarea id="void-reason" rows="2" placeholder="e.g., Sending updated version..."
+                        style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; resize: vertical; font-family: inherit; background: var(--bg-secondary); color: var(--text-primary);"></textarea>
+
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.5rem;">
+                        <button onclick="closeDiscardModal()" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+                            Cancel
+                        </button>
+                        <button onclick="submitVoid('${sessionId}')" class="btn" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 6px;">
+                            Discard Document
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modalOverlay);
+        }
+
+        function closeDiscardModal() {
+            const modal = document.getElementById('discard-modal-overlay');
+            if (modal) modal.remove();
+        }
+
+        async function submitVoid(sessionId) {
+            const reasonEl = document.getElementById('void-reason');
+            const reason = reasonEl?.value.trim() || null;
+
+            // Disable button and show loading
+            const submitBtn = document.querySelector('#discard-modal-overlay button[onclick*="submitVoid"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Discarding...';
+            }
+
+            try {
+                const response = await window.DocSign.authenticatedFetch(
+                    `${SIGNING_SERVER_URL}/session/${sessionId}/void`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reason })
+                    }
+                );
+
+                if (response.ok) {
+                    showToast('Document discarded. All parties have been notified.', 'success');
+                    closeDiscardModal();
+                    loadDashboard(); // Refresh dashboard
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    showToast(errorData.message || 'Failed to discard document.', 'error');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Discard Document';
+                    }
+                }
+            } catch (err) {
+                console.error('Void error:', err);
+                showToast('Failed to discard document. Please try again.', 'error');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Discard Document';
+                }
+            }
+        }
+
+        // escapeHtml already defined above - removed duplicate
+
+        // Revise Document Functions
+        function openReviseConfirm(sessionId) {
+            const modalOverlay = document.createElement('div');
+            modalOverlay.id = 'revise-modal-overlay';
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+            modalOverlay.innerHTML = `
+                <div class="modal" style="max-width: 450px; background: var(--bg-primary); border-radius: 12px; padding: 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                    <h2 style="color: #3b82f6; margin: 0 0 1rem 0; font-size: 1.25rem;">Revise Document</h2>
+                    <p style="margin-bottom: 1rem; color: var(--text-secondary); line-height: 1.5;">
+                        Send updated invitations to all signers. Since no one has signed yet,
+                        previous signing links will be invalidated and new links will be sent.
+                    </p>
+
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary);">Message to signers (optional)</label>
+                    <textarea id="revise-message" rows="3" placeholder="e.g., Please note the updated terms in section 3..."
+                        style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; resize: vertical; font-family: inherit; background: var(--bg-secondary); color: var(--text-primary);"></textarea>
+
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.5rem;">
+                        <button onclick="closeReviseModal()" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+                            Cancel
+                        </button>
+                        <button onclick="submitRevise('${sessionId}')" class="btn" style="padding: 0.5rem 1rem; background: #3b82f6; color: white; border: none; border-radius: 6px;">
+                            Send Updated Invitations
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modalOverlay);
+        }
+
+        function closeReviseModal() {
+            const modal = document.getElementById('revise-modal-overlay');
+            if (modal) modal.remove();
+        }
+
+        async function submitRevise(sessionId) {
+            const messageEl = document.getElementById('revise-message');
+            const message = messageEl?.value.trim() || null;
+
+            const submitBtn = document.querySelector('#revise-modal-overlay button[onclick*="submitRevise"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Sending...';
+            }
+
+            try {
+                // Fetch current session to get fields
+                const sessionResp = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session/${sessionId}`);
+                if (!sessionResp.ok) throw new Error('Failed to fetch session');
+                const sessionData = await sessionResp.json();
+
+                const response = await window.DocSign.authenticatedFetch(
+                    `${SIGNING_SERVER_URL}/session/${sessionId}/revise`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fields: sessionData.fields || [],
+                            message: message
+                        })
+                    }
+                );
+
+                if (response.ok) {
+                    showToast('Document revised. New invitations sent to all signers.', 'success');
+                    closeReviseModal();
+                    loadDashboard();
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    showToast(errorData.message || 'Failed to revise document.', 'error');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Send Updated Invitations';
+                    }
+                }
+            } catch (err) {
+                console.error('Revise error:', err);
+                showToast('Failed to revise document. Please try again.', 'error');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Send Updated Invitations';
+                }
+            }
+        }
+
+        // Restart Document Functions (voids existing signatures)
+        function openRestartConfirm(sessionId) {
+            const modalOverlay = document.createElement('div');
+            modalOverlay.id = 'restart-modal-overlay';
+            modalOverlay.className = 'modal-overlay';
+            modalOverlay.style.cssText = 'position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+            modalOverlay.innerHTML = `
+                <div class="modal" style="max-width: 450px; background: var(--bg-primary); border-radius: 12px; padding: 1.5rem; box-shadow: 0 20px 50px rgba(0,0,0,0.3);">
+                    <h2 style="color: #f59e0b; margin: 0 0 1rem 0; font-size: 1.25rem;">Restart Document Signing</h2>
+
+                    <div style="background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                        <p style="margin: 0; color: #92400e; font-weight: 500;">
+                            ⚠️ This will void all existing signatures
+                        </p>
+                        <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem; color: #b45309;">
+                            All signers will need to sign again. They will receive new signing links.
+                        </p>
+                    </div>
+
+                    <p style="margin-bottom: 1rem; color: var(--text-secondary); line-height: 1.5;">
+                        Use this option when you need to make changes after some recipients have already signed.
+                    </p>
+
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500; color: var(--text-secondary);">Message to signers (optional)</label>
+                    <textarea id="restart-message" rows="3" placeholder="e.g., The document has been updated and requires new signatures..."
+                        style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-primary); border-radius: 6px; resize: vertical; font-family: inherit; background: var(--bg-secondary); color: var(--text-primary);"></textarea>
+
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1.5rem;">
+                        <button onclick="closeRestartModal()" class="btn btn-secondary" style="padding: 0.5rem 1rem;">
+                            Cancel
+                        </button>
+                        <button onclick="submitRestart('${sessionId}')" class="btn" style="padding: 0.5rem 1rem; background: #f59e0b; color: white; border: none; border-radius: 6px;">
+                            Restart & Send New Invitations
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modalOverlay);
+        }
+
+        function closeRestartModal() {
+            const modal = document.getElementById('restart-modal-overlay');
+            if (modal) modal.remove();
+        }
+
+        async function submitRestart(sessionId) {
+            const messageEl = document.getElementById('restart-message');
+            const message = messageEl?.value.trim() || null;
+
+            const submitBtn = document.querySelector('#restart-modal-overlay button[onclick*="submitRestart"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Restarting...';
+            }
+
+            try {
+                // Fetch current session to get fields
+                const sessionResp = await window.DocSign.authenticatedFetch(`${SIGNING_SERVER_URL}/session/${sessionId}`);
+                if (!sessionResp.ok) throw new Error('Failed to fetch session');
+                const sessionData = await sessionResp.json();
+
+                const response = await window.DocSign.authenticatedFetch(
+                    `${SIGNING_SERVER_URL}/session/${sessionId}/restart`,
+                    {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fields: sessionData.fields || [],
+                            message: message
+                        })
+                    }
+                );
+
+                if (response.ok) {
+                    showToast('Document restarted. All previous signatures voided. New invitations sent.', 'success');
+                    closeRestartModal();
+                    loadDashboard();
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    showToast(errorData.message || 'Failed to restart document.', 'error');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Restart & Send New Invitations';
+                    }
+                }
+            } catch (err) {
+                console.error('Restart error:', err);
+                showToast('Failed to restart document. Please try again.', 'error');
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Restart & Send New Invitations';
+                }
+            }
         }
 
         // Expose dashboard functions to window
         window.toggleDashboard = toggleDashboard;
         window.loadDashboard = loadDashboard;
+        window.switchDashboardTab = switchDashboardTab;
+        window.openDocPreview = openDocPreview;
+        window.closeDocPreview = closeDocPreview;
+        window.previewPrevPage = previewPrevPage;
+        window.previewNextPage = previewNextPage;
+        window.downloadPreviewDoc = downloadPreviewDoc;
+        window.openDiscardConfirm = openDiscardConfirm;
+        window.closeDiscardModal = closeDiscardModal;
+        window.submitVoid = submitVoid;
+        window.openReviseConfirm = openReviseConfirm;
+        window.closeReviseModal = closeReviseModal;
+        window.submitRevise = submitRevise;
+        window.openRestartConfirm = openRestartConfirm;
+        window.closeRestartModal = closeRestartModal;
+        window.submitRestart = submitRestart;
 
         // Remote Signing - Encryption/Decryption using Web Crypto
         const SIGNING_SERVER_URL = 'https://api.getsignatures.org';

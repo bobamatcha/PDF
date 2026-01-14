@@ -448,7 +448,7 @@ async fn create_stripe_customer(
         urlencoding::encode(user_id)
     );
 
-    let mut headers = Headers::new();
+    let headers = Headers::new();
     headers
         .set("Authorization", &format!("Bearer {}", api_key))
         .map_err(|e| e.to_string())?;
@@ -498,7 +498,7 @@ async fn create_checkout_session(
         urlencoding::encode(cancel_url)
     );
 
-    let mut headers = Headers::new();
+    let headers = Headers::new();
     headers
         .set("Authorization", &format!("Bearer {}", api_key))
         .map_err(|e| e.to_string())?;
@@ -543,7 +543,7 @@ async fn create_portal_session(
         urlencoding::encode(return_url)
     );
 
-    let mut headers = Headers::new();
+    let headers = Headers::new();
     headers
         .set("Authorization", &format!("Bearer {}", api_key))
         .map_err(|e| e.to_string())?;
