@@ -239,7 +239,7 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
 
     // Create user
     let user_id = generate_token();
-    let user = User::new(
+    let mut user = User::new(
         user_id.clone(),
         body.email.trim().to_lowercase(),
         password_hash,
@@ -247,6 +247,22 @@ pub async fn handle_register(mut req: Request, env: Env) -> Result<Response> {
         middle_initial,
         last_name.to_string(),
     );
+
+    // Check for pre-granted beta access
+    if let Ok(beta_kv) = env.kv("BETA_GRANTS") {
+        let grant_key = format!("grant:{}", user.email.to_lowercase());
+        if let Ok(Some(grant_str)) = beta_kv.get(&grant_key).text().await {
+            if let Ok(grant) = serde_json::from_str::<super::types::BetaGrant>(&grant_str) {
+                if !grant.revoked {
+                    // Apply pre-granted tier
+                    user.tier = grant.tier;
+                    user.grant_source = Some(super::types::GrantSource::PreGrant);
+                    user.granted_tier = Some(grant.tier);
+                    console_log!("Applied pre-grant for {}: {:?}", user.email, grant.tier);
+                }
+            }
+        }
+    }
 
     // Save user
     if let Err(e) = save_user(&users_kv, &user).await {

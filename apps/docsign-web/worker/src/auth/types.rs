@@ -92,6 +92,46 @@ pub enum BillingCycle {
     Annual,
 }
 
+// ============================================
+// Beta Access Grant System
+// ============================================
+
+/// Source of a user's tier (how they got their current tier)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantSource {
+    /// Paid via Stripe subscription
+    #[default]
+    Subscription,
+    /// Admin approved beta access request
+    BetaGrant,
+    /// Pre-granted before account creation
+    PreGrant,
+}
+
+/// Pre-grant record stored in BETA_GRANTS KV
+/// Allows admin to grant tier access to emails before they register
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BetaGrant {
+    /// Email address (lowercase normalized)
+    pub email: String,
+    /// Tier to grant (defaults to Professional)
+    pub tier: UserTier,
+    /// Admin email who created this grant
+    pub granted_by: String,
+    /// ISO timestamp when grant was created
+    pub granted_at: String,
+    /// Optional admin notes
+    #[serde(default)]
+    pub notes: Option<String>,
+    /// Whether grant has been revoked
+    #[serde(default)]
+    pub revoked: bool,
+    /// ISO timestamp when revoked (if applicable)
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+}
+
 /// User record stored in KV
 /// Bug #6: Expanded with 4-tier pricing and billing fields
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +199,15 @@ pub struct User {
     /// Pending name change request ID (if any)
     #[serde(default)]
     pub pending_name_change_request_id: Option<String>,
+    // ============================================
+    // Beta Access Grant System
+    // ============================================
+    /// Source of user's current tier (subscription, beta grant, pre-grant)
+    #[serde(default)]
+    pub grant_source: Option<GrantSource>,
+    /// Original granted tier (for display when tier was granted, not paid)
+    #[serde(default)]
+    pub granted_tier: Option<UserTier>,
 }
 
 impl User {
@@ -205,6 +254,9 @@ impl User {
             // Bug #7: Name change approval
             name_set,
             pending_name_change_request_id: None,
+            // Beta Access Grant System
+            grant_source: None,
+            granted_tier: None,
         }
     }
 
@@ -508,6 +560,11 @@ pub struct UserPublic {
     pub max_with_overage: u32,
     /// Billing cycle (monthly/annual)
     pub billing_cycle: BillingCycle,
+    /// Source of tier (subscription, beta_grant, pre_grant)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_source: Option<GrantSource>,
+    /// Whether user is on a beta/granted tier (not paying)
+    pub is_beta_user: bool,
     /// Backward compat: also include under old names
     #[serde(rename = "weekly_documents_remaining")]
     pub _weekly_documents_remaining: u32,
@@ -518,6 +575,10 @@ pub struct UserPublic {
 impl From<&User> for UserPublic {
     fn from(user: &User) -> Self {
         let remaining = user.documents_remaining();
+        let is_beta_user = matches!(
+            user.grant_source,
+            Some(GrantSource::BetaGrant) | Some(GrantSource::PreGrant)
+        );
         Self {
             id: user.id.clone(),
             email: user.email.clone(),
@@ -535,6 +596,8 @@ impl From<&User> for UserPublic {
             allows_overage: user.tier.allows_overage(),
             max_with_overage: user.tier.max_with_overage(),
             billing_cycle: user.billing_cycle,
+            grant_source: user.grant_source,
+            is_beta_user,
             _weekly_documents_remaining: remaining,
             _daily_documents_remaining: remaining,
         }
@@ -559,6 +622,8 @@ pub enum RequestType {
     Feedback,
     /// Name change request (Bug #7)
     NameChange,
+    /// Request for beta tester access
+    BetaAccess,
 }
 
 impl std::fmt::Display for RequestType {
@@ -569,6 +634,7 @@ impl std::fmt::Display for RequestType {
             Self::MoreDocuments => write!(f, "More Documents Request"),
             Self::Feedback => write!(f, "General Feedback"),
             Self::NameChange => write!(f, "Name Change Request"),
+            Self::BetaAccess => write!(f, "Beta Access Request"),
         }
     }
 }
@@ -791,10 +857,19 @@ pub struct AdminUserSummary {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_login_at: Option<String>,
+    /// Source of tier (subscription, beta_grant, pre_grant)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_source: Option<GrantSource>,
+    /// Whether user is on a beta/granted tier
+    pub is_beta_user: bool,
 }
 
 impl From<&User> for AdminUserSummary {
     fn from(user: &User) -> Self {
+        let is_beta_user = matches!(
+            user.grant_source,
+            Some(GrantSource::BetaGrant) | Some(GrantSource::PreGrant)
+        );
         Self {
             id: user.id.clone(),
             email: user.email.clone(),
@@ -805,6 +880,8 @@ impl From<&User> for AdminUserSummary {
             monthly_document_count: user.monthly_document_count,
             created_at: user.created_at.clone(),
             last_login_at: user.last_login_at.clone(),
+            grant_source: user.grant_source,
+            is_beta_user,
         }
     }
 }
@@ -833,6 +910,86 @@ pub struct AdminDeleteUserResponse {
     pub message: Option<String>,
 }
 
+// ============================================================================
+// Beta Access Grant Admin Types
+// ============================================================================
+
+/// Request to create a beta grant (admin action)
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdminCreateBetaGrantBody {
+    /// Email address to grant access to
+    pub email: String,
+    /// Tier to grant (defaults to Professional if not specified)
+    #[serde(default = "default_grant_tier")]
+    pub tier: UserTier,
+    /// Optional admin notes
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+fn default_grant_tier() -> UserTier {
+    UserTier::Professional
+}
+
+/// Response to creating a beta grant
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminCreateBetaGrantResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant: Option<BetaGrant>,
+    /// Whether user account already exists
+    pub user_exists: bool,
+    /// Whether user was upgraded (only if user_exists)
+    pub user_upgraded: bool,
+}
+
+/// Beta grant with status info for admin listing
+#[derive(Debug, Clone, Serialize)]
+pub struct BetaGrantWithStatus {
+    /// The grant record
+    #[serde(flatten)]
+    pub grant: BetaGrant,
+    /// Whether user account exists
+    pub user_exists: bool,
+    /// User ID if account exists
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// User's current tier (may differ from grant tier if they upgraded)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_tier: Option<UserTier>,
+}
+
+/// Response listing beta grants for admin
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminBetaGrantsListResponse {
+    pub success: bool,
+    pub grants: Vec<BetaGrantWithStatus>,
+    pub total: usize,
+    /// Count of active (non-revoked) grants
+    pub active_count: usize,
+}
+
+/// Response to revoking a beta grant
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminRevokeBetaGrantResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Whether user was downgraded (only if they had no subscription)
+    pub user_downgraded: bool,
+}
+
+/// Beta access request details (for BetaAccess request type)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BetaAccessRequestDetails {
+    /// Why the user wants beta access
+    pub reason: String,
+    /// Whether user agreed to help debug
+    pub agreed_to_help: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,6 +1004,7 @@ mod tests {
         );
         assert_eq!(RequestType::Feedback.to_string(), "General Feedback");
         assert_eq!(RequestType::NameChange.to_string(), "Name Change Request");
+        assert_eq!(RequestType::BetaAccess.to_string(), "Beta Access Request");
     }
 
     #[test]

@@ -35,6 +35,11 @@ id = "bfa8b86b600641b18c8b326b7245384b"
 binding = "AUTH_SESSIONS"
 id = "4eb009c51065436fb761c3b640400da3"
 
+# Beta access grants - stores pre-granted email access
+[[kv_namespaces]]
+binding = "BETA_GRANTS"
+id = "97d04bc8cbc64444aa3d0b253a2203e8"
+
 # Environment variables (non-secret)
 [vars]
 ALLOW_DUPLICATE_EMAILS = "false"

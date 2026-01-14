@@ -201,6 +201,9 @@ import {
   validateEmail,
   onAuthStateChange,
   initAuthNamespace,
+  // Class wrapper and API URL for HTML page imports
+  AuthManager,
+  API_BASE_URL,
 } from "./auth";
 import type {
   User,
@@ -305,6 +308,9 @@ export {
   validateEmail,
   onAuthStateChange,
   initAuthNamespace,
+  // Class wrapper and API URL for HTML page imports
+  AuthManager,
+  API_BASE_URL,
   // Loading overlay exports
   initLoadingOverlay,
   showLoadingOverlay,

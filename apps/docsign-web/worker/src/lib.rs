@@ -2067,6 +2067,28 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         }
 
         // ============================================
+        // Beta Access Grant endpoints (admin only)
+        // ============================================
+
+        // List all beta grants
+        (Method::Get, "/admin/beta-grants") => {
+            cors_response(handle_admin_list_beta_grants(req, env).await)
+        }
+
+        // Create a beta grant (pre-grant access to an email)
+        (Method::Post, "/admin/beta-grants") => {
+            cors_response(handle_admin_create_beta_grant(req, env).await)
+        }
+
+        // Revoke a beta grant
+        (Method::Delete, p) if p.starts_with("/admin/beta-grants/") => {
+            let email = p.strip_prefix("/admin/beta-grants/").unwrap_or("");
+            // URL decode the email (handles @ and other special chars)
+            let email = urlencoding::decode(email).unwrap_or_default().to_string();
+            cors_response(handle_admin_revoke_beta_grant(req, env, email).await)
+        }
+
+        // ============================================
         // Bug #6: Billing/Stripe endpoints
         // ============================================
 
@@ -3514,6 +3536,324 @@ async fn handle_admin_delete_user(req: Request, env: Env, user_id: String) -> Re
     })?)
 }
 
+// ============================================================================
+// Beta Access Grant Handlers
+// ============================================================================
+
+/// List all beta grants (admin only)
+async fn handle_admin_list_beta_grants(req: Request, env: Env) -> Result<Response> {
+    use auth::types::{AdminBetaGrantsListResponse, BetaGrant, BetaGrantWithStatus, User};
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let beta_kv = match env.kv("BETA_GRANTS") {
+        Ok(kv) => kv,
+        Err(_) => {
+            return Ok(Response::from_json(&AdminBetaGrantsListResponse {
+                success: true,
+                grants: vec![],
+                total: 0,
+                active_count: 0,
+            })?);
+        }
+    };
+
+    let users_kv = env.kv("USERS").ok();
+
+    // List all grant keys (prefix "grant:")
+    let list_result = beta_kv
+        .list()
+        .prefix("grant:".to_string())
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let mut grants: Vec<BetaGrantWithStatus> = Vec::new();
+    let mut active_count = 0;
+
+    for key in list_result.keys {
+        if let Ok(Some(grant_str)) = beta_kv.get(&key.name).text().await {
+            if let Ok(grant) = serde_json::from_str::<BetaGrant>(&grant_str) {
+                // Check if user exists
+                let (user_exists, user_id, current_tier) = if let Some(ref kv) = users_kv {
+                    let email_key = format!("user_email:{}", grant.email.to_lowercase());
+                    if let Ok(Some(uid)) = kv.get(&email_key).text().await {
+                        // Get user's current tier
+                        let user_key = format!("user:{}", uid);
+                        let tier = if let Ok(Some(user_str)) = kv.get(&user_key).text().await {
+                            serde_json::from_str::<User>(&user_str).ok().map(|u| u.tier)
+                        } else {
+                            None
+                        };
+                        (true, Some(uid), tier)
+                    } else {
+                        (false, None, None)
+                    }
+                } else {
+                    (false, None, None)
+                };
+
+                if !grant.revoked {
+                    active_count += 1;
+                }
+
+                grants.push(BetaGrantWithStatus {
+                    grant,
+                    user_exists,
+                    user_id,
+                    current_tier,
+                });
+            }
+        }
+    }
+
+    // Sort by granted_at descending (newest first)
+    grants.sort_by(|a, b| b.grant.granted_at.cmp(&a.grant.granted_at));
+
+    let total = grants.len();
+    Ok(Response::from_json(&AdminBetaGrantsListResponse {
+        success: true,
+        grants,
+        total,
+        active_count,
+    })?)
+}
+
+/// Create a beta grant (admin only)
+async fn handle_admin_create_beta_grant(mut req: Request, env: Env) -> Result<Response> {
+    use auth::types::{
+        AdminCreateBetaGrantBody, AdminCreateBetaGrantResponse, BetaGrant, GrantSource, User,
+    };
+
+    // Check admin access
+    let admin_email = match get_admin_user(&req, &env).await? {
+        Ok(user) => user.email,
+        Err(resp) => return Ok(resp),
+    };
+
+    // Parse request body
+    let body: AdminCreateBetaGrantBody = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&AdminCreateBetaGrantResponse {
+                success: false,
+                message: Some(format!("Invalid request: {}", e)),
+                grant: None,
+                user_exists: false,
+                user_upgraded: false,
+            })?
+            .with_status(400));
+        }
+    };
+
+    // Validate email format
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || !email.contains('.') {
+        return Ok(Response::from_json(&AdminCreateBetaGrantResponse {
+            success: false,
+            message: Some("Invalid email format".to_string()),
+            grant: None,
+            user_exists: false,
+            user_upgraded: false,
+        })?
+        .with_status(400));
+    }
+
+    let beta_kv = env
+        .kv("BETA_GRANTS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let grant_key = format!("grant:{}", email);
+
+    // Check if grant already exists
+    if let Ok(Some(existing_str)) = beta_kv.get(&grant_key).text().await {
+        if let Ok(existing) = serde_json::from_str::<BetaGrant>(&existing_str) {
+            if !existing.revoked {
+                return Ok(Response::from_json(&AdminCreateBetaGrantResponse {
+                    success: false,
+                    message: Some("Grant already exists for this email".to_string()),
+                    grant: Some(existing),
+                    user_exists: false,
+                    user_upgraded: false,
+                })?
+                .with_status(409));
+            }
+            // If revoked, we'll overwrite it with a new grant
+        }
+    }
+
+    // Create the grant
+    let grant = BetaGrant {
+        email: email.clone(),
+        tier: body.tier,
+        granted_by: admin_email,
+        granted_at: chrono::Utc::now().to_rfc3339(),
+        notes: body.notes,
+        revoked: false,
+        revoked_at: None,
+    };
+
+    // Save grant to KV
+    let grant_json =
+        serde_json::to_string(&grant).map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+    beta_kv
+        .put(&grant_key, grant_json)?
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // Check if user already exists and upgrade them
+    let users_kv = env.kv("USERS").ok();
+    let (user_exists, user_upgraded) = if let Some(ref kv) = users_kv {
+        let email_key = format!("user_email:{}", email);
+        if let Ok(Some(user_id)) = kv.get(&email_key).text().await {
+            let user_key = format!("user:{}", user_id);
+            if let Ok(Some(user_str)) = kv.get(&user_key).text().await {
+                if let Ok(mut user) = serde_json::from_str::<User>(&user_str) {
+                    // Upgrade user's tier
+                    user.tier = grant.tier;
+                    user.grant_source = Some(GrantSource::BetaGrant);
+                    user.granted_tier = Some(grant.tier);
+                    user.updated_at = chrono::Utc::now().to_rfc3339();
+
+                    // Save updated user
+                    if let Ok(user_json) = serde_json::to_string(&user) {
+                        let _ = kv.put(&user_key, user_json)?.execute().await;
+                    }
+                    (true, true)
+                } else {
+                    (true, false)
+                }
+            } else {
+                (false, false)
+            }
+        } else {
+            (false, false)
+        }
+    } else {
+        (false, false)
+    };
+
+    Ok(Response::from_json(&AdminCreateBetaGrantResponse {
+        success: true,
+        message: Some(if user_upgraded {
+            "Grant created and user upgraded".to_string()
+        } else if user_exists {
+            "Grant created (user exists but upgrade failed)".to_string()
+        } else {
+            "Grant created (user will get access when they register)".to_string()
+        }),
+        grant: Some(grant),
+        user_exists,
+        user_upgraded,
+    })?)
+}
+
+/// Revoke a beta grant (admin only)
+async fn handle_admin_revoke_beta_grant(req: Request, env: Env, email: String) -> Result<Response> {
+    use auth::types::{AdminRevokeBetaGrantResponse, BetaGrant, User, UserTier};
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let email = email.trim().to_lowercase();
+
+    let beta_kv = env
+        .kv("BETA_GRANTS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let grant_key = format!("grant:{}", email);
+
+    // Get existing grant
+    let mut grant: BetaGrant = match beta_kv.get(&grant_key).text().await {
+        Ok(Some(s)) => match serde_json::from_str(&s) {
+            Ok(g) => g,
+            Err(_) => {
+                return Ok(Response::from_json(&AdminRevokeBetaGrantResponse {
+                    success: false,
+                    message: Some("Invalid grant data".to_string()),
+                    user_downgraded: false,
+                })?
+                .with_status(500));
+            }
+        },
+        _ => {
+            return Ok(Response::from_json(&AdminRevokeBetaGrantResponse {
+                success: false,
+                message: Some("Grant not found".to_string()),
+                user_downgraded: false,
+            })?
+            .with_status(404));
+        }
+    };
+
+    // Mark as revoked
+    grant.revoked = true;
+    grant.revoked_at = Some(chrono::Utc::now().to_rfc3339());
+
+    // Save updated grant
+    let grant_json =
+        serde_json::to_string(&grant).map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+    beta_kv
+        .put(&grant_key, grant_json)?
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // Check if user exists and downgrade if they don't have a subscription
+    let users_kv = env.kv("USERS").ok();
+    let user_downgraded = if let Some(ref kv) = users_kv {
+        let email_key = format!("user_email:{}", email);
+        if let Ok(Some(user_id)) = kv.get(&email_key).text().await {
+            let user_key = format!("user:{}", user_id);
+            if let Ok(Some(user_str)) = kv.get(&user_key).text().await {
+                if let Ok(mut user) = serde_json::from_str::<User>(&user_str) {
+                    // Only downgrade if they don't have a Stripe subscription
+                    if user.stripe_subscription_id.is_none() {
+                        user.tier = UserTier::Free;
+                        user.grant_source = None;
+                        user.granted_tier = None;
+                        user.updated_at = chrono::Utc::now().to_rfc3339();
+
+                        // Save updated user
+                        if let Ok(user_json) = serde_json::to_string(&user) {
+                            let _ = kv.put(&user_key, user_json)?.execute().await;
+                        }
+                        true
+                    } else {
+                        false // Has subscription, keep their paid tier
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    Ok(Response::from_json(&AdminRevokeBetaGrantResponse {
+        success: true,
+        message: Some(if user_downgraded {
+            "Grant revoked and user downgraded to Free".to_string()
+        } else {
+            "Grant revoked".to_string()
+        }),
+        user_downgraded,
+    })?)
+}
+
 async fn handle_send_email(mut req: Request, env: Env) -> Result<Response> {
     // Check request size before parsing
     if let Some(response) = check_content_length(&req, MAX_REQUEST_BODY) {
@@ -4928,12 +5268,8 @@ async fn handle_revise(
                 }
 
                 // Generate new token with updated version
-                let token = generate_recipient_token(
-                    session_id,
-                    &recipient.id,
-                    s.token_version,
-                    &secret,
-                );
+                let token =
+                    generate_recipient_token(session_id, &recipient.id, s.token_version, &secret);
 
                 // Build signing URL
                 let signing_url = format!(
@@ -5075,12 +5411,7 @@ fn format_revision_notification_email(
     </div>
 </body>
 </html>"#,
-        revision_count,
-        recipient_name,
-        sender_name,
-        document_name,
-        message_section,
-        signing_url
+        revision_count, recipient_name, sender_name, document_name, message_section, signing_url
     )
 }
 
@@ -5239,12 +5570,8 @@ async fn handle_restart(
                 }
 
                 // Generate new token with updated version
-                let token = generate_recipient_token(
-                    session_id,
-                    &recipient.id,
-                    s.token_version,
-                    &secret,
-                );
+                let token =
+                    generate_recipient_token(session_id, &recipient.id, s.token_version, &secret);
 
                 // Build signing URL
                 let signing_url = format!(

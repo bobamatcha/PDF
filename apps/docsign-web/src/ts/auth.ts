@@ -815,3 +815,141 @@ export function initAuthNamespace(): void {
     log.debug("Auth module initialized on window.DocSign");
   }
 }
+
+// ============================================
+// API Base URL Export
+// ============================================
+
+/** Public API base URL for use in HTML pages */
+export const API_BASE_URL = API_BASE;
+
+// ============================================
+// AuthManager Class (for HTML page imports)
+// ============================================
+
+/**
+ * AuthManager class wrapper for HTML page script modules.
+ *
+ * Provides a class-based interface to auth functions for easier
+ * use in HTML script modules that import from bundle.js.
+ *
+ * @example
+ * ```javascript
+ * import { AuthManager, API_BASE_URL } from './js/bundle.js';
+ * const authManager = new AuthManager();
+ * const user = authManager.getStoredUser();
+ * ```
+ */
+export class AuthManager {
+  /**
+   * Get current access token from localStorage
+   */
+  getAccessToken(): string | null {
+    return getAccessToken();
+  }
+
+  /**
+   * Get current refresh token from localStorage
+   */
+  getRefreshToken(): string | null {
+    return getRefreshToken();
+  }
+
+  /**
+   * Get stored user data from localStorage
+   */
+  getStoredUser(): User | null {
+    return getCurrentUser();
+  }
+
+  /**
+   * Check if user is authenticated
+   */
+  isAuthenticated(): boolean {
+    return isAuthenticated();
+  }
+
+  /**
+   * Get remaining documents for this week
+   */
+  getDocumentsRemaining(): number {
+    return getDocumentsRemaining();
+  }
+
+  /**
+   * Register a new user account
+   */
+  async register(options: RegisterOptions): Promise<RegisterResponse> {
+    return register(options);
+  }
+
+  /**
+   * Login with email and password
+   */
+  async login(email: string, password: string): Promise<LoginResponse> {
+    return login(email, password);
+  }
+
+  /**
+   * Logout current user
+   */
+  async logout(): Promise<void> {
+    return logout();
+  }
+
+  /**
+   * Refresh access token
+   */
+  async refreshToken(): Promise<boolean> {
+    return refreshToken();
+  }
+
+  /**
+   * Request password reset email
+   */
+  async forgotPassword(email: string): Promise<AuthResponse> {
+    return forgotPassword(email);
+  }
+
+  /**
+   * Reset password with token
+   */
+  async resetPassword(token: string, newPassword: string): Promise<AuthResponse> {
+    return resetPassword(token, newPassword);
+  }
+
+  /**
+   * Resend verification email
+   */
+  async resendVerification(email: string): Promise<AuthResponse> {
+    return resendVerification(email);
+  }
+
+  /**
+   * Check if email is registered
+   */
+  async checkEmail(email: string): Promise<CheckEmailResponse> {
+    return checkEmail(email);
+  }
+
+  /**
+   * Update user profile
+   */
+  async updateProfile(options: UpdateProfileOptions): Promise<UpdateProfileResponse> {
+    return updateProfile(options);
+  }
+
+  /**
+   * Make authenticated API request
+   */
+  async authenticatedFetch(url: string, options?: RequestInit): Promise<Response> {
+    return authenticatedFetch(url, options);
+  }
+
+  /**
+   * Subscribe to auth state changes
+   */
+  onAuthStateChange(listener: (event: AuthStateChangeEvent) => void): () => void {
+    return onAuthStateChange(listener);
+  }
+}

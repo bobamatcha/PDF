@@ -5752,6 +5752,105 @@ function initAuthNamespace() {
     log6.debug("Auth module initialized on window.DocSign");
   }
 }
+var API_BASE_URL = API_BASE;
+var AuthManager = class {
+  /**
+   * Get current access token from localStorage
+   */
+  getAccessToken() {
+    return getAccessToken();
+  }
+  /**
+   * Get current refresh token from localStorage
+   */
+  getRefreshToken() {
+    return getRefreshToken();
+  }
+  /**
+   * Get stored user data from localStorage
+   */
+  getStoredUser() {
+    return getCurrentUser();
+  }
+  /**
+   * Check if user is authenticated
+   */
+  isAuthenticated() {
+    return isAuthenticated();
+  }
+  /**
+   * Get remaining documents for this week
+   */
+  getDocumentsRemaining() {
+    return getDocumentsRemaining();
+  }
+  /**
+   * Register a new user account
+   */
+  async register(options) {
+    return register(options);
+  }
+  /**
+   * Login with email and password
+   */
+  async login(email, password) {
+    return login(email, password);
+  }
+  /**
+   * Logout current user
+   */
+  async logout() {
+    return logout();
+  }
+  /**
+   * Refresh access token
+   */
+  async refreshToken() {
+    return refreshToken();
+  }
+  /**
+   * Request password reset email
+   */
+  async forgotPassword(email) {
+    return forgotPassword(email);
+  }
+  /**
+   * Reset password with token
+   */
+  async resetPassword(token, newPassword) {
+    return resetPassword(token, newPassword);
+  }
+  /**
+   * Resend verification email
+   */
+  async resendVerification(email) {
+    return resendVerification(email);
+  }
+  /**
+   * Check if email is registered
+   */
+  async checkEmail(email) {
+    return checkEmail(email);
+  }
+  /**
+   * Update user profile
+   */
+  async updateProfile(options) {
+    return updateProfile(options);
+  }
+  /**
+   * Make authenticated API request
+   */
+  async authenticatedFetch(url, options) {
+    return authenticatedFetch(url, options);
+  }
+  /**
+   * Subscribe to auth state changes
+   */
+  onAuthStateChange(listener) {
+    return onAuthStateChange(listener);
+  }
+};
 
 // src/ts/jokes.ts
 var JOKES = [
@@ -6091,6 +6190,8 @@ if (document.readyState === "loading") {
   init();
 }
 export {
+  API_BASE_URL,
+  AuthManager,
   JOKES,
   LocalSessionManager,
   MobileSignatureModal,
