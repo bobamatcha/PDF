@@ -81,7 +81,7 @@ pub async fn save_user(kv: &KvStore, user: &User) -> Result<()> {
 }
 
 /// Generate a secure random token
-fn generate_token() -> String {
+pub fn generate_token() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 

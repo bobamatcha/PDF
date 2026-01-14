@@ -76,6 +76,113 @@ impl EmailSendResult {
     }
 }
 
+// ============================================================
+// Bug #20: Do Not Email List Functions
+// ============================================================
+
+use crate::auth::types::DoNotEmailEntry;
+
+/// Check if an email is on the Do Not Email list
+///
+/// Returns true if the email should NOT be sent to
+pub async fn is_email_blocked(env: &Env, email: &str) -> Result<bool> {
+    // Try to get DO_NOT_EMAIL KV - if not configured, allow all emails
+    let kv = match env.kv("DO_NOT_EMAIL") {
+        Ok(kv) => kv,
+        Err(_) => {
+            console_log!("DO_NOT_EMAIL KV not configured - allowing all emails");
+            return Ok(false);
+        }
+    };
+
+    let key = format!("dne:{}", email.trim().to_lowercase());
+    match kv.get(&key).text().await {
+        Ok(Some(_)) => {
+            console_log!("Email {} is on Do Not Email list", email);
+            Ok(true)
+        }
+        Ok(None) => Ok(false),
+        Err(e) => {
+            console_log!("Error checking Do Not Email list: {:?}", e);
+            Ok(false) // On error, allow sending
+        }
+    }
+}
+
+/// Add an email to the Do Not Email list
+pub async fn add_to_do_not_email(
+    env: &Env,
+    email: &str,
+    has_account: bool,
+    reason: Option<String>,
+) -> Result<()> {
+    let kv = env.kv("DO_NOT_EMAIL")?;
+    let key = format!("dne:{}", email.trim().to_lowercase());
+
+    let entry = DoNotEmailEntry {
+        email: email.to_lowercase(),
+        unsubscribed_at: chrono::Utc::now().to_rfc3339(),
+        has_account,
+        reason,
+    };
+
+    let entry_json = serde_json::to_string(&entry)
+        .map_err(|e| worker::Error::RustError(format!("JSON error: {:?}", e)))?;
+
+    kv.put(&key, entry_json)?.execute().await?;
+    console_log!("Added {} to Do Not Email list", email);
+    Ok(())
+}
+
+/// Remove an email from the Do Not Email list (e.g., when user creates account)
+pub async fn remove_from_do_not_email(env: &Env, email: &str) -> Result<()> {
+    // Try to get DO_NOT_EMAIL KV - if not configured, nothing to remove
+    let kv = match env.kv("DO_NOT_EMAIL") {
+        Ok(kv) => kv,
+        Err(_) => return Ok(()),
+    };
+
+    let key = format!("dne:{}", email.trim().to_lowercase());
+    kv.delete(&key).await?;
+    console_log!("Removed {} from Do Not Email list", email);
+    Ok(())
+}
+
+/// Get unsubscribe entry for an email (if exists)
+pub async fn get_do_not_email_entry(env: &Env, email: &str) -> Result<Option<DoNotEmailEntry>> {
+    let kv = match env.kv("DO_NOT_EMAIL") {
+        Ok(kv) => kv,
+        Err(_) => return Ok(None),
+    };
+
+    let key = format!("dne:{}", email.trim().to_lowercase());
+    match kv.get(&key).text().await? {
+        Some(json) => {
+            let entry: DoNotEmailEntry = serde_json::from_str(&json)
+                .map_err(|e| worker::Error::RustError(format!("JSON parse error: {:?}", e)))?;
+            Ok(Some(entry))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Generate unsubscribe URL for an email
+pub fn generate_unsubscribe_url(email: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let token = URL_SAFE_NO_PAD.encode(email.to_lowercase().as_bytes());
+    format!("https://getsignatures.org/unsubscribe.html?email={}", token)
+}
+
+/// Decode email from unsubscribe token
+pub fn decode_unsubscribe_token(token: &str) -> Result<String> {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let bytes = URL_SAFE_NO_PAD
+        .decode(token)
+        .map_err(|e| worker::Error::RustError(format!("Invalid unsubscribe token: {:?}", e)))?;
+    String::from_utf8(bytes)
+        .map_err(|e| worker::Error::RustError(format!("Invalid UTF-8 in token: {:?}", e)))
+}
+
 /// Global email quota tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailQuota {
@@ -386,6 +493,283 @@ pub async fn send_admin_notification_email(
     send_email(env, request).await
 }
 
+// ============================================================
+// Bug #19: Beta Grant Welcome Email
+// ============================================================
+
+/// Send welcome email when admin grants beta access (Bug #19)
+///
+/// This email has a cheeky, friendly tone (NOT corporate). It's from "Amar Singh"
+/// and encourages bug reporting with screenshots. Includes voice-to-text suggestion
+/// for frustrated users.
+///
+/// # Arguments
+/// * `env` - Cloudflare Worker environment
+/// * `email` - Recipient's email address
+///
+/// # Returns
+/// * `Ok(EmailSendResult)` - Result with success/failure
+pub async fn send_beta_grant_welcome_email(env: &Env, email: &str) -> Result<EmailSendResult> {
+    // Check blocklist before sending
+    if is_email_blocked(env, email).await? {
+        console_log!(
+            "Skipping welcome email to {} - on Do Not Email list",
+            email
+        );
+        return Ok(EmailSendResult::error("Email is on Do Not Email list"));
+    }
+
+    let unsubscribe_url = generate_unsubscribe_url(email);
+
+    let subject = "🎁 A gift for you from Amar Singh - Free Professional Access!";
+
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>You've Got Free Professional Access!</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #334155; max-width: 600px; margin: 0 auto; padding: 20px; background: #f8fafc;">
+    <div style="background: linear-gradient(135deg, #059669 0%, #10b981 100%); padding: 32px; border-radius: 16px 16px 0 0; text-align: center;">
+        <div style="font-size: 48px; margin-bottom: 8px;">🎁</div>
+        <h1 style="color: white; margin: 0; font-size: 24px;">You've Got a Gift!</h1>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 32px; border-radius: 0 0 16px 16px;">
+        <p style="font-size: 18px; margin-bottom: 20px;">
+            Hey there!
+        </p>
+
+        <p style="font-size: 16px; margin-bottom: 16px;">
+            <strong>Amar Singh</strong> just gifted you <strong>free Professional tier access</strong> to GetSignatures! 🎉
+        </p>
+
+        <div style="background: #ecfdf5; border: 2px solid #10b981; border-radius: 12px; padding: 20px; margin: 24px 0;">
+            <p style="margin: 0; font-size: 16px; color: #065f46;">
+                <strong>What does this mean?</strong><br>
+                You get unlimited document signing for <em>free</em>. I paid for this, so you don't have to!
+            </p>
+        </div>
+
+        <div style="text-align: center; margin: 32px 0;">
+            <a href="https://getsignatures.org/auth.html"
+               style="display: inline-block; background: #059669; color: white; padding: 16px 40px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 18px;">
+                Get Started Now
+            </a>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+
+        <div style="background: #fffbeb; border: 1px solid #fbbf24; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+            <p style="margin: 0 0 8px 0; font-size: 14px; color: #92400e; font-weight: 600;">
+                🐛 Found a bug? I want to know!
+            </p>
+            <p style="margin: 0; font-size: 14px; color: #92400e;">
+                Take a screenshot and email me at <a href="mailto:bobamatchsolutions@gmail.com" style="color: #d97706;">bobamatchsolutions@gmail.com</a>.
+                Screenshots help me fix things faster!
+            </p>
+        </div>
+
+        <div style="background: #f0f9ff; border: 1px solid #38bdf8; border-radius: 8px; padding: 16px;">
+            <p style="margin: 0 0 8px 0; font-size: 14px; color: #0369a1; font-weight: 600;">
+                💡 Pro tip: Frustrated? Use voice-to-text!
+            </p>
+            <p style="margin: 0; font-size: 14px; color: #0369a1;">
+                Instead of typing angry bug reports, just dictate what went wrong. Your phone's voice-to-text
+                works great for this. I'd rather hear your frustrated voice notes than have you suffer in silence!
+            </p>
+        </div>
+
+        <p style="font-size: 16px; margin-top: 24px;">
+            Cheers,<br>
+            <strong>Amar Singh</strong><br>
+            <span style="color: #6b7280; font-size: 14px;">Creator of GetSignatures</span>
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 16px; font-size: 12px; color: #94a3b8;">
+        <p>GetSignatures · Secure Document Signing</p>
+        <p>
+            <a href="{unsubscribe_url}" style="color: #94a3b8;">Unsubscribe from marketing emails</a>
+        </p>
+    </div>
+</body>
+</html>"##,
+        unsubscribe_url = unsubscribe_url
+    );
+
+    let text = format!(
+        r#"Hey there!
+
+Amar Singh just gifted you free Professional tier access to GetSignatures! 🎉
+
+What does this mean?
+You get unlimited document signing for free. I paid for this, so you don't have to!
+
+Get started: https://getsignatures.org/auth.html
+
+---
+
+Found a bug? I want to know!
+Take a screenshot and email me at bobamatchsolutions@gmail.com. Screenshots help me fix things faster!
+
+Pro tip: Frustrated? Use voice-to-text!
+Instead of typing angry bug reports, just dictate what went wrong. Your phone's voice-to-text works great for this.
+
+Cheers,
+Amar Singh
+Creator of GetSignatures
+
+---
+Unsubscribe from marketing emails: {unsubscribe_url}"#,
+        unsubscribe_url = unsubscribe_url
+    );
+
+    let request = EmailSendRequest {
+        to: vec![email.to_string()],
+        subject: subject.to_string(),
+        html,
+        text: Some(text),
+        reply_to: Some("bobamatchsolutions@gmail.com".to_string()),
+        // Note: ("email", email) removed - email addresses contain @ and . which fail Resend API validation
+        // See: https://resend.com/docs/api-reference/emails/send-email (tags must be ASCII alphanumeric, underscore, or dash)
+        tags: vec![("type".to_string(), "beta_grant_welcome".to_string())],
+    };
+
+    console_log!("Sending beta grant welcome email to {}", email);
+    send_email(env, request).await
+}
+
+// ============================================================
+// Bug #21: Account Deletion Email
+// ============================================================
+
+/// Send account deletion confirmation email (Bug #21)
+///
+/// This email contains a link that the user must click to confirm account deletion.
+/// The link expires in 1 hour.
+///
+/// # Arguments
+/// * `env` - Cloudflare Worker environment
+/// * `email` - User's email address
+/// * `first_name` - User's first name for personalization
+/// * `token` - The deletion confirmation token
+///
+/// # Returns
+/// * `Ok(EmailSendResult)` - Result with success/failure
+pub async fn send_account_deletion_email(
+    env: &Env,
+    email: &str,
+    first_name: &str,
+    token: &str,
+) -> Result<EmailSendResult> {
+    let confirm_url = format!(
+        "https://getsignatures.org/confirm-deletion.html?token={}",
+        token
+    );
+
+    let subject = "Confirm Account Deletion - GetSignatures";
+
+    let html = format!(
+        r##"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirm Account Deletion</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #334155; max-width: 600px; margin: 0 auto; padding: 20px; background: #f8fafc;">
+    <div style="background: #dc2626; padding: 24px; border-radius: 12px 12px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 22px;">Account Deletion Request</h1>
+    </div>
+
+    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
+        <p style="font-size: 16px; margin-bottom: 16px;">
+            Hi {first_name},
+        </p>
+
+        <p style="font-size: 16px; margin-bottom: 16px;">
+            We received a request to permanently delete your GetSignatures account.
+        </p>
+
+        <div style="background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px; padding: 16px; margin: 20px 0;">
+            <p style="margin: 0; font-size: 14px; color: #991b1b; font-weight: 600;">
+                ⚠️ This action is irreversible
+            </p>
+            <ul style="margin: 12px 0 0 0; padding-left: 20px; font-size: 14px; color: #991b1b;">
+                <li>Your account will be permanently deleted</li>
+                <li>All your documents will be lost</li>
+                <li>This cannot be undone</li>
+            </ul>
+        </div>
+
+        <div style="text-align: center; margin: 28px 0;">
+            <a href="{confirm_url}"
+               style="display: inline-block; background: #dc2626; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">
+                Confirm Deletion
+            </a>
+        </div>
+
+        <p style="font-size: 14px; color: #6b7280; text-align: center;">
+            This link expires in <strong>1 hour</strong>.
+        </p>
+
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+
+        <p style="font-size: 14px; color: #6b7280;">
+            If you didn't request this, you can safely ignore this email. Your account will not be deleted unless you click the button above.
+        </p>
+
+        <p style="font-size: 14px; color: #6b7280;">
+            – The GetSignatures Team
+        </p>
+    </div>
+
+    <div style="text-align: center; margin-top: 16px; font-size: 12px; color: #94a3b8;">
+        <p>GetSignatures · Secure Document Signing</p>
+    </div>
+</body>
+</html>"##,
+        first_name = first_name,
+        confirm_url = confirm_url
+    );
+
+    let text = format!(
+        r#"Hi {first_name},
+
+We received a request to permanently delete your GetSignatures account.
+
+⚠️ WARNING: This action is irreversible!
+- Your account will be permanently deleted
+- All your documents will be lost
+- This cannot be undone
+
+To confirm deletion, click this link (expires in 1 hour):
+{confirm_url}
+
+If you didn't request this, you can safely ignore this email.
+
+– The GetSignatures Team"#,
+        first_name = first_name,
+        confirm_url = confirm_url
+    );
+
+    let request = EmailSendRequest {
+        to: vec![email.to_string()],
+        subject: subject.to_string(),
+        html,
+        text: Some(text),
+        reply_to: Some("bobamatchsolutions@gmail.com".to_string()),
+        // Note: ("email", email) removed - email addresses contain @ and . which fail Resend API validation
+        tags: vec![("type".to_string(), "account_deletion".to_string())],
+    };
+
+    console_log!("Sending account deletion confirmation email to {}", email);
+    send_email(env, request).await
+}
+
 /// Send limit notification email when user hits their monthly document limit
 ///
 /// # Arguments
@@ -615,5 +999,72 @@ mod tests {
         // Monthly exceeded
         let monthly_count = MONTHLY_EMAIL_LIMIT;
         assert!(monthly_count >= MONTHLY_EMAIL_LIMIT);
+    }
+
+    /// Check if a string contains only Resend-allowed tag characters
+    /// (ASCII letters, numbers, underscores, dashes)
+    fn is_valid_resend_tag(s: &str) -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    }
+
+    #[test]
+    fn test_resend_tag_validation_helper() {
+        // Valid tags
+        assert!(is_valid_resend_tag("beta_grant_welcome"));
+        assert!(is_valid_resend_tag("account_deletion"));
+        assert!(is_valid_resend_tag("type"));
+        assert!(is_valid_resend_tag("test-tag"));
+        assert!(is_valid_resend_tag("Tag123"));
+
+        // Invalid tags (would fail Resend API)
+        assert!(!is_valid_resend_tag("test@example.com")); // @ is invalid
+        assert!(!is_valid_resend_tag("user.name")); // . is invalid
+        assert!(!is_valid_resend_tag("has space")); // space is invalid
+        assert!(!is_valid_resend_tag("")); // empty is invalid
+    }
+
+    #[test]
+    fn test_beta_grant_welcome_tags_are_valid() {
+        // These are the tags used in send_beta_grant_welcome_email()
+        // This test ensures we never accidentally add invalid tags back
+        let tags: Vec<(&str, &str)> = vec![
+            ("type", "beta_grant_welcome"),
+            // NOTE: ("email", email) was removed - it contained @ and . which Resend rejects
+        ];
+
+        for (name, value) in tags {
+            assert!(
+                is_valid_resend_tag(name),
+                "Tag name '{}' contains invalid characters for Resend API",
+                name
+            );
+            assert!(
+                is_valid_resend_tag(value),
+                "Tag value '{}' contains invalid characters for Resend API",
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn test_account_deletion_tags_are_valid() {
+        // These are the tags used in send_account_deletion_email()
+        let tags: Vec<(&str, &str)> = vec![
+            ("type", "account_deletion"),
+            // NOTE: ("email", email) was removed - it contained @ and . which Resend rejects
+        ];
+
+        for (name, value) in tags {
+            assert!(
+                is_valid_resend_tag(name),
+                "Tag name '{}' contains invalid characters for Resend API",
+                name
+            );
+            assert!(
+                is_valid_resend_tag(value),
+                "Tag value '{}' contains invalid characters for Resend API",
+                value
+            );
+        }
     }
 }

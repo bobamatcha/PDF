@@ -40,10 +40,23 @@ id = "4eb009c51065436fb761c3b640400da3"
 binding = "BETA_GRANTS"
 id = "97d04bc8cbc64444aa3d0b253a2203e8"
 
+# Do Not Email list - stores unsubscribed emails (Bug #20)
+# Create with: wrangler kv:namespace create DO_NOT_EMAIL
+# Then update this ID with the actual namespace ID
+[[kv_namespaces]]
+binding = "DO_NOT_EMAIL"
+id = "c6501951b6d14afc955a10a74321d7a3"
+
 # Environment variables (non-secret)
 [vars]
 ALLOW_DUPLICATE_EMAILS = "false"
 EMAIL_FROM = "GetSignatures <noreply@getsignatures.org>"
+
+# Bug #22: Google OAuth - User must configure this
+# Create OAuth client at: https://console.cloud.google.com/apis/credentials
+# Authorized JavaScript origins: https://getsignatures.org
+# Authorized redirect URIs: https://getsignatures.org/auth.html
+GOOGLE_CLIENT_ID = "681206979076-g6hj1arp6s4uvkcekp1ik212ahbefhnm.apps.googleusercontent.com"
 
 # Stripe Configuration (public keys only - safe to commit)
 # User must set these after creating products in Stripe Dashboard

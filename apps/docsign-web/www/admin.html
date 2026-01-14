@@ -417,6 +417,7 @@
             border-radius: 4px;
             font-size: 1rem;
             background: var(--bg-tertiary);
+            color: var(--text-primary);
         }
 
         .form-group textarea {
@@ -495,7 +496,10 @@
         <section class="section">
             <div class="section-header">
                 <h2>Beta Access Grants</h2>
-                <button class="action-btn action-btn-approve" onclick="openGrantModal()">+ Grant Access</button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="action-btn" id="send-welcome-emails-btn" onclick="sendPendingWelcomeEmails()" style="background: #0d9488;">Send Welcome Emails</button>
+                    <button class="action-btn action-btn-approve" onclick="openGrantModal()">+ Grant Access</button>
+                </div>
             </div>
             <div id="grants-container">
                 <div class="empty-state">
@@ -822,6 +826,13 @@
                 return;
             }
 
+            // Count pending welcome emails for the button
+            const pendingEmails = allGrants.filter(g => !g.revoked && !g.welcome_email_sent).length;
+            const btn = document.getElementById('send-welcome-emails-btn');
+            if (btn) {
+                btn.textContent = pendingEmails > 0 ? `Send Welcome Emails (${pendingEmails})` : 'Send Welcome Emails';
+            }
+
             const table = document.createElement('table');
             table.className = 'table';
             table.innerHTML = `
@@ -831,6 +842,7 @@
                         <th>Tier</th>
                         <th>Status</th>
                         <th>User Status</th>
+                        <th>Welcome Email</th>
                         <th>Granted</th>
                         <th>Notes</th>
                         <th>Actions</th>
@@ -843,6 +855,7 @@
                             <td><span class="badge badge-${g.tier}">${g.tier}</span></td>
                             <td><span class="badge badge-${g.revoked ? 'revoked' : 'active'}">${g.revoked ? 'Revoked' : 'Active'}</span></td>
                             <td><span class="badge badge-${g.user_exists ? 'exists' : 'pending-signup'}">${g.user_exists ? 'Registered' : 'Pending Signup'}</span></td>
+                            <td><span class="badge badge-${g.welcome_email_sent ? 'sent' : 'pending'}" style="background: ${g.welcome_email_sent ? '#10b981' : '#f59e0b'}; color: white;">${g.welcome_email_sent ? 'Sent' : 'Pending'}</span></td>
                             <td>${formatDate(g.granted_at)}</td>
                             <td class="request-description" title="${escapeHtml(g.notes || '')}">${escapeHtml(g.notes || '-')}</td>
                             <td>
@@ -1129,6 +1142,56 @@
             } catch (error) {
                 console.error('Error revoking grant:', error);
                 alert('Error revoking grant');
+            }
+        };
+
+        // Bug #19: Send pending welcome emails to all grants
+        window.sendPendingWelcomeEmails = async function() {
+            const btn = document.getElementById('send-welcome-emails-btn');
+            const originalText = btn.textContent;
+
+            if (!confirm('Send welcome emails to all users who haven\'t received one yet?\n\nThis will email everyone with a pending welcome email.')) {
+                return;
+            }
+
+            const authManager = new AuthManager();
+            const token = authManager.getAccessToken();
+
+            // Update button to show progress
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/admin/send-pending-welcome-emails`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                const data = await res.json();
+
+                // Show detailed results
+                if (data.pending_count === 0) {
+                    alert('No pending welcome emails to send.\n\nAll granted users have already received their welcome email.');
+                } else if (data.success) {
+                    alert(`Success!\n\nSent ${data.sent_count} welcome email(s).`);
+                    await loadData(token);
+                } else {
+                    let message = `Sent ${data.sent_count}/${data.pending_count} emails.\n\n`;
+                    if (data.errors && data.errors.length > 0) {
+                        message += 'Errors:\n' + data.errors.slice(0, 5).join('\n');
+                        if (data.errors.length > 5) {
+                            message += `\n...and ${data.errors.length - 5} more`;
+                        }
+                    }
+                    alert(message);
+                    await loadData(token);
+                }
+            } catch (error) {
+                console.error('Error sending welcome emails:', error);
+                alert('Error sending welcome emails. Check console for details.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         };
     </script>

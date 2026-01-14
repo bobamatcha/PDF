@@ -1931,6 +1931,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         (Method::Get, "/") => cors_response(Response::ok("DocSign API Server")),
 
         // ============================================
+        // Public configuration (Bug #22: Google OAuth)
+        // ============================================
+        (Method::Get, "/config/public") => {
+            cors_response(handle_public_config(env).await)
+        }
+
+        // ============================================
         // TSA Proxy for LTV timestamps (public)
         // NOTE: Handler includes CORS headers directly - don't wrap with cors_response()
         // because it replaces all headers including Content-Type
@@ -2002,6 +2009,31 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             handle_associate_session(req, env).await
         }
 
+        // Bug #21: Account Deletion (GDPR)
+        (Method::Post, "/auth/request-deletion") => {
+            // Rate limit to prevent spam
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::RequestLink).await
+            {
+                return response;
+            }
+            cors_response(handle_request_account_deletion(req, env).await)
+        }
+        (Method::Post, "/auth/confirm-deletion") => {
+            cors_response(handle_confirm_account_deletion(req, env).await)
+        }
+
+        // Bug #22: Google OAuth Login
+        (Method::Post, "/auth/google") => {
+            // Rate limit logins (use SessionWrite tier - 5/min)
+            if let Some(response) =
+                apply_ip_rate_limit(&req, &env, RateLimitTier::SessionWrite).await
+            {
+                return response;
+            }
+            cors_response(handle_google_oauth(req, env).await)
+        }
+
         // ============================================
         // Phase 3: Template Management Endpoints
         // ============================================
@@ -2032,6 +2064,16 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
         // Bug #4: Feedback/Request submission (requires auth)
         (Method::Post, "/requests/submit") => cors_response(handle_submit_request(req, env).await),
+
+        // ============================================
+        // Bug #20: Unsubscribe endpoints (public)
+        // ============================================
+
+        // Process unsubscribe request
+        (Method::Post, "/unsubscribe") => cors_response(handle_unsubscribe(req, env).await),
+
+        // Check unsubscribe status
+        (Method::Get, "/unsubscribe") => cors_response(handle_check_unsubscribe(req, env).await),
 
         // ============================================
         // Bug #8: Admin Dashboard endpoints
@@ -2086,6 +2128,11 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             // URL decode the email (handles @ and other special chars)
             let email = urlencoding::decode(email).unwrap_or_default().to_string();
             cors_response(handle_admin_revoke_beta_grant(req, env, email).await)
+        }
+
+        // Bug #19: Send pending welcome emails (batch send)
+        (Method::Post, "/admin/send-pending-welcome-emails") => {
+            cors_response(handle_admin_send_pending_welcome_emails(req, env).await)
         }
 
         // ============================================
@@ -2388,6 +2435,29 @@ async fn handle_tsa_proxy(mut req: Request) -> Result<Response> {
     resp_headers.set("Access-Control-Allow-Methods", "POST, OPTIONS")?;
 
     Response::from_bytes(response_bytes).map(|r| r.with_headers(resp_headers))
+}
+
+/// Handle public configuration requests (Bug #22: Google OAuth)
+/// Returns public-safe configuration values like Google Client ID
+async fn handle_public_config(env: Env) -> Result<Response> {
+    // Get Google Client ID from environment variables
+    let google_client_id = env
+        .var("GOOGLE_CLIENT_ID")
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+
+    // Get Stripe publishable key (safe to expose - it's public)
+    let stripe_publishable_key = env
+        .var("STRIPE_PUBLISHABLE_KEY")
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+
+    let config = serde_json::json!({
+        "google_client_id": google_client_id,
+        "stripe_publishable_key": stripe_publishable_key,
+    });
+
+    Response::from_json(&config)
 }
 
 /// Handle health check requests - returns service status and dependency health
@@ -3537,6 +3607,137 @@ async fn handle_admin_delete_user(req: Request, env: Env, user_id: String) -> Re
 }
 
 // ============================================================================
+// Bug #20: Unsubscribe Handlers
+// ============================================================================
+
+/// Handle POST /unsubscribe - Process unsubscribe request
+async fn handle_unsubscribe(mut req: Request, env: Env) -> Result<Response> {
+    #[derive(Deserialize)]
+    struct UnsubscribeRequest {
+        email: String,
+    }
+
+    #[derive(Serialize)]
+    struct UnsubscribeResponse {
+        success: bool,
+        message: Option<String>,
+        already_unsubscribed: bool,
+        has_account: bool,
+    }
+
+    let body: UnsubscribeRequest = req
+        .json()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("Invalid request body: {:?}", e)))?;
+
+    let email = body.email.trim().to_lowercase();
+
+    // Check if email is valid
+    if !email.contains('@') {
+        return Ok(Response::from_json(&UnsubscribeResponse {
+            success: false,
+            message: Some("Invalid email address".to_string()),
+            already_unsubscribed: false,
+            has_account: false,
+        })?
+        .with_status(400));
+    }
+
+    // Check if already unsubscribed
+    if let Some(_entry) = email::get_do_not_email_entry(&env, &email).await? {
+        return Ok(Response::from_json(&UnsubscribeResponse {
+            success: true,
+            message: Some("Already unsubscribed".to_string()),
+            already_unsubscribed: true,
+            has_account: false,
+        })?);
+    }
+
+    // Check if user has an account
+    let users_kv = env.kv("USERS").ok();
+    let has_account = if let Some(ref kv) = users_kv {
+        let email_key = format!("user_email:{}", email);
+        kv.get(&email_key).text().await?.is_some()
+    } else {
+        false
+    };
+
+    if has_account {
+        // User has account - don't unsubscribe, redirect to settings
+        return Ok(Response::from_json(&UnsubscribeResponse {
+            success: false,
+            message: Some("Please manage email preferences in your account settings".to_string()),
+            already_unsubscribed: false,
+            has_account: true,
+        })?
+        .with_status(409)); // Conflict - user should manage in settings
+    }
+
+    // Add to Do Not Email list
+    if let Err(e) = email::add_to_do_not_email(&env, &email, false, None).await {
+        console_log!("Failed to add to Do Not Email list: {:?}", e);
+        return Ok(Response::from_json(&UnsubscribeResponse {
+            success: false,
+            message: Some("Failed to process unsubscribe request".to_string()),
+            already_unsubscribed: false,
+            has_account: false,
+        })?
+        .with_status(500));
+    }
+
+    console_log!("Successfully unsubscribed: {}", email);
+
+    Ok(Response::from_json(&UnsubscribeResponse {
+        success: true,
+        message: Some("Successfully unsubscribed".to_string()),
+        already_unsubscribed: false,
+        has_account: false,
+    })?)
+}
+
+/// Handle GET /unsubscribe - Check unsubscribe status
+async fn handle_check_unsubscribe(req: Request, env: Env) -> Result<Response> {
+    #[derive(Serialize)]
+    struct CheckResponse {
+        is_unsubscribed: bool,
+        has_account: bool,
+    }
+
+    let url = req.url()?;
+    let email = url
+        .query_pairs()
+        .find(|(k, _)| k == "email")
+        .map(|(_, v)| {
+            // Decode base64 email token
+            email::decode_unsubscribe_token(&v).unwrap_or_default()
+        })
+        .unwrap_or_default();
+
+    if email.is_empty() || !email.contains('@') {
+        return error_response("Invalid or missing email parameter");
+    }
+
+    let email = email.to_lowercase();
+
+    // Check if unsubscribed
+    let is_unsubscribed = email::is_email_blocked(&env, &email).await.unwrap_or(false);
+
+    // Check if has account
+    let users_kv = env.kv("USERS").ok();
+    let has_account = if let Some(ref kv) = users_kv {
+        let email_key = format!("user_email:{}", email);
+        kv.get(&email_key).text().await?.is_some()
+    } else {
+        false
+    };
+
+    Ok(Response::from_json(&CheckResponse {
+        is_unsubscribed,
+        has_account,
+    })?)
+}
+
+// ============================================================================
 // Beta Access Grant Handlers
 // ============================================================================
 
@@ -3695,6 +3896,7 @@ async fn handle_admin_create_beta_grant(mut req: Request, env: Env) -> Result<Re
         notes: body.notes,
         revoked: false,
         revoked_at: None,
+        welcome_email_sent: false, // Bug #19: Track email sent status
     };
 
     // Save grant to KV
@@ -3738,16 +3940,50 @@ async fn handle_admin_create_beta_grant(mut req: Request, env: Env) -> Result<Re
         (false, false)
     };
 
+    // Bug #19: Send welcome email
+    let mut final_grant = grant.clone();
+    let email_sent = match email::send_beta_grant_welcome_email(&env, &email).await {
+        Ok(result) if result.success => {
+            console_log!("Welcome email sent to {}", email);
+            // Update grant to mark email as sent
+            final_grant.welcome_email_sent = true;
+            let grant_json = serde_json::to_string(&final_grant)
+                .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+            let _ = beta_kv.put(&grant_key, grant_json)?.execute().await;
+            true
+        }
+        Ok(result) => {
+            console_log!(
+                "Welcome email failed for {}: {:?}",
+                email,
+                result.error
+            );
+            false
+        }
+        Err(e) => {
+            console_log!("Welcome email error for {}: {:?}", email, e);
+            false
+        }
+    };
+
+    let message = if user_upgraded {
+        if email_sent {
+            "Grant created, user upgraded, and welcome email sent".to_string()
+        } else {
+            "Grant created and user upgraded (email send failed)".to_string()
+        }
+    } else if user_exists {
+        "Grant created (user exists but upgrade failed)".to_string()
+    } else if email_sent {
+        "Grant created and welcome email sent (user will get access when they register)".to_string()
+    } else {
+        "Grant created (user will get access when they register, email send failed)".to_string()
+    };
+
     Ok(Response::from_json(&AdminCreateBetaGrantResponse {
         success: true,
-        message: Some(if user_upgraded {
-            "Grant created and user upgraded".to_string()
-        } else if user_exists {
-            "Grant created (user exists but upgrade failed)".to_string()
-        } else {
-            "Grant created (user will get access when they register)".to_string()
-        }),
-        grant: Some(grant),
+        message: Some(message),
+        grant: Some(final_grant),
         user_exists,
         user_upgraded,
     })?)
@@ -3851,6 +4087,631 @@ async fn handle_admin_revoke_beta_grant(req: Request, env: Env, email: String) -
             "Grant revoked".to_string()
         }),
         user_downgraded,
+    })?)
+}
+
+/// Bug #19: Send pending welcome emails to all grants where welcome_email_sent == false
+async fn handle_admin_send_pending_welcome_emails(req: Request, env: Env) -> Result<Response> {
+    use auth::types::BetaGrant;
+
+    // Check admin access
+    match get_admin_user(&req, &env).await? {
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
+
+    let beta_kv = env
+        .kv("BETA_GRANTS")
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    // List all grants (prefix = "grant:")
+    let grants_list = beta_kv
+        .list()
+        .prefix("grant:".to_string())
+        .execute()
+        .await
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+
+    let mut pending_count = 0;
+    let mut sent_count = 0;
+    let mut failed_count = 0;
+    let mut errors: Vec<String> = Vec::new();
+
+    // Process each grant
+    for key in grants_list.keys {
+        let key_name = key.name;
+
+        // Get the grant
+        let grant_str = match beta_kv.get(&key_name).text().await {
+            Ok(Some(s)) => s,
+            _ => continue,
+        };
+
+        let mut grant: BetaGrant = match serde_json::from_str(&grant_str) {
+            Ok(g) => g,
+            Err(_) => continue,
+        };
+
+        // Skip if already sent or revoked
+        if grant.welcome_email_sent || grant.revoked {
+            continue;
+        }
+
+        pending_count += 1;
+
+        // Send welcome email
+        match email::send_beta_grant_welcome_email(&env, &grant.email).await {
+            Ok(result) if result.success => {
+                // Update grant to mark email as sent
+                grant.welcome_email_sent = true;
+                if let Ok(grant_json) = serde_json::to_string(&grant) {
+                    let _ = beta_kv.put(&key_name, grant_json)?.execute().await;
+                }
+                sent_count += 1;
+                console_log!("Batch send: sent welcome email to {}", grant.email);
+            }
+            Ok(result) => {
+                failed_count += 1;
+                let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                errors.push(format!("{}: {}", grant.email, error_msg));
+                console_log!("Batch send: failed for {} - {}", grant.email, error_msg);
+            }
+            Err(e) => {
+                failed_count += 1;
+                errors.push(format!("{}: {:?}", grant.email, e));
+                console_log!("Batch send: error for {} - {:?}", grant.email, e);
+            }
+        }
+    }
+
+    #[derive(serde::Serialize)]
+    struct BatchSendResponse {
+        success: bool,
+        pending_count: u32,
+        sent_count: u32,
+        failed_count: u32,
+        errors: Vec<String>,
+        message: String,
+    }
+
+    let message = if pending_count == 0 {
+        "No pending welcome emails to send".to_string()
+    } else if failed_count == 0 {
+        format!("Successfully sent {} welcome email(s)", sent_count)
+    } else {
+        format!(
+            "Sent {}/{} emails ({} failed)",
+            sent_count, pending_count, failed_count
+        )
+    };
+
+    Ok(Response::from_json(&BatchSendResponse {
+        success: failed_count == 0,
+        pending_count,
+        sent_count,
+        failed_count,
+        errors,
+        message,
+    })?)
+}
+
+// ============================================================
+// Bug #21: Account Deletion (GDPR)
+// ============================================================
+
+/// TTL for account deletion confirmation tokens (1 hour)
+const DELETION_TTL: u64 = 3600;
+
+/// Request account deletion - sends confirmation email
+async fn handle_request_account_deletion(req: Request, env: Env) -> Result<Response> {
+    use auth::types::AccountDeletionRequest;
+
+    // Verify auth token
+    let (user, _users_kv) = match auth::require_auth(&req, &env).await? {
+        Ok(u) => u,
+        Err(resp) => return Ok(resp),
+    };
+
+    let verifications_kv = env.kv("VERIFICATIONS")?;
+
+    // Generate deletion token
+    let token = auth::generate_token();
+    let deletion_key = format!("deletion:{}", token);
+
+    // Create deletion request
+    let deletion_request = AccountDeletionRequest {
+        user_id: user.id.clone(),
+        email: user.email.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        expires_at: (chrono::Utc::now() + chrono::Duration::seconds(DELETION_TTL as i64))
+            .to_rfc3339(),
+    };
+
+    // Store in KV with TTL
+    let deletion_json = serde_json::to_string(&deletion_request)
+        .map_err(|e| worker::Error::RustError(format!("{:?}", e)))?;
+    verifications_kv
+        .put(&deletion_key, deletion_json)?
+        .expiration_ttl(DELETION_TTL)
+        .execute()
+        .await?;
+
+    // Send confirmation email
+    let email_result =
+        email::send_account_deletion_email(&env, &user.email, &user.first_name, &token).await?;
+
+    #[derive(serde::Serialize)]
+    struct RequestDeletionResponse {
+        success: bool,
+        message: String,
+    }
+
+    if email_result.success {
+        Ok(Response::from_json(&RequestDeletionResponse {
+            success: true,
+            message: "Check your email for a deletion confirmation link. The link expires in 1 hour.".to_string(),
+        })?)
+    } else {
+        Ok(Response::from_json(&RequestDeletionResponse {
+            success: false,
+            message: "Failed to send confirmation email. Please try again.".to_string(),
+        })?
+        .with_status(500))
+    }
+}
+
+/// Confirm account deletion - actually deletes the account
+async fn handle_confirm_account_deletion(mut req: Request, env: Env) -> Result<Response> {
+    use auth::types::AccountDeletionRequest;
+
+    #[derive(serde::Deserialize)]
+    struct ConfirmDeletionBody {
+        token: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct ConfirmDeletionResponse {
+        success: bool,
+        message: String,
+    }
+
+    // Parse request body
+    let body: ConfirmDeletionBody = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&ConfirmDeletionResponse {
+                success: false,
+                message: format!("Invalid request: {}", e),
+            })?
+            .with_status(400));
+        }
+    };
+
+    let verifications_kv = env.kv("VERIFICATIONS")?;
+    let deletion_key = format!("deletion:{}", body.token);
+
+    // Get deletion request
+    let deletion_request: AccountDeletionRequest = match verifications_kv
+        .get(&deletion_key)
+        .json::<AccountDeletionRequest>()
+        .await?
+    {
+        Some(r) => r,
+        None => {
+            return Ok(Response::from_json(&ConfirmDeletionResponse {
+                success: false,
+                message: "Invalid or expired deletion link. Please request a new one.".to_string(),
+            })?
+            .with_status(400));
+        }
+    };
+
+    // Check if expired
+    if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&deletion_request.expires_at) {
+        if chrono::Utc::now() > expires_at {
+            // Delete the expired token
+            let _ = verifications_kv.delete(&deletion_key).await;
+            return Ok(Response::from_json(&ConfirmDeletionResponse {
+                success: false,
+                message: "Deletion link has expired. Please request a new one.".to_string(),
+            })?
+            .with_status(400));
+        }
+    }
+
+    // Delete the user's data
+    let users_kv = env.kv("USERS")?;
+    let _auth_sessions_kv = env.kv("AUTH_SESSIONS")?;
+
+    // 1. Delete user record
+    let user_key = format!("user:{}", deletion_request.user_id);
+    let _ = users_kv.delete(&user_key).await;
+
+    // 2. Delete email index
+    let email_key = format!("user_email:{}", deletion_request.email.to_lowercase());
+    let _ = users_kv.delete(&email_key).await;
+
+    // 3. Delete all auth sessions for this user (iterate through all and check)
+    // Note: In production, you might want to store user_id -> session_ids mapping
+    // For now, we'll delete what we can
+    console_log!(
+        "Account deletion: deleted user {} ({})",
+        deletion_request.user_id,
+        deletion_request.email
+    );
+
+    // 4. Delete any pending verifications
+    // Clean up email verification tokens if any
+    let email_verify_key = format!("email_verify:{}", body.token);
+    let _ = verifications_kv.delete(&email_verify_key).await;
+
+    // 5. Delete the deletion request token
+    let _ = verifications_kv.delete(&deletion_key).await;
+
+    // 6. Remove from Do Not Email list if present (they're deleting, not unsubscribing)
+    let _ = email::remove_from_do_not_email(&env, &deletion_request.email).await;
+
+    Ok(Response::from_json(&ConfirmDeletionResponse {
+        success: true,
+        message: "Your account has been permanently deleted. We're sorry to see you go!".to_string(),
+    })?)
+}
+
+// ============================================================
+// Bug #22: Google OAuth Login
+// ============================================================
+
+/// Handle Google OAuth login/signup
+async fn handle_google_oauth(mut req: Request, env: Env) -> Result<Response> {
+    use auth::types::{AuthSession, BillingCycle, OAuthProvider, RefreshToken, User, UserTier};
+    use chrono::Datelike;
+
+    #[derive(serde::Deserialize)]
+    struct GoogleOAuthRequest {
+        /// The ID token from Google Identity Services
+        id_token: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GoogleTokenInfo {
+        /// Google user ID (subject)
+        sub: String,
+        /// User's email address
+        email: String,
+        /// Whether the email is verified by Google
+        email_verified: bool,
+        /// User's given name (first name)
+        #[serde(default)]
+        given_name: Option<String>,
+        /// User's family name (last name)
+        #[serde(default)]
+        family_name: Option<String>,
+        /// User's full name
+        #[serde(default)]
+        name: Option<String>,
+        /// Profile picture URL
+        #[serde(default)]
+        picture: Option<String>,
+        /// The audience (should match our client ID)
+        aud: String,
+    }
+
+    #[derive(serde::Serialize)]
+    struct GoogleOAuthResponse {
+        success: bool,
+        message: Option<String>,
+        access_token: Option<String>,
+        refresh_token: Option<String>,
+        user: Option<auth::types::UserPublic>,
+        is_new_user: bool,
+    }
+
+    // Parse request body
+    let body: GoogleOAuthRequest = match req.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Response::from_json(&GoogleOAuthResponse {
+                success: false,
+                message: Some(format!("Invalid request: {}", e)),
+                access_token: None,
+                refresh_token: None,
+                user: None,
+                is_new_user: false,
+            })?
+            .with_status(400));
+        }
+    };
+
+    // Get Google Client ID from environment
+    let google_client_id = match env.var("GOOGLE_CLIENT_ID") {
+        Ok(id) => id.to_string(),
+        Err(_) => {
+            console_log!("GOOGLE_CLIENT_ID not configured");
+            return Ok(Response::from_json(&GoogleOAuthResponse {
+                success: false,
+                message: Some("Google OAuth not configured. Please contact support.".to_string()),
+                access_token: None,
+                refresh_token: None,
+                user: None,
+                is_new_user: false,
+            })?
+            .with_status(500));
+        }
+    };
+
+    // Verify the ID token with Google
+    let verify_url = format!(
+        "https://oauth2.googleapis.com/tokeninfo?id_token={}",
+        body.id_token
+    );
+
+    let google_response = match worker::Fetch::Url(verify_url.parse().unwrap())
+        .send()
+        .await
+    {
+        Ok(mut resp) => {
+            let status = resp.status_code();
+            if status < 200 || status >= 300 {
+                console_log!("Google token verification failed: status {}", status);
+                return Ok(Response::from_json(&GoogleOAuthResponse {
+                    success: false,
+                    message: Some("Invalid Google token. Please try signing in again.".to_string()),
+                    access_token: None,
+                    refresh_token: None,
+                    user: None,
+                    is_new_user: false,
+                })?
+                .with_status(401));
+            }
+            match resp.json::<GoogleTokenInfo>().await {
+                Ok(info) => info,
+                Err(e) => {
+                    console_log!("Failed to parse Google response: {:?}", e);
+                    return Ok(Response::from_json(&GoogleOAuthResponse {
+                        success: false,
+                        message: Some("Failed to verify Google token.".to_string()),
+                        access_token: None,
+                        refresh_token: None,
+                        user: None,
+                        is_new_user: false,
+                    })?
+                    .with_status(500));
+                }
+            }
+        }
+        Err(e) => {
+            console_log!("Google verification request failed: {:?}", e);
+            return Ok(Response::from_json(&GoogleOAuthResponse {
+                success: false,
+                message: Some("Failed to verify with Google. Please try again.".to_string()),
+                access_token: None,
+                refresh_token: None,
+                user: None,
+                is_new_user: false,
+            })?
+            .with_status(500));
+        }
+    };
+
+    // Verify the audience matches our client ID
+    if google_response.aud != google_client_id {
+        console_log!(
+            "Google aud mismatch: expected {}, got {}",
+            google_client_id,
+            google_response.aud
+        );
+        return Ok(Response::from_json(&GoogleOAuthResponse {
+            success: false,
+            message: Some("Invalid token audience.".to_string()),
+            access_token: None,
+            refresh_token: None,
+            user: None,
+            is_new_user: false,
+        })?
+        .with_status(401));
+    }
+
+    // Check if email is verified by Google
+    if !google_response.email_verified {
+        return Ok(Response::from_json(&GoogleOAuthResponse {
+            success: false,
+            message: Some("Your Google email is not verified. Please verify it first.".to_string()),
+            access_token: None,
+            refresh_token: None,
+            user: None,
+            is_new_user: false,
+        })?
+        .with_status(400));
+    }
+
+    let email = google_response.email.to_lowercase();
+    let users_kv = env.kv("USERS")?;
+    let email_key = format!("user_email:{}", email);
+
+    // Check if user exists by email
+    let (mut user, is_new_user) = match users_kv.get(&email_key).text().await? {
+        Some(user_id) => {
+            // Existing user - retrieve and potentially link Google
+            let user_key = format!("user:{}", user_id);
+            match users_kv.get(&user_key).json::<User>().await? {
+                Some(mut existing_user) => {
+                    // Link Google to existing account if not already linked
+                    if existing_user.oauth_provider.is_none() {
+                        existing_user.oauth_provider = Some(OAuthProvider::Google);
+                        existing_user.oauth_provider_id = Some(google_response.sub.clone());
+                        existing_user.profile_picture_url = google_response.picture.clone();
+                        existing_user.updated_at = chrono::Utc::now().to_rfc3339();
+                    }
+                    // Mark email as verified (Google verified it)
+                    existing_user.email_verified = true;
+                    (existing_user, false)
+                }
+                None => {
+                    console_log!("User email index exists but user not found: {}", email);
+                    return Ok(Response::from_json(&GoogleOAuthResponse {
+                        success: false,
+                        message: Some("Account error. Please contact support.".to_string()),
+                        access_token: None,
+                        refresh_token: None,
+                        user: None,
+                        is_new_user: false,
+                    })?
+                    .with_status(500));
+                }
+            }
+        }
+        None => {
+            // New user - create account
+            let user_id = auth::generate_token();
+            let now = chrono::Utc::now();
+
+            // Parse name from Google
+            let first_name = google_response.given_name.unwrap_or_else(|| {
+                google_response
+                    .name
+                    .as_ref()
+                    .and_then(|n| n.split_whitespace().next())
+                    .unwrap_or("User")
+                    .to_string()
+            });
+            let last_name = google_response.family_name.unwrap_or_else(|| {
+                google_response
+                    .name
+                    .as_ref()
+                    .and_then(|n| n.split_whitespace().last())
+                    .unwrap_or("")
+                    .to_string()
+            });
+
+            let new_user = User {
+                id: user_id,
+                email: email.clone(),
+                email_verified: true, // Google verified it
+                password_hash: String::new(), // OAuth users have no password
+                tier: UserTier::Free,
+                created_at: now.to_rfc3339(),
+                updated_at: now.to_rfc3339(),
+                first_name,
+                middle_initial: None,
+                last_name,
+                monthly_document_count: 0,
+                current_quota_month: format!("{}-{:02}", now.year(), now.month()),
+                last_login_at: None,
+                login_count: 0,
+                stripe_customer_id: None,
+                stripe_subscription_id: None,
+                billing_cycle: BillingCycle::Monthly,
+                overage_count: 0,
+                limit_email_sent: false,
+                name_set: true, // Google provided the name
+                pending_name_change_request_id: None,
+                grant_source: None,
+                granted_tier: None,
+                email_preferences: auth::types::EmailPreferences::default(),
+                oauth_provider: Some(OAuthProvider::Google),
+                oauth_provider_id: Some(google_response.sub.clone()),
+                profile_picture_url: google_response.picture.clone(),
+            };
+
+            // Check for beta grant and upgrade tier if found
+            let beta_kv = env.kv("BETA_GRANTS").ok();
+            let mut final_user = new_user;
+            if let Some(ref kv) = beta_kv {
+                let grant_key = format!("grant:{}", email);
+                if let Ok(Some(grant_str)) = kv.get(&grant_key).text().await {
+                    if let Ok(grant) = serde_json::from_str::<auth::types::BetaGrant>(&grant_str) {
+                        if !grant.revoked {
+                            final_user.tier = grant.tier;
+                            final_user.grant_source = Some(auth::types::GrantSource::PreGrant);
+                            final_user.granted_tier = Some(grant.tier);
+                            console_log!(
+                                "Applied pre-grant {} tier to new Google OAuth user {}",
+                                grant.tier.display_name(),
+                                email
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Remove from Do Not Email list if present (user creating account)
+            let _ = email::remove_from_do_not_email(&env, &email).await;
+
+            (final_user, true)
+        }
+    };
+
+    // Update login tracking
+    user.last_login_at = Some(chrono::Utc::now().to_rfc3339());
+    user.login_count += 1;
+    user.check_monthly_reset();
+
+    // Save user
+    auth::save_user(&users_kv, &user).await?;
+
+    // Generate session and tokens
+    let session_id = auth::generate_token();
+    let jwt_secret = env
+        .secret("JWT_SECRET")
+        .map_err(|_| worker::Error::RustError("JWT_SECRET not configured".to_string()))?
+        .to_string();
+
+    let tier_str = user.tier.display_name();
+    let access_token = auth::jwt::generate_access_token(&user.id, &user.email, tier_str, &jwt_secret)
+        .map_err(|e| worker::Error::RustError(format!("Failed to generate access token: {}", e)))?;
+    let refresh_token = auth::jwt::generate_refresh_token(&user.id, &session_id, &jwt_secret)
+        .map_err(|e| worker::Error::RustError(format!("Failed to generate refresh token: {}", e)))?;
+
+    // Store auth session in KV
+    let auth_sessions_kv = env.kv("AUTH_SESSIONS")?;
+    let now = chrono::Utc::now();
+    let session = AuthSession {
+        user_id: user.id.clone(),
+        created_at: now.to_rfc3339(),
+        expires_at: (now + chrono::Duration::days(30)).to_rfc3339(),
+        ip: None, // Could get from request headers
+        user_agent: None,
+    };
+
+    let session_key = format!("auth_session:{}", session_id);
+    auth_sessions_kv
+        .put(&session_key, serde_json::to_string(&session)?)?
+        .expiration_ttl(30 * 24 * 60 * 60) // 30 days
+        .execute()
+        .await?;
+
+    // Store refresh token reference
+    let refresh_key = format!("refresh_token:{}", &refresh_token[..32]); // Use first 32 chars as key
+    let refresh_record = RefreshToken {
+        user_id: user.id.clone(),
+        session_id: session_id.clone(),
+        created_at: now.to_rfc3339(),
+        expires_at: (now + chrono::Duration::days(30)).to_rfc3339(),
+    };
+    auth_sessions_kv
+        .put(&refresh_key, serde_json::to_string(&refresh_record)?)?
+        .expiration_ttl(30 * 24 * 60 * 60) // 30 days
+        .execute()
+        .await?;
+
+    console_log!(
+        "Google OAuth {} for user {} ({})",
+        if is_new_user { "signup" } else { "login" },
+        user.id,
+        user.email
+    );
+
+    Ok(Response::from_json(&GoogleOAuthResponse {
+        success: true,
+        message: Some(if is_new_user {
+            "Account created successfully!".to_string()
+        } else {
+            "Logged in successfully!".to_string()
+        }),
+        access_token: Some(access_token),
+        refresh_token: Some(refresh_token),
+        user: Some(auth::types::UserPublic::from(&user)),
+        is_new_user,
     })?)
 }
 

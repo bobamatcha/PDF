@@ -31,8 +31,8 @@ pub mod types;
 
 // Re-export commonly used items
 pub use handlers::{
-    get_authenticated_user, handle_check_email, handle_forgot_password, handle_login,
-    handle_logout, handle_refresh, handle_register, handle_resend_verification,
+    generate_token, get_authenticated_user, handle_check_email, handle_forgot_password,
+    handle_login, handle_logout, handle_refresh, handle_register, handle_resend_verification,
     handle_reset_password, handle_update_profile, handle_verify_email, require_auth, save_user,
 };
 // Note: jwt exports (extract_bearer_token, validate_access_token, AccessTokenClaims) available if needed

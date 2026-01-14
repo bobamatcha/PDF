@@ -687,6 +687,194 @@ Email now shows "Hello john," for john@example.com if no name provided.
 
 ---
 
+### Bug #19: Admin Grant Welcome Email (P2)
+
+**Status:** OPEN
+**Priority:** P2 - MEDIUM
+**Complexity:** Medium
+**Depends on:** Bug #20
+
+**Problem:** No email sent when admin grants free professional access via beta grants.
+
+**Requirements:**
+- Cheeky/friendly email mentioning "gifted by Amar Singh"
+- Subject: "🎁 A gift for you from Amar Singh - Free Professional Access!"
+- Encourage bug reporting with screenshots
+- Suggest voice-to-text for frustrated users
+- Include unsubscribe link (depends on Bug #20)
+
+**Implementation:**
+1. Add `send_beta_grant_welcome_email()` to `email/mod.rs`
+2. Call from `handle_admin_create_beta_grant` in `lib.rs`
+3. Add `welcome_email_sent: bool` to BetaGrant struct
+4. Add "Send Welcome Emails" button in admin panel for batch send
+
+**Files to modify:**
+- `apps/docsign-web/worker/src/email/mod.rs` - Add welcome email function
+- `apps/docsign-web/worker/src/auth/types.rs` - Add welcome_email_sent field
+- `apps/docsign-web/worker/src/lib.rs` - Call email + batch endpoint
+- `apps/docsign-web/www/admin.html` - Add batch send button
+
+---
+
+### Bug #20: One-Click Unsubscribe System (P1)
+
+**Status:** OPEN
+**Priority:** P1 - HIGH (GDPR/CAN-SPAM compliance)
+**Complexity:** High
+
+**Problem:** Email footer just says "email us to unsubscribe" - needs one-click solution.
+
+**Architecture:**
+- New KV namespace: `DO_NOT_EMAIL` (key: `dne:{email}`)
+- New page: `/unsubscribe.html` (one-click confirmation)
+- All email functions check blocklist before sending
+
+**Requirements:**
+1. No account: one-click unsubscribe works immediately
+2. Has account: redirect to profile "Email Preferences" section (gentler approach)
+3. Account holders toggle marketing vs transactional preferences
+4. Creating account removes from Do Not Email list
+5. Enforce blocklist in ALL send_email() calls
+
+**Endpoints:**
+- `GET /unsubscribe?email={base64}` - Show confirmation page
+- `POST /unsubscribe` - Process unsubscribe
+
+**Files to modify:**
+- `apps/docsign-web/worker/wrangler.toml` - Add DO_NOT_EMAIL KV
+- `apps/docsign-web/worker/src/auth/types.rs` - Add DoNotEmailEntry struct
+- `apps/docsign-web/worker/src/email/mod.rs` - Add blocklist functions
+- `apps/docsign-web/worker/src/lib.rs` - Add endpoints, modify email templates
+- `apps/docsign-web/www/unsubscribe.html` (NEW)
+- `apps/docsign-web/www/profile.html` - Add Email Preferences section
+
+---
+
+### Bug #21: Account Deletion - GDPR Compliance (P1)
+
+**Status:** OPEN
+**Priority:** P1 - HIGH (legal requirement)
+**Complexity:** Medium
+**Depends on:** Bug #20
+
+**Problem:** No way for users to delete their own accounts. Required by GDPR and US privacy laws.
+
+**Flow:**
+1. User clicks "Delete My Account" on profile page
+2. Warning modal: "All documents will be lost. This is irreversible."
+3. User confirms → `POST /auth/request-deletion`
+4. Confirmation email sent with token (1 hour TTL)
+5. User clicks email link → `POST /auth/confirm-deletion`
+6. Account fully deleted from all KV stores
+
+**What Gets Deleted:**
+- User record (`USERS:user:{id}`)
+- Email index (`USERS:user_email:{email}`)
+- Auth sessions (`AUTH_SESSIONS`)
+- Pending verifications (`VERIFICATIONS`)
+- Do Not Email entry (if present)
+
+**NOT Deleted:**
+- Signing sessions (other signers still need to sign)
+- Completed documents (audit trail)
+
+**Files to modify:**
+- `apps/docsign-web/worker/src/auth/types.rs` - Add AccountDeletionConfirmation
+- `apps/docsign-web/worker/src/lib.rs` - Add deletion endpoints
+- `apps/docsign-web/www/profile.html` - Add "Danger Zone" section
+
+---
+
+### Bug #22: Google OAuth Login (P2)
+
+**Status:** OPEN
+**Priority:** P2 - MEDIUM
+**Complexity:** High
+
+**Problem:** Only email/password auth exists. Users want "Sign in with Google" option.
+
+**Architecture:** Client-side Google Identity Services (GIS) library
+- Worker verifies ID token via `https://oauth2.googleapis.com/tokeninfo`
+- No server-side OAuth redirect needed
+
+**Flow:**
+1. User clicks "Sign in with Google" button
+2. Google popup handles auth, returns ID token
+3. Frontend sends token to `POST /auth/google`
+4. Worker verifies token, creates/links account
+5. Returns JWT tokens (same as password login)
+
+**Account Linking:**
+- Existing email → Link Google to existing account
+- New email → Create account with Google profile info
+- OAuth users have no password (handle password reset specially)
+
+**Prerequisites:**
+- Google Cloud project (free)
+- OAuth Client ID configured
+
+**Files to modify:**
+- `apps/docsign-web/worker/src/auth/types.rs` - Add OAuthProvider, oauth fields
+- `apps/docsign-web/worker/src/lib.rs` - Add /auth/google endpoint
+- `apps/docsign-web/www/auth.html` - Add Google sign-in button
+- `apps/docsign-web/worker/wrangler.toml` - Add GOOGLE_CLIENT_ID var
+
+---
+
+### Bug #23: White Text on White TextBox in Admin (P0)
+
+**Status:** SOLVED (2026-01-14)
+**Priority:** P0 - CRITICAL (accessibility)
+**Complexity:** Low (1 line fix)
+
+**Problem:** Admin input for granting beta access has white text on white background. Form inputs set `background: var(--bg-tertiary)` but NO `color` property.
+
+**Root Cause:** `admin.html` lines 411-420:
+```css
+.form-group input, .form-group select, .form-group textarea {
+    background: var(--bg-tertiary);
+    /* MISSING: color: var(--text-primary); */
+}
+```
+
+**Fix Applied:**
+Added `color: var(--text-primary);` to the input styling.
+
+Also fixed `.signing-link-item .link-input` in `index.html` (added `color: #111827;`).
+
+**Files Modified:**
+- `apps/docsign-web/www/admin.html` (line 420)
+- `apps/docsign-web/www/index.html` (line 1369)
+
+---
+
+### Bug #24: Comprehensive Color Contrast Test (P1)
+
+**Status:** SOLVED (2026-01-14)
+**Priority:** P1 - HIGH (accessibility)
+**Complexity:** Low
+
+**Problem:** Need automated test to catch white-on-white or other contrast issues across ALL HTML files.
+
+**Implementation:**
+- Created Vitest test that scans all HTML files in `www/`
+- Checks: if input has `background:`, it must also have `color:`
+- Excludes decorative elements (toggles, hover states, checkboxes)
+- Tests CSS variable definitions for proper contrast
+- 13 test cases covering all HTML files
+
+**Files Created:**
+- `apps/docsign-web/src/ts/__tests__/color-contrast.test.ts`
+
+**Verification:**
+```bash
+npm test -- --run src/ts/__tests__/color-contrast.test.ts
+# 13 tests passed
+```
+
+---
+
 ## Solved Bugs
 
 *Bugs that have been fixed move here. Keep for historical reference.*

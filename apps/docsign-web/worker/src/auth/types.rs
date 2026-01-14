@@ -109,6 +109,20 @@ pub enum GrantSource {
     PreGrant,
 }
 
+// ============================================
+// Bug #22: OAuth Providers
+// ============================================
+
+/// OAuth provider for third-party authentication
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OAuthProvider {
+    /// Google Sign-In
+    Google,
+    /// Apple Sign-In (future)
+    Apple,
+}
+
 /// Pre-grant record stored in BETA_GRANTS KV
 /// Allows admin to grant tier access to emails before they register
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +144,40 @@ pub struct BetaGrant {
     /// ISO timestamp when revoked (if applicable)
     #[serde(default)]
     pub revoked_at: Option<String>,
+    /// Bug #19: Whether welcome email was sent
+    #[serde(default)]
+    pub welcome_email_sent: bool,
+}
+
+/// Bug #20: Do Not Email entry stored in DO_NOT_EMAIL KV
+/// Stores unsubscribed emails and tracks account status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoNotEmailEntry {
+    /// Email address (lowercase normalized)
+    pub email: String,
+    /// ISO timestamp when unsubscribed
+    pub unsubscribed_at: String,
+    /// Whether the email has an associated account
+    pub has_account: bool,
+    /// Optional reason for unsubscription
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Bug #20: Email preferences for users (stored in User struct)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EmailPreferences {
+    /// Receive marketing/promotional emails (welcome gifts, etc.)
+    #[serde(default = "default_true")]
+    pub marketing: bool,
+    /// Receive product updates and feature announcements
+    #[serde(default = "default_true")]
+    pub product_updates: bool,
+    // Note: Transactional emails (signature requests, verifications) always sent
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// User record stored in KV
@@ -208,6 +256,24 @@ pub struct User {
     /// Original granted tier (for display when tier was granted, not paid)
     #[serde(default)]
     pub granted_tier: Option<UserTier>,
+    // ============================================
+    // Bug #20: Email Preferences
+    // ============================================
+    /// User's email preferences for non-transactional emails
+    #[serde(default)]
+    pub email_preferences: EmailPreferences,
+    // ============================================
+    // Bug #22: OAuth Login
+    // ============================================
+    /// OAuth provider used for authentication (if any)
+    #[serde(default)]
+    pub oauth_provider: Option<OAuthProvider>,
+    /// OAuth provider's user ID (Google sub, Apple sub, etc.)
+    #[serde(default)]
+    pub oauth_provider_id: Option<String>,
+    /// Profile picture URL from OAuth provider
+    #[serde(default)]
+    pub profile_picture_url: Option<String>,
 }
 
 impl User {
@@ -257,6 +323,12 @@ impl User {
             // Beta Access Grant System
             grant_source: None,
             granted_tier: None,
+            // Bug #20: Email preferences
+            email_preferences: EmailPreferences::default(),
+            // Bug #22: OAuth
+            oauth_provider: None,
+            oauth_provider_id: None,
+            profile_picture_url: None,
         }
     }
 
@@ -382,6 +454,16 @@ pub struct EmailVerification {
 /// Password reset token stored in VERIFICATIONS namespace
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PasswordReset {
+    pub user_id: String,
+    pub email: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+/// Bug #21: Account deletion request stored in VERIFICATIONS namespace
+/// TTL: 1 hour (3600 seconds)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountDeletionRequest {
     pub user_id: String,
     pub email: String,
     pub created_at: String,

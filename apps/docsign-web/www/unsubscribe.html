@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unsubscribe - GetSignatures</title>
+    <link rel="stylesheet" href="geriatric.css">
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f8f8;
+            --text-primary: #1a1a1a;
+            --text-secondary: #4a4a4a;
+            --accent-primary: #1e40af;
+            --success: #10b981;
+            --success-bg: #d1fae5;
+            --warning: #f59e0b;
+            --warning-bg: #fef3c7;
+            --danger: #ef4444;
+            --danger-bg: #fee2e2;
+        }
+
+        body {
+            font-family: 'Atkinson Hyperlegible', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 500px;
+            width: 100%;
+            background: var(--bg-primary);
+            border-radius: 16px;
+            padding: 2.5rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-primary);
+            margin-bottom: 1.5rem;
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            margin-bottom: 1rem;
+        }
+
+        p {
+            font-size: 1.125rem;
+            line-height: 1.6;
+            margin-bottom: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        .status-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+        }
+
+        .success-icon { color: var(--success); }
+        .warning-icon { color: var(--warning); }
+        .error-icon { color: var(--danger); }
+
+        .btn {
+            display: inline-block;
+            padding: 1rem 2rem;
+            font-size: 1.125rem;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            min-height: 60px;
+        }
+
+        .btn-primary {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #1e3a8a;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--accent-primary);
+            border: 2px solid var(--accent-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent-primary);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .loading {
+            padding: 3rem;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid var(--bg-secondary);
+            border-top: 4px solid var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .warning-box {
+            background: var(--warning-bg);
+            border: 2px solid var(--warning);
+            border-radius: 8px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+
+        .warning-box p {
+            margin: 0;
+            color: #92400e;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">GetSignatures</div>
+
+        <!-- Loading state -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Processing your request...</p>
+        </div>
+
+        <!-- Success state -->
+        <div id="success" class="hidden">
+            <div class="status-icon success-icon">&#10004;</div>
+            <h1>You're Unsubscribed</h1>
+            <p>You won't receive any more marketing emails from us. If you change your mind, just create an account and you'll be back on the list!</p>
+            <a href="/" class="btn btn-secondary">Go to Homepage</a>
+        </div>
+
+        <!-- Has account - redirect to settings -->
+        <div id="has-account" class="hidden">
+            <div class="status-icon warning-icon">&#9888;</div>
+            <h1>Manage Your Email Preferences</h1>
+            <p>Since you have an account with us, you can manage your email preferences in your profile settings.</p>
+            <div class="button-group">
+                <a href="/profile.html" class="btn btn-primary">Go to Profile Settings</a>
+                <a href="/" class="btn btn-secondary">Go to Homepage</a>
+            </div>
+        </div>
+
+        <!-- Error state -->
+        <div id="error" class="hidden">
+            <div class="status-icon error-icon">&#10006;</div>
+            <h1>Something Went Wrong</h1>
+            <p id="error-message">We couldn't process your unsubscribe request. Please try again or contact support.</p>
+            <div class="button-group">
+                <button onclick="retryUnsubscribe()" class="btn btn-primary">Try Again</button>
+                <a href="mailto:bobamatchasolutions@gmail.com" class="btn btn-secondary">Contact Support</a>
+            </div>
+        </div>
+
+        <!-- Already unsubscribed -->
+        <div id="already-unsubscribed" class="hidden">
+            <div class="status-icon success-icon">&#10004;</div>
+            <h1>Already Unsubscribed</h1>
+            <p>You're already unsubscribed from our emails. No further action needed!</p>
+            <a href="/" class="btn btn-secondary">Go to Homepage</a>
+        </div>
+
+        <!-- Invalid link -->
+        <div id="invalid" class="hidden">
+            <div class="status-icon error-icon">&#63;</div>
+            <h1>Invalid Unsubscribe Link</h1>
+            <p>This unsubscribe link appears to be invalid or expired. If you'd like to unsubscribe, please use the link in a recent email or contact us.</p>
+            <a href="mailto:bobamatchasolutions@gmail.com" class="btn btn-secondary">Contact Support</a>
+        </div>
+    </div>
+
+    <script type="module">
+        // API base URL (same as main app)
+        const API_BASE_URL = 'https://api.getsignatures.org';
+
+        // Show a specific state
+        function showState(stateId) {
+            ['loading', 'success', 'has-account', 'error', 'already-unsubscribed', 'invalid']
+                .forEach(id => {
+                    document.getElementById(id).classList.add('hidden');
+                });
+            document.getElementById(stateId).classList.remove('hidden');
+        }
+
+        // Get email from URL parameter
+        function getEmailFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('email');
+        }
+
+        // Decode base64 email token
+        function decodeEmailToken(token) {
+            try {
+                // URL-safe base64 decode
+                const base64 = token.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = base64 + '='.repeat((4 - base64.length % 4) % 4);
+                return atob(padded);
+            } catch (e) {
+                console.error('Failed to decode email token:', e);
+                return null;
+            }
+        }
+
+        // Process unsubscribe
+        async function processUnsubscribe() {
+            const token = getEmailFromUrl();
+
+            if (!token) {
+                showState('invalid');
+                return;
+            }
+
+            const email = decodeEmailToken(token);
+            if (!email || !email.includes('@')) {
+                showState('invalid');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/unsubscribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    if (data.already_unsubscribed) {
+                        showState('already-unsubscribed');
+                    } else {
+                        showState('success');
+                    }
+                } else if (response.status === 409 && data.has_account) {
+                    // User has an account - redirect to settings
+                    showState('has-account');
+                } else {
+                    document.getElementById('error-message').textContent =
+                        data.message || 'We couldn\'t process your request. Please try again.';
+                    showState('error');
+                }
+            } catch (e) {
+                console.error('Unsubscribe error:', e);
+                showState('error');
+            }
+        }
+
+        // Retry unsubscribe
+        window.retryUnsubscribe = function() {
+            showState('loading');
+            processUnsubscribe();
+        };
+
+        // Start processing on page load
+        processUnsubscribe();
+    </script>
+</body>
+</html>

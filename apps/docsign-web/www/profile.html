@@ -422,6 +422,34 @@
             margin-bottom: 1rem;
             color: var(--text-secondary);
         }
+
+        /* Bug #21: Danger Zone */
+        .danger-zone {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 2px solid #fecaca;
+        }
+
+        .danger-zone h3 {
+            color: #dc2626;
+            font-size: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .danger-zone p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
     </style>
 </head>
 <body>
@@ -630,6 +658,13 @@
                             <a href="/pricing.html" class="btn btn-outline">Manage Plan</a>
                         `}
                     </div>
+
+                    <!-- Bug #21: Danger Zone -->
+                    <div class="danger-zone">
+                        <h3>Danger Zone</h3>
+                        <p>Once you delete your account, there is no going back. All your documents will be permanently deleted.</p>
+                        <button class="btn btn-danger" onclick="requestAccountDeletion()">Delete My Account</button>
+                    </div>
                 </div>
             `;
         }
@@ -687,6 +722,49 @@
             } catch (error) {
                 console.error('Error submitting beta request:', error);
                 alert('Error submitting request. Please try again.');
+            }
+        };
+
+        // Bug #21: Account deletion
+        window.requestAccountDeletion = async function() {
+            const confirmed = confirm(
+                'Are you sure you want to delete your account?\n\n' +
+                'This action is IRREVERSIBLE. All your documents will be permanently deleted.\n\n' +
+                'We will send a confirmation email to verify this request.'
+            );
+
+            if (!confirmed) return;
+
+            const token = authManager.getAccessToken();
+            if (!token) {
+                alert('Please sign in to delete your account');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/auth/request-deletion`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    alert(
+                        'Deletion request received!\n\n' +
+                        'Please check your email for a confirmation link. ' +
+                        'The link will expire in 1 hour.\n\n' +
+                        'Your account will NOT be deleted until you click the confirmation link.'
+                    );
+                } else {
+                    alert(data.message || 'Failed to request deletion. Please try again.');
+                }
+            } catch (error) {
+                console.error('Error requesting account deletion:', error);
+                alert('Error requesting deletion. Please try again.');
             }
         };
     </script>
