@@ -8284,14 +8284,24 @@
         window.submitRestart = submitRestart;
 
         // Remote Signing - Encryption/Decryption using Web Crypto
-        const SIGNING_SERVER_URL = 'https://api.getsignatures.org';
+        // Use localhost when LOCAL_MODE is enabled (for local development with wrangler dev)
+        const SIGNING_SERVER_URL = LOCAL_MODE ? 'http://localhost:8787' : 'https://api.getsignatures.org';
 
         // Test Mode: Add ?test_mode=true to URL to skip email sending and show links directly
         // Useful for testing the full flow without wasting Resend credits
         const TEST_MODE = new URLSearchParams(window.location.search).has('test_mode');
+        
+        // Local Mode: Add ?local=true to use localhost:8787 (wrangler dev) instead of production API
+        // Usage: trunk serve --port 8080, then open http://localhost:8080?local=true&test_mode=true
+        const LOCAL_MODE = new URLSearchParams(window.location.search).has('local');
+        
         if (TEST_MODE) {
             console.log('%c🧪 TEST MODE ENABLED', 'background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-weight: bold;');
             console.log('Email sending will be skipped. Signing links will be shown directly.');
+        }
+        if (LOCAL_MODE) {
+            console.log('%c🏠 LOCAL MODE ENABLED', 'background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 4px; font-weight: bold;');
+            console.log('Using localhost:8787 for API calls. Make sure wrangler dev is running.');
         }
 
         async function generateEncryptionKey() {
