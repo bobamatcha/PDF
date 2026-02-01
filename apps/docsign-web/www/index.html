@@ -7332,28 +7332,69 @@
                 state.currentSessionId = sessionId;
                 state.signingLinks = links;
 
-                // Bug #15: Display recipients WITHOUT showing actual links (links only sent via email)
-                linksList.innerHTML = links.map((l, i) => `
-                    <div class="signing-link-item" style="padding: 0.75rem 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary); display: flex; justify-content: space-between; align-items: center;">
-                        <div style="display: flex; align-items: center; gap: 0.75rem;">
-                            <div style="width: 32px; height: 32px; background: #dbeafe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
-                                    <polyline points="22,6 12,13 2,6"></polyline>
-                                </svg>
+                // TEST_MODE: Show actual links with copy buttons for testing
+                // Bug #15: In production mode, display recipients WITHOUT showing actual links (links only sent via email)
+                if (TEST_MODE) {
+                    // Update modal title to indicate test mode
+                    if (modalTitle) modalTitle.textContent = '🧪 Test Mode - Links Generated';
+                    // Hide send emails button in test mode
+                    if (sendBtn) sendBtn.classList.add('hidden');
+                    
+                    linksList.innerHTML = `
+                        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem;">
+                            <strong style="color: #92400e;">⚠️ Test Mode Active</strong>
+                            <p style="color: #92400e; font-size: 0.875rem; margin: 0.5rem 0 0 0;">
+                                Emails will NOT be sent. Copy links below to test the signing flow.
+                            </p>
+                        </div>
+                    ` + links.map((l, i) => `
+                        <div class="signing-link-item" style="padding: 0.75rem 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary); margin-bottom: 0.5rem;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                                <div style="width: 32px; height: 32px; background: #dbeafe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                        <polyline points="22,6 12,13 2,6"></polyline>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong style="display: block; font-size: 0.875rem;">${escapeHtml(l.name || l.email.split('@')[0])}</strong>
+                                    <span style="color: #6b7280; font-size: 0.75rem;">${escapeHtml(l.email)}</span>
+                                </div>
                             </div>
-                            <div>
-                                <strong style="display: block; font-size: 0.875rem;">${escapeHtml(l.name || l.email.split('@')[0])}</strong>
-                                <span style="color: #6b7280; font-size: 0.75rem;">${escapeHtml(l.email)}</span>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                <input type="text" readonly value="${escapeHtml(l.link)}" 
+                                    style="flex: 1; padding: 0.5rem; border: 1px solid var(--border-primary); border-radius: 4px; font-size: 0.75rem; background: var(--bg-secondary);"
+                                    onclick="this.select()">
+                                <button onclick="copySigningLink(this, '${escapeHtml(l.link)}')" 
+                                    style="padding: 0.5rem 1rem; background: #1e40af; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; white-space: nowrap;">
+                                    Copy
+                                </button>
                             </div>
                         </div>
-                        <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;">
-                            Signer ${i + 1}
-                        </span>
-                    </div>
-                `).join('');
+                    `).join('');
+                } else {
+                    linksList.innerHTML = links.map((l, i) => `
+                        <div class="signing-link-item" style="padding: 0.75rem 1rem; border: 1px solid var(--border-primary); border-radius: 8px; background: var(--bg-tertiary); display: flex; justify-content: space-between; align-items: center;">
+                            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                <div style="width: 32px; height: 32px; background: #dbeafe; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1e40af" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                                        <polyline points="22,6 12,13 2,6"></polyline>
+                                    </svg>
+                                </div>
+                                <div>
+                                    <strong style="display: block; font-size: 0.875rem;">${escapeHtml(l.name || l.email.split('@')[0])}</strong>
+                                    <span style="color: #6b7280; font-size: 0.75rem;">${escapeHtml(l.email)}</span>
+                                </div>
+                            </div>
+                            <span style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; white-space: nowrap;">
+                                Signer ${i + 1}
+                            </span>
+                        </div>
+                    `).join('');
+                }
 
-                addAuditEntry('Signing links generated for ' + links.length + ' signer(s)');
+                addAuditEntry('Signing links generated for ' + links.length + ' signer(s)' + (TEST_MODE ? ' (test mode)' : ''));
 
                 // Show rate limit info if available
                 if (sessionResult.remaining_today !== undefined || sessionResult.remaining_month !== undefined) {
@@ -8243,6 +8284,14 @@
 
         // Remote Signing - Encryption/Decryption using Web Crypto
         const SIGNING_SERVER_URL = 'https://api.getsignatures.org';
+
+        // Test Mode: Add ?test_mode=true to URL to skip email sending and show links directly
+        // Useful for testing the full flow without wasting Resend credits
+        const TEST_MODE = new URLSearchParams(window.location.search).has('test_mode');
+        if (TEST_MODE) {
+            console.log('%c🧪 TEST MODE ENABLED', 'background: #fef3c7; color: #92400e; padding: 4px 8px; border-radius: 4px; font-weight: bold;');
+            console.log('Email sending will be skipped. Signing links will be shown directly.');
+        }
 
         async function generateEncryptionKey() {
             return await crypto.subtle.generateKey(
