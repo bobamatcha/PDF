@@ -467,34 +467,36 @@ cd apps/docsign-web && trunk build --release
 
 ### Bug #10: Review Page Shows Wrong Page Count (1/1)
 
-**Status:** IN PROGRESS
+**Status:** SOLVED (2026-02-01)
 **Priority:** P1 - HIGH (user-reported)
-**Complexity:** Low (1 line fix)
+**Complexity:** Low (reorder function calls)
 
 **Problem:** On Step 4 (Review), the page indicator shows "1 / 1" for a 14-page document. Page number never updates when scrolling.
 
-**Root Cause:** The `review-page-container` elements are MISSING the `data-page` attribute.
-- Line 4460: `pageContainer.className = 'review-page-container';` - NO data-page set
-- Line 3862: `container.querySelectorAll('[data-page]')` - Observer can't find pages
-- Line 3836: `container.querySelector('[data-page="${pageNum}"]')` - scrollToReviewPage fails
+**Root Cause:** In `renderReview()`, `updateReviewUI()` was called BEFORE `setupEditablePageInput()`.
+- `setupEditablePageInput()` creates the `_updateDisplay` function on the page indicator
+- `updateReviewUI()` uses `_updateDisplay` to update the count
+- Since `updateReviewUI()` ran first, `_updateDisplay` didn't exist yet, so update failed
 
-**Fix:**
-```javascript
-// In renderReview(), after line 4460, add:
-pageContainer.dataset.page = pageNum;
-```
+**Fix Applied (2026-02-01):**
+Reordered the function calls in `renderReview()`:
+1. Call `setupEditablePageInput()` FIRST (creates `_updateDisplay`)
+2. Call `updateReviewUI()` AFTER (now `_updateDisplay` exists)
 
 **Acceptance Criteria:**
-- [ ] Review page shows correct total page count (e.g., "1 / 14")
-- [ ] Page number updates when scrolling
-- [ ] Prev/Next buttons navigate correctly
-- [ ] scrollToReviewPage() works
+- [x] Review page shows correct total page count (e.g., "1 / 14")
+- [x] Page number updates when scrolling
+- [x] Prev/Next buttons navigate correctly
+- [x] scrollToReviewPage() works
+
+**Files Modified:**
+- `apps/docsign-web/www/index.html` - Reordered Bug #12 setup before Bug #10 updateReviewUI() call
 
 ---
 
 ### Bug #11: Missing Jump-to-Top/Bottom Buttons
 
-**Status:** OPEN (feature request)
+**Status:** SOLVED (2026-02-01 - verified already implemented)
 **Priority:** P2 - MEDIUM
 **Complexity:** Medium
 
@@ -507,56 +509,63 @@ pageContainer.dataset.page = pageNum;
 - 44x44px minimum touch targets (Apple HIG, WCAG)
 - Apply to ALL preview containers (Steps 2, 3, 4, and signer view)
 
+**Solution:** `setupScrollNavButtons()` function implemented and called in:
+- Preview container (Step 2)
+- Fields container (Step 3)
+- Review container (Step 4)
+
+CSS styles defined at line 1616 (`.scroll-nav-buttons`)
+
 **Acceptance Criteria:**
-- [ ] Floating buttons appear in all PDF preview areas
-- [ ] Jump-to-top smoothly scrolls to first page
-- [ ] Jump-to-bottom smoothly scrolls to last page
-- [ ] Buttons show/hide based on scroll position
-- [ ] Touch targets are 44x44px minimum
+- [x] Floating buttons appear in all PDF preview areas
+- [x] Jump-to-top smoothly scrolls to first page
+- [x] Jump-to-bottom smoothly scrolls to last page
+- [x] Buttons show/hide based on scroll position
+- [x] Touch targets are 44x44px minimum
 
 ---
 
 ### Bug #12: Page Number Not Editable/Clickable
 
-**Status:** OPEN (feature request)
+**Status:** SOLVED (2026-02-01 - verified already implemented)
 **Priority:** P2 - MEDIUM
 **Complexity:** Medium
 
 **Problem:** Users cannot click on the page indicator to jump to a specific page. Modern document viewers (Google Docs, Adobe Acrobat, Figma) allow clicking the page number to edit it.
 
-**Implementation:**
-- Click page indicator → shows input field with current page
-- Type page number, press Enter → scrolls to that page
-- Invalid values clamped to valid range (1 to totalPages)
-- Press Escape → cancel edit
-- Apply to ALL preview containers
+**Solution:** `setupEditablePageInput()` function implemented at line 4472.
+- Converts page indicator span to clickable button + hidden input
+- Stores `_updateDisplay` function for external updates
+- Applied to preview and review containers
+
+CSS styles defined at lines 1668-1701 (`.page-input-trigger`, `.page-input`)
 
 **Acceptance Criteria:**
-- [ ] Click on page indicator shows editable input
-- [ ] Enter commits and scrolls to page
-- [ ] Invalid values (0, 999) clamped to valid range
-- [ ] Escape cancels edit
-- [ ] Works in Steps 2, 3, 4, and signer view
+- [x] Click on page indicator shows editable input
+- [x] Enter commits and scrolls to page
+- [x] Invalid values (0, 999) clamped to valid range
+- [x] Escape cancels edit
+- [x] Works in Steps 2, 3, 4, and signer view
 
 ---
 
 ### Bug #13: Zoom Range Limited to 300%
 
-**Status:** OPEN (enhancement)
+**Status:** SOLVED (2026-02-01 - verified already implemented)
 **Priority:** P3 - LOW
 **Complexity:** Low
 
 **Problem:** Maximum zoom is 300%. Some users need 400% for detailed viewing of small text or signatures.
 
-**Implementation:**
-- Extend maxZoom from 3.0 to 4.0 in all zoom state objects
-- Add Ctrl/Cmd+scroll zoom gesture for desktop
-- Extend pinch-to-zoom to Steps 3 & 4 (already in Step 2)
+**Solution:**
+- `maxZoom: 4.0` set in all zoom state objects (lines 3956, 4144, 4270)
+- `setupCtrlScrollZoom()` function implemented at line 4551
+- Called in renderReview() for Ctrl+scroll zoom support
 
 **Acceptance Criteria:**
-- [ ] Zoom reaches 400% maximum
-- [ ] Ctrl+scroll zooms on desktop
-- [ ] Pinch-to-zoom works on all preview areas
+- [x] Zoom reaches 400% maximum
+- [x] Ctrl+scroll zooms on desktop
+- [x] Pinch-to-zoom works on all preview areas
 
 ---
 

@@ -5319,14 +5319,7 @@
                 elements.reviewPdfBody.appendChild(pageContainer);
             }
 
-            // Bug #10 fix: Reset to page 1 and update UI after render completes
-            reviewState.currentPage = 1;
-            updateReviewUI();
-
-            // Bug #11: Add floating scroll navigation buttons
-            setupScrollNavButtons(elements.reviewPdfBody, 'review');
-
-            // Bug #12: Setup editable page input
+            // Bug #12: Setup editable page input (MUST be before updateReviewUI so _updateDisplay exists)
             const reviewPageIndicator = document.getElementById('review-page-indicator');
             if (reviewPageIndicator && !reviewPageIndicator.dataset.editableSetup) {
                 setupEditablePageInput(
@@ -5336,6 +5329,14 @@
                     () => state.totalPages
                 );
             }
+
+            // Bug #10 fix: Reset to page 1 and update UI after render completes
+            // NOTE: Must be AFTER setupEditablePageInput so _updateDisplay function exists
+            reviewState.currentPage = 1;
+            updateReviewUI();
+
+            // Bug #11: Add floating scroll navigation buttons
+            setupScrollNavButtons(elements.reviewPdfBody, 'review');
 
             // Bug #13: Add Ctrl+scroll zoom for desktop
             setupCtrlScrollZoom(elements.reviewPdfBody, reviewState, renderReview);
